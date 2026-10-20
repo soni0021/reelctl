@@ -1,0 +1,91 @@
+# edit_dna.json reference
+
+`reelctl decompile` writes one JSON object per video. The Rust types are in [crates/edit-dna/src/lib.rs](../crates/edit-dna/src/lib.rs), and the JSON Schema generated from them is [crates/edit-dna/schema/edit_dna.schema.json](../crates/edit-dna/schema/edit_dna.schema.json). After changing the types, regenerate the schema with `cargo run -p edit-dna --example schema`, and bump `SCHEMA_VERSION` if files written by the old types would no longer parse.
+
+Every field is always present. Times are whole milliseconds. Video times count from the video stream's start time and audio times from the first decoded audio sample; these usually line up, but the code does not align them.
+
+## Video
+
+| Field | Type | Meaning |
+|---|---|---|
+| `schema_version` | integer | Currently `1` |
+| `duration_ms` | integer | The longer of the container's duration and the last frame's time plus one frame |
+| `fps` | number | The stream's average frame rate, else its base rate, else 30 |
+| `frame_size` | object | `width` and `height` of the decoded frames, in pixels |
+| `frame_count` | integer | Number of frames decoded |
+| `decode_note` | string | How the video was decoded |
+
+## Cuts
+
+`cuts` lists hard cuts in time order:
+
+| Field | Meaning |
+|---|---|
+| `frame_index` | Index of the first frame of the new shot |
+| `time_ms` | That frame's presentation time |
+| `interval_ms` | Time since the previous cut, or since 0 for the first cut |
+| `scene_score` | Detector score from 0 to 1, rounded to 4 decimals |
+
+The scene-score detector applies the formula behind FFmpeg's `scene` value (from the `select` filter) to a grid of roughly 160×90 luma samples, and records a cut wherever the score is above 0.30. It has been tested only on hard cuts between solid colors; dissolves, whip pans, flashes, and speed ramps are untested. See [ADR-002](decisions/ADR-002-scene-score-cut-detector.md).
+
+`cut_detector` names the detector that produced the list: `"ffmpeg_scene_score"` today, with `"trans_net_v2"` reserved for TransNetV2. `cut_detector_note` says why that detector ran, including the reason for any fallback.
+
+## Audio
+
+Audio is mixed to mono and resampled to 48 kHz first.
+
+| Field | Meaning |
+|---|---|
+| `silence_gaps` | `{start_ms, end_ms, duration_ms}` for each run of 10 ms windows whose RMS level is below −40 dBFS, if the run lasts at least 80 ms. A pause with music or room noise above −40 dBFS is not a gap. The 180 ms dead-air limit is applied later, by `diff`. |
+| `integrated_lufs` | Integrated loudness following ITU-R BS.1770 / EBU R128 (K-weighting; 400 ms blocks every 100 ms; −70 LUFS absolute gate; −10 LU relative gate), rounded to 2 decimals. −70 means silence or no audio. It is measured on the mono mix, so it can differ from a stereo meter. |
+| `words` | `{text, start_ms, end_ms}` entries. Not real words yet; see below. |
+| `words_per_minute` | Number of `words` divided by the duration in minutes, rounded to 2 decimals |
+| `asr_backend` | `"silence_bursts"` today; `"whisper_cpp"` once whisper.cpp is linked |
+| `asr_note` | Why that backend ran, and whether a `--whisper-model` path was ignored |
+
+With `"silence_bursts"`, each word is a stretch of sound above −40 dBFS that ends at the first 40 ms of silence, kept if it lasts at least 40 ms. `text` is a placeholder: `burst-0`, `burst-1`, and so on. A continuous tone or music bed counts as one long word, so `words_per_minute` is a burst rate, not a speaking rate. See [ADR-003](decisions/ADR-003-silence-burst-word-estimator.md).
+
+## Color
+
+`shot_histograms` has one entry per shot, so it is one longer than `cuts`:
+
+| Field | Meaning |
+|---|---|
+| `shot_index` | Shot number, from 0 |
+| `start_ms`, `end_ms` | Shot boundaries: 0, the cut times, and `duration_ms` |
+| `start_frame`, `end_frame` | First frame index, and one past the last |
+| `mean_r`, `mean_g`, `mean_b` | Mean 8-bit RGB value over the shot, rounded to 2 decimals |
+| `bins_r`, `bins_g`, `bins_b` | 8 bins per channel (0–31, 32–63, …, 224–255); each value is the fraction of samples in that bin, rounded to 4 decimals |
+
+Each frame contributes a grid of roughly 32×18 samples, converted from YUV to RGB with BT.601 coefficients (full range only for `yuvj420p`). Most HD video uses BT.709, so absolute colors are slightly off; use the histograms to compare shots rather than as exact color.
+
+## Payoff window
+
+The narrative rubric in planer.md puts the payoff around 9 s. `payoff_window` records whether a cut lands there:
+
+| Field | Meaning |
+|---|---|
+| `marker_ms` | 9000 |
+| `window_start_ms`, `window_end_ms` | 8000 and 10000, both inclusive |
+| `has_cue` | `true` if any cut falls inside the window |
+| `cue_ms`, `cue_frame_index` | The first such cut, or `null` |
+
+Only cuts count as cues. A zoom, caption, or graphic at 9 s is not detected.
+
+## Timing
+
+| Field | Meaning |
+|---|---|
+| `signal_ms` | Measured time of the structural work: decode (with cut scoring, color sampling, and thumbnails), cut and histogram analysis, silence, loudness, and writing this file. The 500 ms target applies to this number. |
+| `asr_ms` | Measured time of word timing. Not part of the 500 ms target. |
+
+`signal_ms` is the sum of the timed stages, so process start, word timing, PNG writing, and the in-memory copies between stages are not in it. See [ADR-005](decisions/ADR-005-signal-ms-measures-the-structural-path.md).
+
+## Not computed yet
+
+| Field | Value |
+|---|---|
+| `zoom_curves` | `{"status": "unimplemented", "reason": "..."}`. Optical-flow Bézier zoom curves are Pass 1b. |
+| `cube_lut` | `{"status": "unimplemented", "reason": "..."}`. `.cube` LUT synthesis is Pass 1b; the per-shot histograms are recorded instead. |
+
+`"unimplemented"` is the only `status` value today. Check `status` before reading these fields. See [ADR-004](decisions/ADR-004-report-missing-passes-in-the-output.md).
