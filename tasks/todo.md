@@ -26,12 +26,12 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/whisper-asr.md](../docs/specs/
 **Description:** A pure function that converts the decoded mono PCM to whisper's input rate: a windowed-sinc low-pass filter, then every third sample. Other input rates return an error.
 
 **Acceptance criteria:**
-- [ ] 48,000 samples in, 16,000 out
-- [ ] A 1 kHz tone keeps its RMS level within 5%; a 12 kHz tone drops by at least 30 dB
-- [ ] Input that is not 48 kHz returns an error
+- [x] 48,000 samples in, 16,000 out
+- [x] A 1 kHz tone keeps its RMS level within 5%; a 12 kHz tone drops by at least 30 dB
+- [x] Input that is not 48 kHz returns an error
 
 **Verification:**
-- [ ] `cargo test -p decompile resample`
+- [x] `cargo test -p decompile resample` (4 of 4 pass). The function shows `dead_code` warnings until Task 4 calls it.
 
 **Dependencies:** None
 

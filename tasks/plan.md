@@ -22,7 +22,7 @@ Link whisper.cpp through `whisper-rs` 0.16.0 and use it for `words` whenever a m
 - [x] Task 1: `whisper-rs` builds and links
 
 ### Phase 2: Pure pieces
-- [ ] Task 2: Resample 48 kHz to 16 kHz
+- [x] Task 2: Resample 48 kHz to 16 kHz
 - [ ] Task 3: whisper module
 
 ### Checkpoint A

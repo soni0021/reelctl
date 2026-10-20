@@ -13,6 +13,7 @@ mod histogram;
 mod loudness;
 mod payoff;
 mod pipeline;
+mod resample;
 mod scene;
 mod silence;
 mod transnet;
