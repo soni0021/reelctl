@@ -1,6 +1,6 @@
 # Agent notes
 
-The product spec is [planer.md](planer.md). Read it before changing the engine.
+The product spec is [planer.md](planer.md). Read it before changing the engine. Current state, measurements, and known gaps are in [docs/status.md](docs/status.md).
 
 Read CONSTRAINTS.md before writing code. Do not weaken it to make a change pass.
 
@@ -24,6 +24,17 @@ P1–P3 in planer.md (Go watchtower, OpenTimelineIO / Smelter / manimgx, Qwen3-V
 - CLI: `reelctl decompile --input <reel.mp4> --out <edit_dna.json>` and `reelctl diff --draft <draft.mp4> --outlier <edit_dna.json>`.
 - `signal_ms` must be a measured structural duration (decode, cuts, silence, loudness, histograms, JSON write). Do not invent or pad it.
 
+## Docs
+
+Update the docs in the same commit as every change, without waiting to be asked; the user requires it. A task is not done until these files match the code:
+
+- `README.md`: overview, quick start, commands, crate list.
+- `docs/status.md`: what works, measured numbers (with date and machine), gaps, next steps.
+- `docs/cli.md`: `reelctl` flags, output, exit codes, input requirements.
+- `docs/edit-dna.md`: every `edit_dna.json` field. Regenerate the schema with `cargo run -p edit-dna --example schema` when the types change.
+- `docs/decisions/`: one ADR per significant decision, named `ADR-NNN-short-title.md` with the next number. When a decision changes, add a new ADR and mark the old one superseded; never delete ADRs.
+- `CHANGELOG.md`: an entry under Unreleased for each change a `reelctl` user would notice.
+
 ## P0 gaps (documented, do not implement here)
 
 - whisper.cpp is unlinked: `cmake` is not on PATH, ggml weights are not downloaded, and `whisper-rs` is not a dependency. `asr_backend` is `silence_bursts`; `asr_ms` times that estimator.
@@ -33,6 +44,7 @@ P1–P3 in planer.md (Go watchtower, OpenTimelineIO / Smelter / manimgx, Qwen3-V
 ## Learned User Preferences
 
 - Strictly follow the project skills in `.agents/skills/`, including the `addyosmani/agent-skills` pack from `npx skills add addyosmani/agent-skills`.
+- Always write or update docs as part of every change (see Docs above).
 
 ## Learned Workspace Facts
 
