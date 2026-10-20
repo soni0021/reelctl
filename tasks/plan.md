@@ -23,10 +23,10 @@ Link whisper.cpp through `whisper-rs` 0.16.0 and use it for `words` whenever a m
 
 ### Phase 2: Pure pieces
 - [x] Task 2: Resample 48 kHz to 16 kHz
-- [ ] Task 3: whisper module
+- [x] Task 3: whisper module
 
 ### Checkpoint A
-- [ ] `cargo test` passes and the release build is clean
+- [x] `cargo test` passes and the release build is clean
 
 ### Phase 3: Wire it in
 - [ ] Task 4: Use whisper for words when a model is given
@@ -43,7 +43,7 @@ Link whisper.cpp through `whisper-rs` 0.16.0 and use it for `words` whenever a m
 | Risk | Impact | Mitigation |
 |------|--------|------------|
 | `whisper-rs-sys` fails to build with CMake 4.4 or to link on Apple Silicon | High | Task 1 comes first. Fallbacks: set `CMAKE_POLICY_VERSION_MINIMUM=3.5`, which `whisper-rs-sys` passes to CMake, or add the link flags from its `BUILDING.md` to `.cargo/config.toml` |
-| Word times too loose for the 200 ms pause check | Medium | Measured in Task 5. If they fail, stop and ask about DTW timestamps (the spec says ask first) |
+| Word times too loose for the 200 ms pause check | Medium | **Happened in Task 3's manual run.** On a `say` clip whose 1.2 s pause runs from 0.78 s to 2.00 s, the plain timestamps put "dead" at 0.91–2.00 s, across the pause, and "air." at 2.00 s. With DTW timestamps (`base.en` preset) every word fell on the correct side of the pause. Waiting for the user's decision, since the spec says to ask first |
 | whisper invents words on tones or music | Low | The default tests never run whisper, and the spawned test processes get no model path |
 | Slower builds | Low | whisper.cpp compiles once and is cached; the first-build time goes in `docs/status.md` |
 | The `Samantha` voice is missing on another Mac | Low | `generate.sh speech12` fails with `say`'s error; the clip is documented as macOS-only |

@@ -14,6 +14,8 @@ pub enum DecompileError {
     NoFrames(String),
     #[error("{reason}")]
     CutDetectorUnavailable { reason: String },
+    #[error("whisper: {0}")]
+    Whisper(String),
     #[error("{0}")]
     Message(String),
 }

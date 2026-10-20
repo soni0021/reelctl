@@ -44,13 +44,13 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/whisper-asr.md](../docs/specs/
 **Description:** `words_from_segments` (pure) and `whisper::words(model, pcm, sample_rate)`. The latter checks the path, installs the logging hooks, loads the model, and sets the spec's parameters: greedy sampling, token timestamps, `max_len` 1, split on word, English unless the model is multilingual, non-speech tokens suppressed, and no printing. It then runs the model and maps the segments.
 
 **Acceptance criteria:**
-- [ ] `words_from_segments` converts centiseconds to milliseconds, trims text, and drops empty, punctuation-only, and bracketed segments such as `[BLANK_AUDIO]`
-- [ ] A missing model path returns `DecompileError::Whisper` naming the path
-- [ ] A manual run on a `say` clip returns the spoken words
+- [x] `words_from_segments` converts centiseconds to milliseconds, trims text, and drops empty, punctuation-only, and bracketed segments such as `[BLANK_AUDIO]`
+- [x] A missing model path returns `DecompileError::Whisper` naming the path
+- [x] A manual run on a `say` clip returns the spoken words: all 13 words of "Cut the dead air. Show the proof before the viewer scrolls away." Timing problem found, see Risks in [plan.md](plan.md)
 
 **Verification:**
-- [ ] `cargo test -p decompile whisper`
-- [ ] Manual run result recorded in the commit message
+- [x] `cargo test -p decompile whisper` (5 of 5 pass)
+- [x] Manual run result recorded in the commit message
 
 **Dependencies:** Tasks 1 and 2
 
@@ -60,8 +60,8 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/whisper-asr.md](../docs/specs/
 
 ## Checkpoint A
 
-- [ ] `cargo test` passes
-- [ ] `cargo build --release` is clean
+- [x] `cargo test` passes (26 of 26)
+- [x] `cargo build --release` is clean
 
 ## Task 4: Use whisper for words when a model is given
 
