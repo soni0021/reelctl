@@ -1,6 +1,6 @@
 # Spec: Real word timing with whisper.cpp
 
-Status: draft, awaiting approval (2026-10-20). Branch: `feature/whisper-asr`.
+Status: approved 2026-10-20, with the recommended answer to each open question (see Resolved Questions). Branch: `feature/whisper-asr`. Plan: [tasks/plan.md](../../tasks/plan.md).
 
 ## Objective
 
@@ -134,8 +134,10 @@ Test-first, with the repo's `cargo test`.
 - whisper can invent words on music or tones. The fixtures with a sine tone will not be run through whisper.
 - Builds get slower, and every build now needs CMake.
 
-## Open Questions
+## Resolved Questions
 
-1. **Model test:** keep the model-dependent test ignored by default (recommended), so plain `cargo test` passes without a model? The alternative is that every test run needs the model file.
-2. **Bad model path:** fail with an error (recommended, matching ADR-004), or fall back to the estimator with a note?
-3. **Automatic model path:** should `reelctl` use `~/models/whisper/ggml-base.en.bin` when no flag or variable is set? Recommended: no. Put `export REELCTL_WHISPER_MODEL=~/models/whisper/ggml-base.en.bin` in your shell profile instead, so the choice stays explicit.
+Answered 2026-10-20:
+
+1. **Model test:** the model-dependent test is `#[ignore]`d by default, so plain `cargo test` passes without a model. Run it with `--include-ignored` and `REELCTL_WHISPER_MODEL` set.
+2. **Bad model path:** fail with an error, matching ADR-004. No fallback to the estimator.
+3. **Automatic model path:** no. `reelctl` uses a model only when `--whisper-model` or `REELCTL_WHISPER_MODEL` names one. For convenience, put `export REELCTL_WHISPER_MODEL=~/models/whisper/ggml-base.en.bin` in your shell profile.
