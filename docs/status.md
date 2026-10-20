@@ -42,7 +42,8 @@ The input was an 87 s iPhone recording: HEVC Main 10 with HDR (HLG), 1080×1920 
 | FFmpeg decoding with VideoToolbox | 5.71 s |
 | FFmpeg decoding keyframes only | 0.44 s, but only 62 of 1,440 frames, about one per second |
 | Silence gaps at −40 dBFS | 26 gaps, the longest 190 ms, so no pause of 0.3 s or more. The room noise sits between −30 and −25 dB; at −25 dB there are 19 pauses of 0.3 s or more |
-| whisper `base.en`, on the `feature/whisper-asr` branch | One invented English sentence, repeated. The speech is probably not English, or is too noisy for this model |
+| whisper `base.en`, on the `feature/whisper-asr` branch | One invented English sentence, repeated. The speech is Hinglish, which this English-only model cannot read |
+| Oriserve Whisper-Hindi2Hinglish-Apex (Q8_0, large-v3-turbo fine-tune), 2026-10-21 | Real Roman-script Hinglish, 183 words in 60 s, in 14.5 s. With plain timestamps, 21 of 183 words stretched more than 200 ms into one of the 19 pauses found at −25 dB; with DTW timestamps, none did, at the same speed |
 
 What this means:
 
