@@ -4,7 +4,7 @@ Last updated 2026-10-20. Update this page in the same commit as any change that 
 
 ## Summary
 
-P0, the Rust decompiler and reel-diff CLI, is built and its tests pass. It meets the 500 ms target on the synthetic 60-second benchmark clip, but it has not been run on real footage, and `diff` does not yet compare pacing against the outlier. P1–P3 in [planer.md](../planer.md) have not started.
+P0, the Rust decompiler and reel-diff CLI, is built and its tests pass. It meets the 500 ms target on the synthetic 60-second benchmark clip but misses it on real footage: 60 s of an iPhone recording, converted to 8-bit H.264, took 2.1–2.8 s ([First real footage](#first-real-footage-2026-10-20)). `diff` does not yet compare pacing against the outlier. P1–P3 in [planer.md](../planer.md) have not started.
 
 ## Verified 2026-10-20
 
@@ -30,6 +30,25 @@ REELCTL_PROFILE=1 target/release/reelctl decompile \
   --input /tmp/bench60.mp4 --out /tmp/bench60.edit_dna.json
 ```
 
+## First real footage, 2026-10-20
+
+The input was an 87 s iPhone recording: HEVC Main 10 with HDR (HLG), 1080×1920 at 24 fps with B-frames, AAC stereo, and a 4-channel spatial-audio track. It ran on the same machine as above. The file stays outside the repo.
+
+| Check | Result |
+|---|---|
+| `decompile` on the original file | Stops with `decode video frame: unsupported pixel format`, because the video is 10-bit |
+| First 60 s converted to 8-bit H.264 High (`-vf format=yuv420p -c:v libx264 -preset fast -crf 20 -profile:v high`), release build | `signal_ms` 2828, 2205, 2087 over three runs, against a target of 500. Decoding was over 99% of it |
+| FFmpeg decoding every frame of that file in software | 2.12 s (680 fps) |
+| FFmpeg decoding with VideoToolbox | 5.71 s |
+| FFmpeg decoding keyframes only | 0.44 s, but only 62 of 1,440 frames, about one per second |
+| Silence gaps at −40 dBFS | 26 gaps, the longest 190 ms, so no pause of 0.3 s or more. The room noise sits between −30 and −25 dB; at −25 dB there are 19 pauses of 0.3 s or more |
+| whisper `base.en`, on the `feature/whisper-asr` branch | One invented English sentence, repeated. The speech is probably not English, or is too noisy for this model |
+
+What this means:
+
+- Decoding every frame at 1080p cannot meet 500 ms on this machine, because FFmpeg alone takes about 2.1 s. Meeting the target needs a different decode strategy, or a different target.
+- A fixed −40 dBFS threshold misses pauses when there is room noise, so `diff` would report no dead air in a recording like this.
+
 ## What works
 
 - `reelctl decompile` writes `edit_dna.json` with cuts, silence gaps, integrated loudness, per-shot RGB histograms, and the 8–10 s payoff cue, plus one `timeline_view` PNG per cut.
@@ -50,8 +69,9 @@ Not yet listed in AGENTS.md:
 
 - **`diff` barely uses the outlier.** Dead air and static windows are properties of the draft alone; the outlier only feeds the payoff check. `diff` takes one outlier, where planer.md asks for one to three and a second-by-second pacing comparison. This is the main gap against the P0 success metric.
 - **Static windows count only cuts.** planer.md defines a static window as more than 2.5 s without B-roll, zoom, or a graphic callout. Nothing detects zooms or graphics yet, so a punch-in without a cut is still flagged.
-- **No real footage has been tested.** All measurements and tests use the synthetic clips ([ADR-006](decisions/ADR-006-synthetic-offline-fixtures.md)).
-- **10-bit video is rejected.** Decoding stops with `unsupported pixel format` on anything other than 8-bit 4:2:0, which rules out iPhone HDR recordings until they are converted.
+- **The 500 ms target fails on real footage.** Only one real recording has been run so far ([First real footage](#first-real-footage-2026-10-20)). The tests still use only synthetic clips ([ADR-006](decisions/ADR-006-synthetic-offline-fixtures.md)).
+- **The silence threshold is fixed at −40 dBFS.** On the real recording it found no pause of 0.3 s or more, because room noise sat above it.
+- **10-bit video is rejected.** Decoding stops with `unsupported pixel format` on anything other than 8-bit 4:2:0. That rules out iPhone HDR recordings until they are converted, which the real-footage run confirmed.
 - **`--draft` takes an MP4.** planer.md specifies a `.otio` timeline; OpenTimelineIO is P2 work.
 
 ## Known issues
@@ -68,6 +88,8 @@ In progress: real word timing with whisper.cpp ([spec](specs/whisper-asr.md), br
 
 Then, to finish P0 against its own success metric before starting P1:
 
-1. Decompile a real 60 s reel you own (keep it out of the repo) and record its `signal_ms` here.
-2. Make `diff` comparative: accept one to three outliers and compare cut rhythm second by second.
-3. Link TransNetV2. It needs ONNX weights, a download that needs an explicit go-ahead.
+1. Find a decode strategy that meets 500 ms on real footage, or revise the target.
+2. Read 10-bit video, such as iPhone HDR recordings.
+3. Detect silence relative to each recording's noise floor instead of at a fixed −40 dBFS.
+4. Make `diff` comparative: accept one to three outliers and compare cut rhythm second by second.
+5. Link TransNetV2. It needs ONNX weights, a download that needs an explicit go-ahead.
