@@ -1,0 +1,12 @@
+[package]
+name = "filmstrip"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "timeline_view PNGs at cut boundaries"
+
+[dependencies]
+edit-dna = { path = "../edit-dna" }
+image.workspace = true
+thiserror.workspace = true

@@ -1,0 +1,392 @@
+{
+  "$defs": {
+    "AsrBackend": {
+      "description": "Which word timer produced [`EditDna::words`].",
+      "enum": [
+        "whisper_cpp",
+        "silence_bursts"
+      ],
+      "type": "string"
+    },
+    "Cut": {
+      "description": "A detected scene change. `interval_ms` is the time since the previous cut,\nor since the start of the reel for the first cut.",
+      "properties": {
+        "frame_index": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "interval_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "scene_score": {
+          "description": "FFmpeg scene score in `0..=1` for the scene-score detector.\nTransNetV2 would store its cut probability here.",
+          "format": "double",
+          "type": "number"
+        },
+        "time_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "frame_index",
+        "time_ms",
+        "interval_ms",
+        "scene_score"
+      ],
+      "type": "object"
+    },
+    "CutDetectorKind": {
+      "description": "Which cut detector produced [`EditDna::cuts`].",
+      "enum": [
+        "ffmpeg_scene_score",
+        "trans_net_v2"
+      ],
+      "type": "string"
+    },
+    "FrameSize": {
+      "description": "Decoded frame size in pixels.",
+      "properties": {
+        "height": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "width": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "width",
+        "height"
+      ],
+      "type": "object"
+    },
+    "PassStatus": {
+      "description": "Pass 1b signals that are named in the blueprint and intentionally not computed.",
+      "enum": [
+        "unimplemented"
+      ],
+      "type": "string"
+    },
+    "PayoffWindow": {
+      "description": "The 9 second payoff window and whether a cue was found inside 8–10 seconds.",
+      "properties": {
+        "cue_frame_index": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "cue_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "has_cue": {
+          "type": "boolean"
+        },
+        "marker_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "window_end_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "window_start_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "marker_ms",
+        "window_start_ms",
+        "window_end_ms",
+        "has_cue"
+      ],
+      "type": "object"
+    },
+    "ShotHistogram": {
+      "description": "Per-shot RGB summary. Bin values are fractions of the samples in the shot.",
+      "properties": {
+        "bins_b": {
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 8,
+          "minItems": 8,
+          "type": "array"
+        },
+        "bins_g": {
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 8,
+          "minItems": 8,
+          "type": "array"
+        },
+        "bins_r": {
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 8,
+          "minItems": 8,
+          "type": "array"
+        },
+        "end_frame": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "end_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mean_b": {
+          "format": "double",
+          "type": "number"
+        },
+        "mean_g": {
+          "format": "double",
+          "type": "number"
+        },
+        "mean_r": {
+          "format": "double",
+          "type": "number"
+        },
+        "shot_index": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "start_frame": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "start_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "shot_index",
+        "start_ms",
+        "end_ms",
+        "start_frame",
+        "end_frame",
+        "mean_r",
+        "mean_g",
+        "mean_b",
+        "bins_r",
+        "bins_g",
+        "bins_b"
+      ],
+      "type": "object"
+    },
+    "SilenceGap": {
+      "description": "A run of audio below the silence threshold.",
+      "properties": {
+        "duration_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "end_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "start_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "start_ms",
+        "end_ms",
+        "duration_ms"
+      ],
+      "type": "object"
+    },
+    "StubbedPass": {
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/PassStatus"
+        }
+      },
+      "required": [
+        "status",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "Word": {
+      "description": "One word, or one silence-delimited voiced burst when whisper.cpp is not linked.",
+      "properties": {
+        "end_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "start_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "start_ms",
+        "end_ms"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Millisecond edit telemetry for one reel.",
+  "properties": {
+    "asr_backend": {
+      "$ref": "#/$defs/AsrBackend"
+    },
+    "asr_ms": {
+      "description": "Word timing. Not part of the structural budget.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "asr_note": {
+      "type": "string"
+    },
+    "cube_lut": {
+      "$ref": "#/$defs/StubbedPass"
+    },
+    "cut_detector": {
+      "$ref": "#/$defs/CutDetectorKind"
+    },
+    "cut_detector_note": {
+      "type": "string"
+    },
+    "cuts": {
+      "items": {
+        "$ref": "#/$defs/Cut"
+      },
+      "type": "array"
+    },
+    "decode_note": {
+      "type": "string"
+    },
+    "duration_ms": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "fps": {
+      "format": "double",
+      "type": "number"
+    },
+    "frame_count": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "frame_size": {
+      "$ref": "#/$defs/FrameSize"
+    },
+    "integrated_lufs": {
+      "format": "double",
+      "type": "number"
+    },
+    "payoff_window": {
+      "$ref": "#/$defs/PayoffWindow"
+    },
+    "schema_version": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "shot_histograms": {
+      "items": {
+        "$ref": "#/$defs/ShotHistogram"
+      },
+      "type": "array"
+    },
+    "signal_ms": {
+      "description": "Decode, cuts, silence, loudness, histograms, and the JSON write.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "silence_gaps": {
+      "items": {
+        "$ref": "#/$defs/SilenceGap"
+      },
+      "type": "array"
+    },
+    "words": {
+      "items": {
+        "$ref": "#/$defs/Word"
+      },
+      "type": "array"
+    },
+    "words_per_minute": {
+      "format": "double",
+      "type": "number"
+    },
+    "zoom_curves": {
+      "$ref": "#/$defs/StubbedPass"
+    }
+  },
+  "required": [
+    "schema_version",
+    "duration_ms",
+    "fps",
+    "frame_size",
+    "frame_count",
+    "cuts",
+    "silence_gaps",
+    "words",
+    "words_per_minute",
+    "integrated_lufs",
+    "shot_histograms",
+    "payoff_window",
+    "signal_ms",
+    "asr_ms",
+    "zoom_curves",
+    "cube_lut",
+    "cut_detector",
+    "cut_detector_note",
+    "asr_backend",
+    "asr_note",
+    "decode_note"
+  ],
+  "title": "EditDna",
+  "type": "object"
+}

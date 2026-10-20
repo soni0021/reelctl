@@ -1,0 +1,13 @@
+---
+description: Follow installed agent skills as workflows
+alwaysApply: true
+---
+
+# Agent skills
+
+Read `SKILLS.md` and `.agents/skills/using-agent-skills/SKILL.md` before non-trivial work.
+
+- Skills in `.agents/skills/` are mandatory workflows for matching tasks, not optional style tips.
+- Read `CONSTRAINTS.md` before writing code. Do not weaken it to make a change pass.
+- Follow `AGENTS.md` boundaries: do not rewrite in-progress P0 `crates/`, `Cargo.toml`, or `fixtures/` unless that is the assigned task.
+- Surface assumptions. Stop on confusion. Verify with this repo’s commands (`cargo test` / `cargo check` when present), not assumed `npm test`.

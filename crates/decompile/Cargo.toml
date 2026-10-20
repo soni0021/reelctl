@@ -1,0 +1,13 @@
+[package]
+name = "decompile"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Decode a reel into cuts, silence, loudness, and per-shot color"
+
+[dependencies]
+edit-dna = { path = "../edit-dna" }
+ffmpeg-next.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
