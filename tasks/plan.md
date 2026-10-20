@@ -1,6 +1,6 @@
 # Implementation Plan: Real word timing with whisper.cpp
 
-Spec: [docs/specs/whisper-asr.md](../docs/specs/whisper-asr.md), approved 2026-10-20. Branch: `feature/whisper-asr`. Checklist: [tasks/todo.md](todo.md).
+Spec: [docs/specs/whisper-asr.md](../docs/specs/whisper-asr.md), approved 2026-10-20. This plan was approved the same day. Branch: `feature/whisper-asr`. Checklist: [tasks/todo.md](todo.md).
 
 ## Overview
 
@@ -19,7 +19,7 @@ Link whisper.cpp through `whisper-rs` 0.16.0 and use it for `words` whenever a m
 ## Task List
 
 ### Phase 1: Prove the build
-- [ ] Task 1: `whisper-rs` builds and links
+- [x] Task 1: `whisper-rs` builds and links
 
 ### Phase 2: Pure pieces
 - [ ] Task 2: Resample 48 kHz to 16 kHz

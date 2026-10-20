@@ -16,6 +16,7 @@ mod pipeline;
 mod scene;
 mod silence;
 mod transnet;
+mod whisper;
 
 pub use error::DecompileError;
 pub use pipeline::{decompile_file, DecompileOutput, DecompileRequest, StageProfile};

@@ -11,3 +11,7 @@ Notable changes to `reelctl`. Add an entry under Unreleased in the same commit a
 - A JSON Schema for `edit_dna.json`.
 - Synthetic test clips (`fixtures/generate.sh`) and an end-to-end test.
 - Project docs: README, status, CLI and `edit_dna.json` references, and decision records.
+
+### Changed
+
+- Building now needs CMake, because the `whisper-rs` dependency compiles whisper.cpp 1.8.3 from source.

@@ -13,7 +13,8 @@ Tested on macOS with Apple Silicon. You need:
 
 - Rust (tested with rustc 1.98.1)
 - FFmpeg with its development libraries, and `pkg-config`: `brew install ffmpeg pkg-config` (tested with FFmpeg 8.1). The `ffmpeg` command, with libx264, also generates the test clips.
-- Xcode Command Line Tools, for the clang that generates the FFmpeg bindings
+- CMake: `brew install cmake` (tested with 4.4.4). The build compiles whisper.cpp from source, which took under a minute on an Apple M3 the first time.
+- Xcode Command Line Tools, for clang, which compiles whisper.cpp and generates the FFmpeg and whisper.cpp bindings
 
 ```bash
 cargo build --release

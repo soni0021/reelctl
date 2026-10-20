@@ -7,13 +7,13 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/whisper-asr.md](../docs/specs/
 **Description:** Add `whisper-rs` 0.16.0 as a dependency of `decompile` and prove that whisper.cpp compiles and links on this Mac before anything depends on it.
 
 **Acceptance criteria:**
-- [ ] `cargo build --release` compiles whisper.cpp 1.8.3 with CMake 4.4.4
-- [ ] A unit test calls into whisper.cpp (`whisper_rs::get_whisper_version()`) and gets `1.8.3`
-- [ ] README prerequisites and CHANGELOG say that building needs CMake
+- [x] `cargo build --release` compiles whisper.cpp 1.8.3 with CMake 4.4.4
+- [x] A unit test calls into whisper.cpp (`whisper_rs::get_whisper_version()`) and gets `1.8.3`
+- [x] README prerequisites and CHANGELOG say that building needs CMake
 
 **Verification:**
-- [ ] `cargo check`, then `cargo test`
-- [ ] First-build time noted for Task 6
+- [x] `cargo check`, then `cargo test` (18 of 18 pass)
+- [x] First-build time noted for Task 6: 41 s for the test profile, 24 s for release; no extra link flags were needed
 
 **Dependencies:** None
 

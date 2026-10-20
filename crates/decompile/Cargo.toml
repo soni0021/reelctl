@@ -11,3 +11,4 @@ edit-dna = { path = "../edit-dna" }
 ffmpeg-next.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+whisper-rs.workspace = true
