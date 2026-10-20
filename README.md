@@ -74,6 +74,7 @@ The reasons behind these choices are in [docs/decisions/](docs/decisions/).
 - [docs/cli.md](docs/cli.md): `reelctl` flags, output, exit codes, input requirements
 - [docs/edit-dna.md](docs/edit-dna.md): every field in `edit_dna.json`
 - [docs/decisions/](docs/decisions/): architecture decision records (ADRs)
+- [docs/specs/](docs/specs/): feature specs, written and approved before the code
 - [CHANGELOG.md](CHANGELOG.md): notable changes
 - [planer.md](planer.md): product spec and the P0–P3 roadmap
 

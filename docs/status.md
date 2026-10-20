@@ -42,7 +42,7 @@ Already listed in [AGENTS.md](../AGENTS.md) as P0 gaps:
 
 | Gap | Effect now | To close it |
 |---|---|---|
-| whisper.cpp not linked | `words` are voiced bursts named `burst-N`; `words_per_minute` counts bursts, not words | `cmake` on PATH, a downloaded ggml model, a `whisper-rs` dependency |
+| whisper.cpp not linked | `words` are voiced bursts named `burst-N`; `words_per_minute` counts bursts, not words | In progress. `cmake` 4.4.4 and `~/models/whisper/ggml-base.en.bin` are installed; the [spec](specs/whisper-asr.md) awaits approval |
 | TransNetV2 not linked | Every cut comes from the scene-score detector; `--cut-detector transnet` exits with an error | TransNetV2 ONNX weights and an `ort` dependency |
 | Zoom curves and `.cube` LUT | Reported as `"status": "unimplemented"` | Pass 1b work |
 
@@ -64,8 +64,10 @@ Not yet listed in AGENTS.md:
 
 ## Next steps
 
-To finish P0 against its own success metric before starting P1:
+In progress: real word timing with whisper.cpp ([spec](specs/whisper-asr.md), branch `feature/whisper-asr`).
+
+Then, to finish P0 against its own success metric before starting P1:
 
 1. Decompile a real 60 s reel you own (keep it out of the repo) and record its `signal_ms` here.
 2. Make `diff` comparative: accept one to three outliers and compare cut rhythm second by second.
-3. Link whisper.cpp and TransNetV2. Both require downloads (a ggml model, ONNX weights) and `cmake`, so they need an explicit go-ahead.
+3. Link TransNetV2. It needs ONNX weights, a download that needs an explicit go-ahead.
