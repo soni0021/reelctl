@@ -1,6 +1,6 @@
 # Spec: Real word timing with whisper.cpp
 
-Status: approved 2026-10-20, with the recommended answer to each open question (see Resolved Questions). Revised and approved 2026-10-21: DTW word timing, multilingual models, and the DTW preset read from the model header (see [Revision 2026-10-21](#revision-2026-10-21)). Branch: `feature/whisper-asr`. Plan: [tasks/plan.md](../../tasks/plan.md).
+Status: implemented 2026-10-21 on `feature/whisper-asr`; all seven success criteria verified (see [docs/status.md](../status.md#word-timing-2026-10-21)), awaiting review and merge. Approved 2026-10-20, with the recommended answer to each open question (see Resolved Questions). Revised and approved 2026-10-21: DTW word timing, multilingual models, and the DTW preset read from the model header (see [Revision 2026-10-21](#revision-2026-10-21)). Branch: `feature/whisper-asr`. Plan: [tasks/plan.md](../../tasks/plan.md).
 
 ## Objective
 

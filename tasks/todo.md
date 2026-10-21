@@ -108,12 +108,12 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/whisper-asr.md](../docs/specs/
 **Description:** Choose the thread count by comparing 4 and 8 threads on a 60 s speech clip. Record `asr_ms` for 12 s and 60 s speech, the first-build time, and the 60 s benchmark's `signal_ms` in `docs/status.md`. Mark the spec implemented.
 
 **Acceptance criteria:**
-- [ ] `docs/status.md` shows the whisper gap closed, with measured numbers and the date
-- [ ] The benchmark's `signal_ms` stays within its earlier range (284–316 ms)
-- [ ] The spec's status is updated and these boxes are ticked
+- [x] `docs/status.md` shows the whisper gap closed, with measured numbers and the date
+- [x] The benchmark's `signal_ms` stays within its earlier range (284–316 ms): 242–261 ms, slightly faster
+- [x] The spec's status is updated and these boxes are ticked
 
 **Verification:**
-- [ ] Release-build runs; the docs link check passes
+- [x] Release-build runs; the docs link check passes. Thread count: 4, 6, and 8 were the same within noise, so whisper.rs is unchanged
 
 **Dependencies:** Task 5
 
@@ -123,6 +123,6 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/whisper-asr.md](../docs/specs/
 
 ## Checkpoint B: Done
 
-- [ ] All seven spec success criteria verified
-- [ ] `cargo test` passes, and the model test passes
+- [x] All seven spec success criteria verified
+- [x] `cargo test` passes, and the model test passes
 - [ ] Reviewed with the user, then `feature/whisper-asr` merged into `main`

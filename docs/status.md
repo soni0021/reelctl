@@ -1,10 +1,10 @@
 # Status
 
-Last updated 2026-10-20. Update this page in the same commit as any change that affects it.
+Last updated 2026-10-21. Update this page in the same commit as any change that affects it.
 
 ## Summary
 
-P0, the Rust decompiler and reel-diff CLI, is built and its tests pass. It meets the 500 ms target on the synthetic 60-second benchmark clip but misses it on real footage: 60 s of an iPhone recording, converted to 8-bit H.264, took 2.1–2.8 s ([First real footage](#first-real-footage-2026-10-20)). `diff` does not yet compare pacing against the outlier. P1–P3 in [planer.md](../planer.md) have not started.
+P0, the Rust decompiler and reel-diff CLI, is built and its tests pass. It meets the 500 ms target on the synthetic 60-second benchmark clip but misses it on real footage: 60 s of an iPhone recording, converted to 8-bit H.264, took 2.1–2.8 s ([First real footage](#first-real-footage-2026-10-20)). Given a whisper model, `decompile` now produces real words timed with DTW, including Hinglish (on branch `feature/whisper-asr`, awaiting review). `diff` does not yet compare pacing against the outlier. P1–P3 in [planer.md](../planer.md) have not started.
 
 ## Verified 2026-10-20
 
@@ -29,6 +29,21 @@ bash fixtures/generate.sh bench60 /tmp/bench60.mp4
 REELCTL_PROFILE=1 target/release/reelctl decompile \
   --input /tmp/bench60.mp4 --out /tmp/bench60.edit_dna.json
 ```
+
+## Word timing, 2026-10-21
+
+Same machine, release build, branch `feature/whisper-asr`. whisper.cpp 1.8.3 on the CPU with 4 threads (whisper-rs's default). Three runs each.
+
+| Check | Result |
+|---|---|
+| First build of whisper.cpp | 41 s for the test profile, 24 s for release; no extra link flags |
+| 60 s benchmark `signal_ms`, no model | 261, 242, 245; earlier 284–316. ASR is not part of it |
+| `speech12` (12 s, `say` speech), `base.en` | `asr_ms` 398, 365, 361. All 12 words; "air." ends at 1,280 ms, where the planted pause starts |
+| `speech12`, Apex | `asr_ms` 10,284, 11,859, 10,115. All 12 words, same pause boundary. whisper.cpp pads audio to 30 s windows, so 12 s costs about half of 60 s |
+| 60 s real Hinglish, Apex | `asr_ms` 21,826, 21,673, 22,271 |
+| Threads, Apex on 60 s, standalone probe | 4: 14.2 and 15.1 s; 6: 13.5 and 15.1 s; 8: 14.3 and 14.3 s. No difference beyond run-to-run noise, so the default stays |
+| Language detection, Apex on 60 s, standalone probe | Auto-detect: 20.3 and 23.1 s. Forced English: 15.2 and 16.5 s. Identical text both ways; whisper.cpp reports `en`, since the model writes Roman script. Detection accounts for most of the gap between `reelctl` and the probe |
+| stderr during transcription | Empty |
 
 ## First real footage, 2026-10-20
 
@@ -63,7 +78,7 @@ Already listed in [AGENTS.md](../AGENTS.md) as P0 gaps:
 
 | Gap | Effect now | To close it |
 |---|---|---|
-| Word timing needs a model | Without `--whisper-model`, `words` are voiced bursts named `burst-N` and `words_per_minute` counts bursts | Being closed on `feature/whisper-asr`: with a model, whisper.cpp gives real words timed with DTW ([ADR-007](decisions/ADR-007-whisper-cpp-word-timing.md)). Models are never downloaded by `reelctl` |
+| Word timing needs a model | Without `--whisper-model`, `words` are voiced bursts named `burst-N` and `words_per_minute` counts bursts | Closed on `feature/whisper-asr`, awaiting merge: with a model, whisper.cpp gives real words timed with DTW ([ADR-007](decisions/ADR-007-whisper-cpp-word-timing.md)). `reelctl` never downloads a model |
 | TransNetV2 not linked | Every cut comes from the scene-score detector; `--cut-detector transnet` exits with an error | TransNetV2 ONNX weights and an `ort` dependency |
 | Zoom curves and `.cube` LUT | Reported as `"status": "unimplemented"` | Pass 1b work |
 
@@ -86,12 +101,12 @@ Not yet listed in AGENTS.md:
 
 ## Next steps
 
-In progress: real word timing with whisper.cpp ([spec](specs/whisper-asr.md), branch `feature/whisper-asr`).
+Awaiting review and merge: real word timing with whisper.cpp ([spec](specs/whisper-asr.md), branch `feature/whisper-asr`). A possible follow-up, not yet specified: a `--whisper-language` flag, which would skip language detection and save about 6 s per run with the Apex model.
 
 Then, to finish P0 against its own success metric before starting P1:
 
 1. Find a decode strategy that meets 500 ms on real footage, or revise the target.
 2. Read 10-bit video, such as iPhone HDR recordings.
-3. Detect silence relative to each recording's noise floor instead of at a fixed −40 dBFS.
+3. Detect silence relative to each recording's noise floor instead of at a fixed −40 dBFS. whisper word ends depend on it too.
 4. Make `diff` comparative: accept one to three outliers and compare cut rhythm second by second.
 5. Link TransNetV2. It needs ONNX weights, a download that needs an explicit go-ahead.
