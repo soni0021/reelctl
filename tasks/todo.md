@@ -88,14 +88,14 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/whisper-asr.md](../docs/specs/
 **Description:** `fixtures/generate.sh speech12` builds 12 s of solid color with `say -v Samantha` speech and a planted 1-second pause. `crates/reelctl/tests/whisper_fixture.rs` holds two tests: (a) a missing model path exits with code 1, which runs in the default suite; and (b) the model test for spec success criteria 1 and 2, ignored by default.
 
 **Acceptance criteria:**
-- [ ] `bash fixtures/generate.sh speech12 out.mp4` works offline
-- [ ] Default `cargo test` runs (a) and it passes; (b) is listed as ignored with its reason
-- [ ] With `REELCTL_WHISPER_MODEL` set and `--include-ignored`, (b) passes: the six key words in order, times increasing and inside the clip, and nothing more than 200 ms inside the pause
-- [ ] README commands and the AGENTS.md Verify section document the model test
+- [x] `bash fixtures/generate.sh speech12 out.mp4` works offline
+- [x] Default `cargo test` runs (a) and it passes; (b) is listed as ignored with its reason
+- [x] With `REELCTL_WHISPER_MODEL` set and `--include-ignored`, (b) passes: the six key words in order, times increasing and inside the clip, and nothing more than 200 ms inside the pause
+- [x] README commands and the AGENTS.md Verify section document the model test
 
 **Verification:**
-- [ ] `cargo test`
-- [ ] `REELCTL_WHISPER_MODEL=~/models/whisper/ggml-apex-hinglish-q8_0.bin cargo test -- --include-ignored`, and the same with `ggml-base.en.bin`
+- [x] `cargo test` (31 of 31 pass, 1 ignored)
+- [x] `REELCTL_WHISPER_MODEL=~/models/whisper/ggml-apex-hinglish-q8_0.bin cargo test -- --include-ignored`, and the same with `ggml-base.en.bin`: both pass. Every word was transcribed correctly, and "air." ends at 1,280 ms, where the pause starts, with both models
 
 **Dependencies:** Task 4
 

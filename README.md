@@ -39,9 +39,10 @@ Add `--whisper-model <model.bin>` to `decompile` for real words instead of voice
 | Command | Use |
 |---|---|
 | `cargo check` | Type-check the workspace after every edit |
-| `cargo test` | Unit tests and the end-to-end fixture test; run once at the end of a task |
+| `cargo test` | Unit tests and the end-to-end tests; run once at the end of a task. Needs no whisper model |
+| `REELCTL_WHISPER_MODEL=<model.bin> cargo test -- --include-ignored` | Also run the whisper model test on the `speech12` clip (macOS only) |
 | `cargo build --release` | Build `target/release/reelctl`; take timings with this build, not the debug one |
-| `bash fixtures/generate.sh draft12\|outlier12\|bench60 <out.mp4>` | Generate one synthetic clip |
+| `bash fixtures/generate.sh draft12\|outlier12\|bench60\|speech12 <out.mp4>` | Generate one synthetic clip. `speech12` is 12 s of `say` speech with a planted 1 s pause, and needs macOS |
 | `bash fixtures/generate.sh all` | Generate all three clips into `fixtures/generated/` |
 | `cargo run -p edit-dna --example schema` | Regenerate `crates/edit-dna/schema/edit_dna.schema.json` after changing the types |
 | `REELCTL_PROFILE=1 target/release/reelctl decompile ...` | Also print per-stage timings to stderr |

@@ -32,7 +32,7 @@ Link whisper.cpp through `whisper-rs` 0.16.0 and use it for `words` whenever a m
 - [x] Task 4: Use whisper for words when a model is given
 
 ### Phase 4: Prove it end to end
-- [ ] Task 5: `speech12` fixture and end-to-end tests
+- [x] Task 5: `speech12` fixture and end-to-end tests
 - [ ] Task 6: Measure and close out
 
 ### Checkpoint B
