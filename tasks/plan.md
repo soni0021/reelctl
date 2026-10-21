@@ -29,7 +29,7 @@ Link whisper.cpp through `whisper-rs` 0.16.0 and use it for `words` whenever a m
 - [x] `cargo test` passes and the release build is clean
 
 ### Phase 3: Wire it in
-- [ ] Task 4: Use whisper for words when a model is given
+- [x] Task 4: Use whisper for words when a model is given
 
 ### Phase 4: Prove it end to end
 - [ ] Task 5: `speech12` fixture and end-to-end tests
@@ -43,7 +43,7 @@ Link whisper.cpp through `whisper-rs` 0.16.0 and use it for `words` whenever a m
 | Risk | Impact | Mitigation |
 |------|--------|------------|
 | `whisper-rs-sys` fails to build with CMake 4.4 or to link on Apple Silicon | High | Task 1 comes first. Fallbacks: set `CMAKE_POLICY_VERSION_MINIMUM=3.5`, which `whisper-rs-sys` passes to CMake, or add the link flags from its `BUILDING.md` to `.cargo/config.toml` |
-| Word times too loose for the 200 ms pause check | Medium | **Happened in Task 3's manual run.** On a `say` clip whose 1.2 s pause runs from 0.78 s to 2.00 s, the plain timestamps put "dead" at 0.91–2.00 s, across the pause, and "air." at 2.00 s. With DTW timestamps (`base.en` preset) every word fell on the correct side of the pause. On 60 s of a real iPhone recording, DTW took 13.3 s against 4.3 s without it (flash attention was off in both runs). whisper's output there was an invented, repeated sentence, so the timing could not be compared. The speech is Hinglish, so on 2026-10-21 the user chose Oriserve Whisper-Hindi2Hinglish-Apex (`ggml-apex-hinglish-q8_0.bin`, large-v3-turbo fine-tune, 874,188,075 bytes, SHA-256 `bef6d9d5…0d4c`). On the same 60 s it transcribed real Roman-script Hinglish (183 words). Against the 19 pauses of 0.3 s or more at −25 dB, plain timestamps stretched 21 of 183 words more than 200 ms into a pause; DTW (`LargeV3Turbo` preset) placed 0 of 183 there. Both took 14.5 s. The spec needs updating for DTW and multilingual models before Task 4 |
+| Word times too loose for the 200 ms pause check | Medium | **Happened in Task 3's manual run.** On a `say` clip whose 1.2 s pause runs from 0.78 s to 2.00 s, the plain timestamps put "dead" at 0.91–2.00 s, across the pause, and "air." at 2.00 s. With DTW timestamps (`base.en` preset) every word fell on the correct side of the pause. On 60 s of a real iPhone recording, DTW took 13.3 s against 4.3 s without it (flash attention was off in both runs). whisper's output there was an invented, repeated sentence, so the timing could not be compared. The speech is Hinglish, so on 2026-10-21 the user chose Oriserve Whisper-Hindi2Hinglish-Apex (`ggml-apex-hinglish-q8_0.bin`, large-v3-turbo fine-tune, 874,188,075 bytes, SHA-256 `bef6d9d5…0d4c`). On the same 60 s it transcribed real Roman-script Hinglish (183 words). Against the 19 pauses of 0.3 s or more at −25 dB, plain timestamps stretched 21 of 183 words more than 200 ms into a pause; DTW (`LargeV3Turbo` preset) placed 0 of 183 there. Both took 14.5 s. The spec was revised for DTW and multilingual models and approved on 2026-10-21; Task 4 implements it. Remaining: word ends stop at −40 dBFS silence gaps, so under room noise 9 of 183 end inside a pause |
 | whisper invents words on tones or music | Low | The default tests never run whisper, and the spawned test processes get no model path |
 | Slower builds | Low | whisper.cpp compiles once and is cached; the first-build time goes in `docs/status.md` |
 | The `Samantha` voice is missing on another Mac | Low | `generate.sh speech12` fails with `say`'s error; the clip is documented as macOS-only |

@@ -39,7 +39,7 @@ Update the docs in the same commit as every change, without waiting to be asked;
 
 ## P0 gaps (documented, do not implement here)
 
-- whisper.cpp is unlinked: `cmake` is not on PATH, ggml weights are not downloaded, and `whisper-rs` is not a dependency. `asr_backend` is `silence_bursts`; `asr_ms` times that estimator.
+- whisper.cpp runs only when `--whisper-model` or `REELCTL_WHISPER_MODEL` names a model; weights are never downloaded or committed. Without one, `asr_backend` is `silence_bursts` and `asr_ms` times that estimator.
 - TransNetV2 / `ort` is unlinked: weights are not vendored. `--cut-detector auto` uses the FFmpeg scene-score `CutDetector` unless a weight file exists (then detection still fails closed until an ort-backed build is wired).
 - Optical-flow Bézier zoom and `.cube` LUT stay `StubbedPass` (`status: unimplemented`). Those are Pass 1b, not this tree.
 

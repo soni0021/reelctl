@@ -2,7 +2,7 @@
 
 `reelctl` measures how a short vertical video is edited and compares a creator's draft against a top-performing reel (an "outlier") in the same niche.
 
-- `reelctl decompile` turns an MP4 into `edit_dna.json`: cut times, silence gaps, loudness, per-shot color, and whether there is a cut near the 9-second payoff mark. It also writes a `timeline_view` PNG at each cut, so an agent can inspect cuts without opening the video.
+- `reelctl decompile` turns an MP4 into `edit_dna.json`: cut times, silence gaps, loudness, per-shot color, whether there is a cut near the 9-second payoff mark, and, given a whisper model, timed words. It also writes a `timeline_view` PNG at each cut, so an agent can inspect cuts without opening the video.
 - `reelctl diff` decompiles a draft and flags dead air, long stretches with no cut, and a missing payoff cue.
 
 This repository is P0 of the plan in [planer.md](planer.md). P1–P3 (trend watchtower, timeline editor, specialist video model) are specified there and not built. Current state, measurements, and known gaps are in [docs/status.md](docs/status.md).
@@ -15,6 +15,7 @@ Tested on macOS with Apple Silicon. You need:
 - FFmpeg with its development libraries, and `pkg-config`: `brew install ffmpeg pkg-config` (tested with FFmpeg 8.1). The `ffmpeg` command, with libx264, also generates the test clips.
 - CMake: `brew install cmake` (tested with 4.4.4). The build compiles whisper.cpp from source, which took under a minute on an Apple M3 the first time.
 - Xcode Command Line Tools, for clang, which compiles whisper.cpp and generates the FFmpeg and whisper.cpp bindings
+- Optional, for real words: a ggml whisper model, kept outside the repo. For English, `curl -L -o ~/models/whisper/ggml-base.en.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin` (148 MB). For Hinglish, this project uses [Oriserve Whisper-Hindi2Hinglish-Apex](https://huggingface.co/Oriserve/Whisper-Hindi2Hinglish-Apex) in a community ggml conversion at Q8_0: `curl -L -o ~/models/whisper/ggml-apex-hinglish-q8_0.bin https://huggingface.co/gouravg8/gtm-hi2hing-ggml/resolve/main/ggml-apex-hinglish-q8_0.bin` (874 MB; SHA-256 `bef6d9d5…0d4c`, full value in the [spec](docs/specs/whisper-asr.md)). Pass it with `--whisper-model` or `REELCTL_WHISPER_MODEL`
 
 ```bash
 cargo build --release
@@ -28,6 +29,8 @@ target/release/reelctl diff \
   --draft fixtures/generated/draft_12s.mp4 \
   --outlier fixtures/generated/outlier_12s.edit_dna.json
 ```
+
+Add `--whisper-model <model.bin>` to `decompile` for real words instead of voiced bursts.
 
 `decompile` prints a one-line summary, writes the JSON, and writes one PNG per cut to `fixtures/generated/outlier_12s.edit_dna_timeline/`. `diff` prints a JSON list of flags. See [docs/cli.md](docs/cli.md).
 

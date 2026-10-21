@@ -246,7 +246,7 @@
       "type": "object"
     },
     "Word": {
-      "description": "One word, or one silence-delimited voiced burst when whisper.cpp is not linked.",
+      "description": "One word, or one silence-delimited voiced burst when no whisper model was given.",
       "properties": {
         "end_ms": {
           "format": "uint64",

@@ -59,7 +59,9 @@ mod tests {
 
     fn tone(frequency: f32, rate: u32) -> Vec<f32> {
         (0..rate)
-            .map(|index| (index as f32 * frequency * std::f32::consts::TAU / rate as f32).sin() * 0.5)
+            .map(|index| {
+                (index as f32 * frequency * std::f32::consts::TAU / rate as f32).sin() * 0.5
+            })
             .collect()
     }
 

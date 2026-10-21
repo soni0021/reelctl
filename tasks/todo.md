@@ -65,17 +65,17 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/whisper-asr.md](../docs/specs/
 
 ## Task 4: Use whisper for words when a model is given
 
-**Description:** `asr::transcribe` sends audio to whisper when a model is given and to the burst estimator (with the new note) when not, and returns a `Result` that the pipeline propagates. `p0_fixture.rs` checks the new note and spawns `reelctl` without `REELCTL_*` variables. The user-facing docs and ADR-007 land in the same commit.
+**Description:** `asr::transcribe` sends audio to whisper (DTW word starts, ends at the next word or silence gap, preset from the model header, per the 2026-10-21 spec revision) when a model is given and to the burst estimator (with the new note) when not, and returns a `Result` that the pipeline propagates. `p0_fixture.rs` checks the new note and spawns `reelctl` without `REELCTL_*` variables. The user-facing docs and ADR-007 land in the same commit.
 
 **Acceptance criteria:**
-- [ ] `--whisper-model <model>` gives `asr_backend: "whisper_cpp"` and an `asr_note` naming the model file and whisper.cpp version
-- [ ] Without a model, output is unchanged except `asr_note` ("No whisper model was given ...")
-- [ ] `--whisper-model /missing.bin` exits with code 1 and an error naming the path
-- [ ] Docs updated: `docs/cli.md`, `docs/edit-dna.md`, README usage, CHANGELOG, AGENTS.md P0 gaps, and ADR-007, with ADR-003 marked superseded
+- [x] `--whisper-model <model>` gives `asr_backend: "whisper_cpp"` and an `asr_note` naming the model file and whisper.cpp version
+- [x] Without a model, output is unchanged except `asr_note` ("No whisper model was given ...")
+- [x] `--whisper-model /missing.bin` exits with code 1 and an error naming the path
+- [x] Docs updated: `docs/cli.md`, `docs/edit-dna.md`, README usage, CHANGELOG, AGENTS.md P0 gaps, and ADR-007, with ADR-003 marked superseded
 
 **Verification:**
-- [ ] `cargo test`
-- [ ] Manual runs of the three cases above
+- [x] `cargo test` (30 of 30 pass)
+- [x] Manual runs of the three cases above, on the first 60 s of the real recording: Apex gave 183 words with `asr_backend` `whisper_cpp`; no model gave the new note; `/missing.bin` exited with 1 and `error: decompile: whisper: model not found at /missing.bin`
 
 **Dependencies:** Task 3
 
@@ -95,7 +95,7 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/whisper-asr.md](../docs/specs/
 
 **Verification:**
 - [ ] `cargo test`
-- [ ] `REELCTL_WHISPER_MODEL=~/models/whisper/ggml-base.en.bin cargo test -- --include-ignored`
+- [ ] `REELCTL_WHISPER_MODEL=~/models/whisper/ggml-apex-hinglish-q8_0.bin cargo test -- --include-ignored`, and the same with `ggml-base.en.bin`
 
 **Dependencies:** Task 4
 

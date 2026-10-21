@@ -43,7 +43,7 @@ pub struct SilenceGap {
     pub duration_ms: u64,
 }
 
-/// One word, or one silence-delimited voiced burst when whisper.cpp is not linked.
+/// One word, or one silence-delimited voiced burst when no whisper model was given.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Word {
     pub text: String,

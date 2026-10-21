@@ -8,6 +8,16 @@ fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+/// `reelctl` without the model and weight paths a shell profile may export,
+/// so the sine-tone fixtures never run through whisper or TransNetV2.
+fn reelctl() -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_reelctl"));
+    command
+        .env_remove("REELCTL_WHISPER_MODEL")
+        .env_remove("REELCTL_TRANSNET_WEIGHTS");
+    command
+}
+
 fn generate(kind: &str, path: &std::path::Path) {
     let script = repo_root().join("fixtures/generate.sh");
     let output = Command::new("bash")
@@ -37,9 +47,8 @@ fn decompile_and_diff_match_the_planted_cut_silence_and_static_shot() {
     generate("draft12", &draft_mp4);
     generate("outlier12", &outlier_mp4);
 
-    let bin = env!("CARGO_BIN_EXE_reelctl");
     let decompile = |input: &std::path::Path, out: &std::path::Path, views: &std::path::Path| {
-        let output = Command::new(bin)
+        let output = reelctl()
             .args([
                 "decompile",
                 "--input",
@@ -92,7 +101,7 @@ fn decompile_and_diff_match_the_planted_cut_silence_and_static_shot() {
     assert_eq!(draft.shot_histograms.len(), draft.cuts.len() + 1);
     assert!(draft.shot_histograms[0].mean_r > draft.shot_histograms[0].mean_b);
     assert!(draft.words_per_minute.is_finite());
-    assert!(draft.asr_note.contains("not linked"));
+    assert!(draft.asr_note.starts_with("No whisper model was given"));
     assert_eq!(draft.zoom_curves.status.as_str(), "unimplemented");
     assert!(draft.cube_lut.reason.contains(".cube"));
     assert!(draft.signal_ms > 0 || draft_line.contains("signal_ms="));
@@ -123,7 +132,7 @@ fn decompile_and_diff_match_the_planted_cut_silence_and_static_shot() {
     let bytes = fs::read(png.path()).expect("png bytes");
     assert!(bytes.starts_with(b"\x89PNG"));
 
-    let diff = Command::new(bin)
+    let diff = reelctl()
         .args([
             "diff",
             "--draft",

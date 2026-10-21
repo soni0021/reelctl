@@ -1,31 +1,27 @@
 //! Word timing.
 //!
-//! whisper.cpp was not linked. `whisper-rs` 0.16 builds whisper.cpp through
-//! CMake (`whisper-rs-sys`). On this machine `cmake` is not on PATH
-//! (`cmake: command not found`), and P0 does not download ggml weights.
-//! Without a compiler for the bindings and a model file, linking them would
-//! not produce word timestamps in this session.
-//!
-//! `asr_ms` still times the estimator below. Each contiguous voiced burst
-//! separated by at least 40 ms of silence is one word. Words per minute is
-//! `word_count / (duration_ms / 60_000)` over the whole reel.
+//! With a model file, whisper.cpp transcribes the audio (see `whisper.rs`).
+//! Without one, each contiguous voiced burst separated by at least 40 ms of
+//! silence is one word, named `burst-N`. Either way, words per minute is
+//! `word_count / (duration_ms / 60_000)` over the whole reel, and `asr_ms`
+//! times this stage.
 
 use std::path::Path;
 
-use edit_dna::{AsrBackend, Word};
+use edit_dna::{AsrBackend, SilenceGap, Word};
 
+use crate::error::DecompileError;
 use crate::silence::window_db;
+use crate::whisper;
 
 const THRESHOLD_DB: f64 = -40.0;
 const MIN_BURST_MS: u64 = 40;
 const MIN_SPLIT_MS: u64 = 40;
 
-pub const WHISPER_NOT_LINKED: &str = "\
-whisper.cpp was not linked. whisper-rs 0.16 compiles whisper.cpp through CMake \
-(whisper-rs-sys). On this machine cmake is not installed (`cmake: command not found`), \
-and P0 does not download ggml weights. Without both, the bindings cannot produce word \
-timestamps in this session. asr_ms times this silence-derived estimator: each contiguous \
-voiced burst separated by at least 40ms of silence is one word, and words_per_minute is \
+pub const NO_MODEL: &str = "\
+No whisper model was given (--whisper-model or REELCTL_WHISPER_MODEL), so whisper.cpp did \
+not run. asr_ms times the silence-derived estimator instead: each contiguous voiced burst \
+separated by at least 40ms of silence is one word, and words_per_minute is \
 word_count / (duration_ms / 60000) over the whole reel.";
 
 pub struct AsrEstimate {
@@ -39,28 +35,46 @@ pub fn transcribe(
     pcm: &[f32],
     sample_rate: u32,
     duration_ms: u64,
+    silence_gaps: &[SilenceGap],
     model: Option<&Path>,
-) -> AsrEstimate {
-    let mut note = WHISPER_NOT_LINKED.to_string();
-    if let Some(path) = model {
-        note.push_str(&format!(
-            " A model path was provided ({}) but whisper.cpp is not linked, so it was not used.",
-            path.display()
-        ));
-    }
-    let words = bursts(pcm, sample_rate);
-    let words_per_minute = if duration_ms == 0 {
-        0.0
-    } else {
-        let minutes = duration_ms as f64 / 60_000.0;
-        round2(words.len() as f64 / minutes)
+) -> Result<AsrEstimate, DecompileError> {
+    let Some(path) = model else {
+        let words = bursts(pcm, sample_rate);
+        return Ok(AsrEstimate {
+            words_per_minute: per_minute(words.len(), duration_ms),
+            words,
+            backend: AsrBackend::SilenceBursts,
+            note: NO_MODEL.to_string(),
+        });
     };
-    AsrEstimate {
-        words,
-        words_per_minute,
-        backend: AsrBackend::SilenceBursts,
+    let transcript = whisper::transcribe(path, pcm, sample_rate, silence_gaps)?;
+    let file_name = path.file_name().map_or_else(
+        || path.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    let note = format!(
+        "whisper.cpp {} transcribed the audio with {file_name} (DTW preset {}, language {}). \
+Each word starts at its DTW timestamp and ends at the next word's start or the next silence \
+gap, whichever is earlier. words_per_minute is word_count / (duration_ms / 60000) over the \
+whole reel.",
+        whisper_rs::get_whisper_version(),
+        transcript.preset,
+        transcript.language,
+    );
+    Ok(AsrEstimate {
+        words_per_minute: per_minute(transcript.words.len(), duration_ms),
+        words: transcript.words,
+        backend: AsrBackend::WhisperCpp,
         note,
+    })
+}
+
+fn per_minute(count: usize, duration_ms: u64) -> f64 {
+    if duration_ms == 0 {
+        return 0.0;
     }
+    let minutes = duration_ms as f64 / 60_000.0;
+    round2(count as f64 / minutes)
 }
 
 fn bursts(pcm: &[f32], sample_rate: u32) -> Vec<Word> {
@@ -133,11 +147,10 @@ mod tests {
         for index in 0..(rate / 5) {
             pcm.push((index as f32 * 0.3).sin() * 0.2);
         }
-        let estimate = transcribe(&pcm, rate, 500, None);
+        let estimate = transcribe(&pcm, rate, 500, &[], None).expect("no model");
         assert_eq!(estimate.backend, AsrBackend::SilenceBursts);
         assert_eq!(estimate.words.len(), 2, "words={:?}", estimate.words);
         assert!(estimate.words_per_minute > 0.0);
-        assert!(estimate.note.contains("cmake"));
-        assert!(estimate.note.contains("not linked"));
+        assert!(estimate.note.starts_with("No whisper model was given"));
     }
 }

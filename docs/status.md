@@ -13,7 +13,7 @@ Apple M3 (8 cores, 16 GB), macOS 26.5, rustc 1.98.1, FFmpeg 8.1.
 | Check | Result |
 |---|---|
 | `cargo check --workspace --all-targets` | Passes with 23 warnings (see Known issues) |
-| `cargo test --workspace` | 17 of 17 pass: 16 unit tests and the end-to-end fixture test |
+| `cargo test --workspace` | 17 of 17 pass: 16 unit tests and the end-to-end fixture test. On `feature/whisper-asr`, 2026-10-21: 30 of 30 (29 unit tests and the end-to-end fixture test) |
 | 60 s benchmark, release build | `signal_ms` 310, 316, 284 over three runs; the target is under 500 |
 | 12 s fixtures (640×360), release build | `signal_ms` 11–21 |
 
@@ -44,6 +44,7 @@ The input was an 87 s iPhone recording: HEVC Main 10 with HDR (HLG), 1080×1920 
 | Silence gaps at −40 dBFS | 26 gaps, the longest 190 ms, so no pause of 0.3 s or more. The room noise sits between −30 and −25 dB; at −25 dB there are 19 pauses of 0.3 s or more |
 | whisper `base.en`, on the `feature/whisper-asr` branch | One invented English sentence, repeated. The speech is Hinglish, which this English-only model cannot read |
 | Oriserve Whisper-Hindi2Hinglish-Apex (Q8_0, large-v3-turbo fine-tune), 2026-10-21 | Real Roman-script Hinglish, 183 words in 60 s, in 14.5 s. With plain timestamps, 21 of 183 words stretched more than 200 ms into one of the 19 pauses found at −25 dB; with DTW timestamps, none did, at the same speed |
+| `reelctl decompile --whisper-model` with Apex, release build, 2026-10-21 | `asr_backend` `whisper_cpp`, 183 words, 183 words per minute, `asr_ms` 19,182, no whisper.cpp output on stderr. whisper.cpp reported the language as `en`, since the model writes Roman script. No word starts inside one of the 19 pauses, but 9 words end more than 200 ms into one, because reelctl's −40 dBFS silence gaps, where word ends stop, miss those pauses |
 
 What this means:
 
@@ -62,7 +63,7 @@ Already listed in [AGENTS.md](../AGENTS.md) as P0 gaps:
 
 | Gap | Effect now | To close it |
 |---|---|---|
-| whisper.cpp not linked | `words` are voiced bursts named `burst-N`; `words_per_minute` counts bursts, not words | In progress. `cmake` 4.4.4 and `~/models/whisper/ggml-base.en.bin` are installed; the [spec](specs/whisper-asr.md) awaits approval |
+| Word timing needs a model | Without `--whisper-model`, `words` are voiced bursts named `burst-N` and `words_per_minute` counts bursts | Being closed on `feature/whisper-asr`: with a model, whisper.cpp gives real words timed with DTW ([ADR-007](decisions/ADR-007-whisper-cpp-word-timing.md)). Models are never downloaded by `reelctl` |
 | TransNetV2 not linked | Every cut comes from the scene-score detector; `--cut-detector transnet` exits with an error | TransNetV2 ONNX weights and an `ort` dependency |
 | Zoom curves and `.cube` LUT | Reported as `"status": "unimplemented"` | Pass 1b work |
 
@@ -71,7 +72,7 @@ Not yet listed in AGENTS.md:
 - **`diff` barely uses the outlier.** Dead air and static windows are properties of the draft alone; the outlier only feeds the payoff check. `diff` takes one outlier, where planer.md asks for one to three and a second-by-second pacing comparison. This is the main gap against the P0 success metric.
 - **Static windows count only cuts.** planer.md defines a static window as more than 2.5 s without B-roll, zoom, or a graphic callout. Nothing detects zooms or graphics yet, so a punch-in without a cut is still flagged.
 - **The 500 ms target fails on real footage.** Only one real recording has been run so far ([First real footage](#first-real-footage-2026-10-20)). The tests still use only synthetic clips ([ADR-006](decisions/ADR-006-synthetic-offline-fixtures.md)).
-- **The silence threshold is fixed at −40 dBFS.** On the real recording it found no pause of 0.3 s or more, because room noise sat above it.
+- **The silence threshold is fixed at −40 dBFS.** On the real recording it found no pause of 0.3 s or more, because room noise sat above it. whisper word ends stop at these gaps, so on that recording 9 of 183 words end inside a real pause.
 - **10-bit video is rejected.** Decoding stops with `unsupported pixel format` on anything other than 8-bit 4:2:0. That rules out iPhone HDR recordings until they are converted, which the real-footage run confirmed.
 - **`--draft` takes an MP4.** planer.md specifies a `.otio` timeline; OpenTimelineIO is P2 work.
 
