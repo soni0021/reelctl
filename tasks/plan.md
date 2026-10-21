@@ -36,7 +36,7 @@ Link whisper.cpp through `whisper-rs` 0.16.0 and use it for `words` whenever a m
 - [x] Task 6: Measure and close out
 
 ### Checkpoint B
-- [ ] All seven spec success criteria verified, reviewed with the user, merged into `main`
+- [x] All seven spec success criteria verified, reviewed with the user, merged into `main`
 
 ## Risks and Mitigations
 

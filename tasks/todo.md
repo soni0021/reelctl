@@ -125,4 +125,4 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/whisper-asr.md](../docs/specs/
 
 - [x] All seven spec success criteria verified
 - [x] `cargo test` passes, and the model test passes
-- [ ] Reviewed with the user, then `feature/whisper-asr` merged into `main`
+- [x] Reviewed with the user, then `feature/whisper-asr` merged into `main`

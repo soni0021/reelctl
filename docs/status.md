@@ -4,7 +4,7 @@ Last updated 2026-10-21. Update this page in the same commit as any change that 
 
 ## Summary
 
-P0, the Rust decompiler and reel-diff CLI, is built and its tests pass. It meets the 500 ms target on the synthetic 60-second benchmark clip but misses it on real footage: 60 s of an iPhone recording, converted to 8-bit H.264, took 2.1–2.8 s ([First real footage](#first-real-footage-2026-10-20)). Given a whisper model, `decompile` now produces real words timed with DTW, including Hinglish (on branch `feature/whisper-asr`, awaiting review). `diff` does not yet compare pacing against the outlier. P1–P3 in [planer.md](../planer.md) have not started.
+P0, the Rust decompiler and reel-diff CLI, is built and its tests pass. It meets the 500 ms target on the synthetic 60-second benchmark clip but misses it on real footage: 60 s of an iPhone recording, converted to 8-bit H.264, took 2.1–2.8 s ([First real footage](#first-real-footage-2026-10-20)). Given a whisper model, `decompile` now produces real words timed with DTW, including Hinglish (merged into `main` on 2026-10-21). `diff` does not yet compare pacing against the outlier. P1–P3 in [planer.md](../planer.md) have not started.
 
 ## Verified 2026-10-20
 
@@ -32,7 +32,7 @@ REELCTL_PROFILE=1 target/release/reelctl decompile \
 
 ## Word timing, 2026-10-21
 
-Same machine, release build, branch `feature/whisper-asr`. whisper.cpp 1.8.3 on the CPU with 4 threads (whisper-rs's default). Three runs each.
+Same machine, release build. whisper.cpp 1.8.3 on the CPU with 4 threads (whisper-rs's default). Three runs each.
 
 | Check | Result |
 |---|---|
@@ -78,7 +78,7 @@ Already listed in [AGENTS.md](../AGENTS.md) as P0 gaps:
 
 | Gap | Effect now | To close it |
 |---|---|---|
-| Word timing needs a model | Without `--whisper-model`, `words` are voiced bursts named `burst-N` and `words_per_minute` counts bursts | Closed on `feature/whisper-asr`, awaiting merge: with a model, whisper.cpp gives real words timed with DTW ([ADR-007](decisions/ADR-007-whisper-cpp-word-timing.md)). `reelctl` never downloads a model |
+| Word timing needs a model | Without `--whisper-model`, `words` are voiced bursts named `burst-N` and `words_per_minute` counts bursts | Closed 2026-10-21, merged into `main`: with a model, whisper.cpp gives real words timed with DTW ([ADR-007](decisions/ADR-007-whisper-cpp-word-timing.md)). `reelctl` never downloads a model |
 | TransNetV2 not linked | Every cut comes from the scene-score detector; `--cut-detector transnet` exits with an error | TransNetV2 ONNX weights and an `ort` dependency |
 | Zoom curves and `.cube` LUT | Reported as `"status": "unimplemented"` | Pass 1b work |
 
@@ -101,7 +101,7 @@ Not yet listed in AGENTS.md:
 
 ## Next steps
 
-Awaiting review and merge: real word timing with whisper.cpp ([spec](specs/whisper-asr.md), branch `feature/whisper-asr`). A possible follow-up, not yet specified: a `--whisper-language` flag, which would skip language detection and save about 6 s per run with the Apex model.
+Done: real word timing with whisper.cpp ([spec](specs/whisper-asr.md)), merged 2026-10-21. A possible follow-up, not yet specified: a `--whisper-language` flag, which would skip language detection and save about 6 s per run with the Apex model.
 
 Then, to finish P0 against its own success metric before starting P1:
 
