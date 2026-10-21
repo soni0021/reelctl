@@ -13,7 +13,7 @@ Apple M3 (8 cores, 16 GB), macOS 26.5, rustc 1.98.1, FFmpeg 8.1.
 | Check | Result |
 |---|---|
 | `cargo check --workspace --all-targets` | Passes with 23 warnings (see Known issues) |
-| `cargo test --workspace` | 17 of 17 pass: 16 unit tests and the end-to-end fixture test. On `feature/whisper-asr`, 2026-10-21: 31 of 31, plus the whisper model test, which is ignored by default and passes with both models |
+| `cargo test --workspace` | 2026-10-21, on `main`: 31 of 31 pass, plus the whisper model test, which is ignored by default and passes with both models |
 | 60 s benchmark, release build | `signal_ms` 310, 316, 284 over three runs; the target is under 500 |
 | 12 s fixtures (640×360), release build | `signal_ms` 11–21 |
 
