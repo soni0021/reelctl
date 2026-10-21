@@ -1,7 +1,7 @@
 # ADR-003: Estimate word timing from silence while whisper.cpp is unlinked
 
 ## Status
-Accepted
+Superseded by [ADR-007](ADR-007-whisper-cpp-word-timing.md) on 2026-10-21. The estimator remains the no-model path.
 
 ## Date
 2026-10-18. Recorded on 2026-10-20 from [asr.rs](../../crates/decompile/src/asr.rs) and [AGENTS.md](../../AGENTS.md).

@@ -38,10 +38,12 @@ Audio is mixed to mono and resampled to 48 kHz first.
 |---|---|
 | `silence_gaps` | `{start_ms, end_ms, duration_ms}` for each run of 10 ms windows whose RMS level is below −40 dBFS, if the run lasts at least 80 ms. A pause with music or room noise above −40 dBFS is not a gap. The 180 ms dead-air limit is applied later, by `diff`. |
 | `integrated_lufs` | Integrated loudness following ITU-R BS.1770 / EBU R128 (K-weighting; 400 ms blocks every 100 ms; −70 LUFS absolute gate; −10 LU relative gate), rounded to 2 decimals. −70 means silence or no audio. It is measured on the mono mix, so it can differ from a stereo meter. |
-| `words` | `{text, start_ms, end_ms}` entries. Not real words yet; see below. |
+| `words` | `{text, start_ms, end_ms}` entries: transcribed words with a whisper model, voiced bursts without one; see below. |
 | `words_per_minute` | Number of `words` divided by the duration in minutes, rounded to 2 decimals |
-| `asr_backend` | `"silence_bursts"` today; `"whisper_cpp"` once whisper.cpp is linked |
-| `asr_note` | Why that backend ran, and whether a `--whisper-model` path was ignored |
+| `asr_backend` | `"whisper_cpp"` when `--whisper-model` was given, otherwise `"silence_bursts"` |
+| `asr_note` | Which backend ran and how. For whisper.cpp: its version, the model's file name (not its path), the DTW preset, and the detected language |
+
+With `"whisper_cpp"`, `text` is the word as whisper.cpp wrote it, with any attached punctuation, such as `air.`. `start_ms` is the word's DTW timestamp. `end_ms` is the next word's `start_ms`, or the start of the next silence gap if that is earlier, so a word never runs into a gap that `silence_gaps` lists; it can run into a pause that sits above −40 dBFS. Times have 10 ms resolution. `words_per_minute` is a real speaking rate. See [ADR-007](decisions/ADR-007-whisper-cpp-word-timing.md).
 
 With `"silence_bursts"`, each word is a stretch of sound above −40 dBFS that ends at the first 40 ms of silence, kept if it lasts at least 40 ms. `text` is a placeholder: `burst-0`, `burst-1`, and so on. A continuous tone or music bed counts as one long word, so `words_per_minute` is a burst rate, not a speaking rate. See [ADR-003](decisions/ADR-003-silence-burst-word-estimator.md).
 

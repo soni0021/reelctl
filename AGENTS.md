@@ -20,7 +20,8 @@ P1–P3 in planer.md (Go watchtower, OpenTimelineIO / Smelter / manimgx, Qwen3-V
 ## Verify
 
 - After a code change: `cargo check` on edit, `cargo test` once at task end. Do not re-run the suite on unchanged code.
-- A green P0 run is the workspace unit tests plus `crates/reelctl/tests/p0_fixture.rs` (synthetic `fixtures/generate.sh` clips: planted cut, silence, static shot, payoff). No network, no scraped Reels.
+- A green P0 run is the workspace unit tests plus `crates/reelctl/tests/p0_fixture.rs` (synthetic `fixtures/generate.sh` clips: planted cut, silence, static shot, payoff) and `whisper_fixture.rs`. No network, no scraped Reels.
+- The whisper model test is `#[ignore]`d. After changing word timing, also run `REELCTL_WHISPER_MODEL=~/models/whisper/ggml-apex-hinglish-q8_0.bin cargo test -p reelctl --test whisper_fixture -- --include-ignored` (macOS only: it needs `say`). Tests that spawn `reelctl` must remove `REELCTL_WHISPER_MODEL` and `REELCTL_TRANSNET_WEIGHTS` from its environment.
 - CLI: `reelctl decompile --input <reel.mp4> --out <edit_dna.json>` and `reelctl diff --draft <draft.mp4> --outlier <edit_dna.json>`.
 - `signal_ms` must be a measured structural duration (decode, cuts, silence, loudness, histograms, JSON write). Do not invent or pad it.
 
@@ -33,11 +34,13 @@ Update the docs in the same commit as every change, without waiting to be asked;
 - `docs/cli.md`: `reelctl` flags, output, exit codes, input requirements.
 - `docs/edit-dna.md`: every `edit_dna.json` field. Regenerate the schema with `cargo run -p edit-dna --example schema` when the types change.
 - `docs/decisions/`: one ADR per significant decision, named `ADR-NNN-short-title.md` with the next number. When a decision changes, add a new ADR and mark the old one superseded; never delete ADRs.
+- `docs/specs/`: one spec per feature, approved by the user before coding starts (spec-driven-development). Keep it current while building.
+- `tasks/plan.md` and `tasks/todo.md`: the active implementation plan and its checklist (planning-and-task-breakdown). Tick a task's boxes in the commit that finishes it.
 - `CHANGELOG.md`: an entry under Unreleased for each change a `reelctl` user would notice.
 
 ## P0 gaps (documented, do not implement here)
 
-- whisper.cpp is unlinked: `cmake` is not on PATH, ggml weights are not downloaded, and `whisper-rs` is not a dependency. `asr_backend` is `silence_bursts`; `asr_ms` times that estimator.
+- whisper.cpp runs only when `--whisper-model` or `REELCTL_WHISPER_MODEL` names a model; weights are never downloaded or committed. Without one, `asr_backend` is `silence_bursts` and `asr_ms` times that estimator.
 - TransNetV2 / `ort` is unlinked: weights are not vendored. `--cut-detector auto` uses the FFmpeg scene-score `CutDetector` unless a weight file exists (then detection still fails closed until an ort-backed build is wired).
 - Optical-flow Bézier zoom and `.cube` LUT stay `StubbedPass` (`status: unimplemented`). Those are Pass 1b, not this tree.
 

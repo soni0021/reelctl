@@ -80,8 +80,9 @@ pub fn decompile_file(request: &DecompileRequest) -> Result<DecompileOutput, Dec
         &decoded.pcm,
         decoded.sample_rate,
         decoded.duration_ms,
+        &silence_gaps,
         request.whisper_model.as_deref(),
-    );
+    )?;
     let asr_elapsed = asr_started.elapsed();
 
     let mut dna = assemble(

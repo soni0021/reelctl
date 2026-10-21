@@ -17,7 +17,7 @@ reelctl decompile --input <reel.mp4> --out <edit_dna.json> [options]
 | `--filmstrip-dir <dir>` | | `<out stem>_timeline` beside `--out` | Where to write the `timeline_view` PNGs |
 | `--cut-detector <auto\|scene\|transnet>` | | `auto` | Which cut detector to run; see below |
 | `--transnet-weights <path>` | `REELCTL_TRANSNET_WEIGHTS` | none | TransNetV2 ONNX weights |
-| `--whisper-model <path>` | `REELCTL_WHISPER_MODEL` | none | ggml whisper.cpp model. Accepted but ignored until whisper.cpp is linked; `asr_note` records that it was ignored |
+| `--whisper-model <path>` | `REELCTL_WHISPER_MODEL` | none | ggml whisper.cpp model. With one, `words` come from whisper.cpp; without one, from the silence-burst estimator. A path that is missing, is not a ggml whisper model, or has a shape no DTW preset matches exits with code 1. See [Word timing](#word-timing) |
 
 `<out stem>` is the output file name minus its last extension, so `--out a/clip.edit_dna.json` puts the PNGs in `a/clip.edit_dna_timeline/`.
 
@@ -62,9 +62,23 @@ For a cut with 4 frames on each side, the image is 1024×168 pixels. From top to
 
 1. Filmstrip, 72 px: up to 4 frames before the cut and 4 frames starting at the cut, each 64×36 pixels scaled up 2×. An orange line marks the left edge of the first frame of the new shot.
 2. Waveform, 64 px: the mono audio from 1.5 s before to 1.5 s after the cut.
-3. Word ticks, 24 px: a yellow tick at the start of each word inside that 3-second range. Today each "word" is a voiced burst.
+3. Word ticks, 24 px: a yellow tick at the start of each word inside that 3-second range. Without `--whisper-model`, each "word" is a voiced burst.
 
 The filmstrip and the waveform do not share a time scale. The 8 frames span about 0.27 s at 30 fps, while the waveform spans 3 s across the same width.
+
+### Word timing
+
+With `--whisper-model`, whisper.cpp 1.8.3 transcribes the audio on the CPU. Any ggml whisper model works, including fine-tunes such as Oriserve Whisper-Hindi2Hinglish-Apex, which writes Hinglish in Roman script:
+
+```bash
+reelctl decompile --input reel.mp4 --out reel.edit_dna.json \
+  --whisper-model ~/models/whisper/ggml-apex-hinglish-q8_0.bin
+```
+
+- English-only (`.en`) models transcribe English; multilingual models detect the language.
+- Each word starts at its DTW timestamp and ends at the next word's start, or at the next silence gap if that comes first. DTW needs the model's alignment-head preset, which `reelctl` picks from the shape in the model file's header, so renamed files work.
+- whisper.cpp prints nothing. Its time is `asr_ms`, which is not part of `signal_ms` or the 500 ms target. A 60 s clip took about 19 s with the Apex model on an Apple M3.
+- `reelctl` never picks a model on its own. To use one by default, export `REELCTL_WHISPER_MODEL` in your shell profile.
 
 ## reelctl diff
 
@@ -125,7 +139,7 @@ Flags come in that order: all dead air, then all static windows, then the payoff
 | Code | Meaning |
 |---|---|
 | 0 | Success |
-| 1 | Runtime error. stderr gets `error: ` and the cause chain, for example `error: decompile: open input: No such file or directory` |
+| 1 | Runtime error. stderr gets `error: ` and the cause chain, for example `error: decompile: open input: No such file or directory` or `error: decompile: whisper: model not found at /missing.bin` |
 | 2 | Invalid arguments; clap prints the usage |
 
 ## Input requirements

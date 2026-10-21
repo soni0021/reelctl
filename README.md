@@ -2,7 +2,7 @@
 
 `reelctl` measures how a short vertical video is edited and compares a creator's draft against a top-performing reel (an "outlier") in the same niche.
 
-- `reelctl decompile` turns an MP4 into `edit_dna.json`: cut times, silence gaps, loudness, per-shot color, and whether there is a cut near the 9-second payoff mark. It also writes a `timeline_view` PNG at each cut, so an agent can inspect cuts without opening the video.
+- `reelctl decompile` turns an MP4 into `edit_dna.json`: cut times, silence gaps, loudness, per-shot color, whether there is a cut near the 9-second payoff mark, and, given a whisper model, timed words. It also writes a `timeline_view` PNG at each cut, so an agent can inspect cuts without opening the video.
 - `reelctl diff` decompiles a draft and flags dead air, long stretches with no cut, and a missing payoff cue.
 
 This repository is P0 of the plan in [planer.md](planer.md). P1–P3 (trend watchtower, timeline editor, specialist video model) are specified there and not built. Current state, measurements, and known gaps are in [docs/status.md](docs/status.md).
@@ -13,7 +13,9 @@ Tested on macOS with Apple Silicon. You need:
 
 - Rust (tested with rustc 1.98.1)
 - FFmpeg with its development libraries, and `pkg-config`: `brew install ffmpeg pkg-config` (tested with FFmpeg 8.1). The `ffmpeg` command, with libx264, also generates the test clips.
-- Xcode Command Line Tools, for the clang that generates the FFmpeg bindings
+- CMake: `brew install cmake` (tested with 4.4.4). The build compiles whisper.cpp from source, which took under a minute on an Apple M3 the first time.
+- Xcode Command Line Tools, for clang, which compiles whisper.cpp and generates the FFmpeg and whisper.cpp bindings
+- Optional, for real words: a ggml whisper model, kept outside the repo. For English, `curl -L -o ~/models/whisper/ggml-base.en.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin` (148 MB). For Hinglish, this project uses [Oriserve Whisper-Hindi2Hinglish-Apex](https://huggingface.co/Oriserve/Whisper-Hindi2Hinglish-Apex) in a community ggml conversion at Q8_0: `curl -L -o ~/models/whisper/ggml-apex-hinglish-q8_0.bin https://huggingface.co/gouravg8/gtm-hi2hing-ggml/resolve/main/ggml-apex-hinglish-q8_0.bin` (874 MB; SHA-256 `bef6d9d5…0d4c`, full value in the [spec](docs/specs/whisper-asr.md)). Pass it with `--whisper-model` or `REELCTL_WHISPER_MODEL`
 
 ```bash
 cargo build --release
@@ -28,6 +30,8 @@ target/release/reelctl diff \
   --outlier fixtures/generated/outlier_12s.edit_dna.json
 ```
 
+Add `--whisper-model <model.bin>` to `decompile` for real words instead of voiced bursts.
+
 `decompile` prints a one-line summary, writes the JSON, and writes one PNG per cut to `fixtures/generated/outlier_12s.edit_dna_timeline/`. `diff` prints a JSON list of flags. See [docs/cli.md](docs/cli.md).
 
 ## Commands
@@ -35,9 +39,10 @@ target/release/reelctl diff \
 | Command | Use |
 |---|---|
 | `cargo check` | Type-check the workspace after every edit |
-| `cargo test` | Unit tests and the end-to-end fixture test; run once at the end of a task |
+| `cargo test` | Unit tests and the end-to-end tests; run once at the end of a task. Needs no whisper model |
+| `REELCTL_WHISPER_MODEL=<model.bin> cargo test -- --include-ignored` | Also run the whisper model test on the `speech12` clip (macOS only) |
 | `cargo build --release` | Build `target/release/reelctl`; take timings with this build, not the debug one |
-| `bash fixtures/generate.sh draft12\|outlier12\|bench60 <out.mp4>` | Generate one synthetic clip |
+| `bash fixtures/generate.sh draft12\|outlier12\|bench60\|speech12 <out.mp4>` | Generate one synthetic clip. `speech12` is 12 s of `say` speech with a planted 1 s pause, and needs macOS |
 | `bash fixtures/generate.sh all` | Generate all three clips into `fixtures/generated/` |
 | `cargo run -p edit-dna --example schema` | Regenerate `crates/edit-dna/schema/edit_dna.schema.json` after changing the types |
 | `REELCTL_PROFILE=1 target/release/reelctl decompile ...` | Also print per-stage timings to stderr |
@@ -74,6 +79,7 @@ The reasons behind these choices are in [docs/decisions/](docs/decisions/).
 - [docs/cli.md](docs/cli.md): `reelctl` flags, output, exit codes, input requirements
 - [docs/edit-dna.md](docs/edit-dna.md): every field in `edit_dna.json`
 - [docs/decisions/](docs/decisions/): architecture decision records (ADRs)
+- [docs/specs/](docs/specs/): feature specs, written and approved before the code
 - [CHANGELOG.md](CHANGELOG.md): notable changes
 - [planer.md](planer.md): product spec and the P0–P3 roadmap
 

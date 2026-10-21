@@ -13,9 +13,11 @@ mod histogram;
 mod loudness;
 mod payoff;
 mod pipeline;
+mod resample;
 mod scene;
 mod silence;
 mod transnet;
+mod whisper;
 
 pub use error::DecompileError;
 pub use pipeline::{decompile_file, DecompileOutput, DecompileRequest, StageProfile};

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Synthetic fixtures only. Color sources, a hard cut, and a known silence gap.
-# No scraped Reels, no network.
+# No scraped Reels, no network. speech12 needs macOS `say` and its Samantha voice.
 set -euo pipefail
 
 encode() {
@@ -48,6 +48,21 @@ bench60() {
     -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=60"
 }
 
+# 12 s of solid blue with synthesized speech from 0.5 s and a planted 1 s pause
+# after "air.". Digital silence everywhere else, so silence_gaps finds the pause.
+speech12() {
+  local out="$1"
+  local base speech
+  base="$(mktemp -t reelctl-speech)"
+  speech="${base}.aiff"
+  say -v Samantha -o "$speech" "Cut the dead air. [[slnc 1000]] Show the proof before the viewer scrolls away."
+  encode "$out" \
+    "[1:a]aresample=48000,adelay=500:all=1,apad,atrim=duration=12[a];[0:v]null[v]" \
+    -f lavfi -i "color=c=blue:s=640x360:r=30:d=12" \
+    -i "$speech"
+  rm -f "$base" "$speech"
+}
+
 cmd="${1:-}"
 out="${2:-}"
 case "$cmd" in
@@ -60,6 +75,9 @@ case "$cmd" in
   bench60)
     bench60 "$out"
     ;;
+  speech12)
+    speech12 "$out"
+    ;;
   all)
     root="$(cd "$(dirname "$0")" && pwd)"
     dir="${root}/generated"
@@ -69,7 +87,7 @@ case "$cmd" in
     bench60 "${dir}/bench_60s.mp4"
     ;;
   *)
-    echo "usage: generate.sh draft12|outlier12|bench60|all [out.mp4]" >&2
+    echo "usage: generate.sh draft12|outlier12|bench60|speech12|all [out.mp4]" >&2
     exit 2
     ;;
 esac
