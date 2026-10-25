@@ -42,7 +42,7 @@ Update the docs in the same commit as every change, without waiting to be asked;
 
 - whisper.cpp runs only when `--whisper-model` or `REELCTL_WHISPER_MODEL` names a model; weights are never downloaded or committed. Without one, `asr_backend` is `silence_bursts` and `asr_ms` times that estimator.
 - TransNetV2 / `ort` is unlinked: weights are not vendored. `--cut-detector auto` uses the FFmpeg scene-score `CutDetector` unless a weight file exists (then detection still fails closed until an ort-backed build is wired).
-- Optical-flow Bézier zoom and `.cube` LUT stay `StubbedPass` (`status: unimplemented`). Those are Pass 1b, not this tree.
+- Optical-flow Bézier zoom curves and `.cube` LUT stay `StubbedPass` (`status: unimplemented`). Those are Pass 1b, not this tree. Detecting punch-in zooms and overlay changes as edit events is in P0 (module `visual-motion` in [docs/specs/p0-capability-map.md](docs/specs/p0-capability-map.md), approved 2026-10-25).
 
 ## Learned User Preferences
 
