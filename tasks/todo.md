@@ -7,12 +7,12 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/relative-silence.md](../docs/s
 **Description:** Pure functions in `silence.rs`: `window_levels(pcm, sample_rate)` (one dB value per 10 ms window, using the existing `window_db`), `percentile(levels, p)` (nearest rank), and `threshold_db(levels)` = `max(−40, min(p10 + 6, p90 − 12))`. Nothing calls them yet.
 
 **Acceptance criteria:**
-- [ ] Digital silence plus a −14 dB level gives −40
-- [ ] A −40 dB floor under a −14 dB level gives −34 (`p10 + 6`, below the cap of −26); a constant −21 dB level gives −33 (`p90 − 12`, below `p10 + 6` = −15)
-- [ ] An empty list gives −40, and `window_levels` returns `ceil(samples / 480)` values at 48 kHz
+- [x] Digital silence plus a −14 dB level gives −40
+- [x] A −40 dB floor under a −14 dB level gives −34 (`p10 + 6`, below the cap of −26); a constant −21 dB level gives −33 (`p90 − 12`, below `p10 + 6` = −15)
+- [x] An empty list gives −40, and `window_levels` returns `ceil(samples / 480)` values at 48 kHz
 
 **Verification:**
-- [ ] `cargo test -p decompile silence` (new tests red first, then green)
+- [x] `cargo test -p decompile silence` (new tests red first, then green: 11 of 11). The new functions show `dead_code` warnings until Task 2 calls them
 
 **Dependencies:** None
 

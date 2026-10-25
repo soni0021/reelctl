@@ -22,7 +22,7 @@ Replace the fixed −40 dBFS silence threshold with `max(−40, min(p10 + 6, p90
 ## Task List
 
 ### Phase 1: The rule
-- [ ] Task 1: Threshold from window levels (pure functions)
+- [x] Task 1: Threshold from window levels (pure functions)
 - [ ] Task 2: Gaps and bursts use the threshold, and gaps survive short sounds
 
 ### Checkpoint A
