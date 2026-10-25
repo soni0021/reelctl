@@ -23,10 +23,10 @@ Replace the fixed −40 dBFS silence threshold with `max(−40, min(p10 + 6, p90
 
 ### Phase 1: The rule
 - [x] Task 1: Threshold from window levels (pure functions)
-- [ ] Task 2: Gaps and bursts use the threshold, and gaps survive short sounds
+- [x] Task 2: Gaps and bursts use the threshold, and gaps survive short sounds
 
 ### Checkpoint A
-- [ ] `cargo test` passes; the four synthetic clips' `silence_gaps` match the baseline captured before Task 2; the real clip meets spec criterion 3
+- [x] `cargo test` passes; the four synthetic clips' `silence_gaps` match the baseline captured before Task 2; the real clip meets spec criterion 3
 
 ### Phase 2: Output and proof
 - [ ] Task 3: Record the threshold and noise floor in `edit_dna.json`

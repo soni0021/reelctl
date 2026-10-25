@@ -25,13 +25,13 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/relative-silence.md](../docs/s
 **Description:** `silence::analyze` returns gaps, the threshold, and the noise floor (p10). Gap detection takes the threshold and ends a gap only after 30 ms of sound; the 80 ms minimum stays. The pipeline calls `analyze` in the silence stage and passes the result to `asr::transcribe`. The burst estimator takes the threshold instead of its own −40. Docs that describe silence detection change in the same commit.
 
 **Acceptance criteria:**
-- [ ] A −38 dB noise pause inside a −20 dB tone is a gap at the computed threshold and not at −40; 10 and 20 ms sounds inside a gap do not split it, 30 ms does; a gap still open at the end of the audio closes there
-- [ ] `draft12`, `outlier12`, `bench60`, and `speech12` give exactly the `silence_gaps` they gave on `main` (baseline saved before the change)
-- [ ] Docs: `docs/edit-dna.md` (`silence_gaps` and burst text), AGENTS.md (the −40 dBFS workspace fact), CHANGELOG, and ADR-008, with a pointer to it added to ADR-007's consequences
+- [x] A −38 dB noise pause inside a −20 dB tone is a gap at the computed threshold and not at −40; 10 and 20 ms sounds inside a gap do not split it, 30 ms does; a gap still open at the end of the audio closes there
+- [x] `draft12`, `outlier12`, `bench60`, and `speech12` give exactly the `silence_gaps` they gave on `main` (baseline saved before the change)
+- [x] Docs: `docs/edit-dna.md` (`silence_gaps` and burst text), AGENTS.md (the −40 dBFS workspace fact), CHANGELOG, and ADR-008, with a pointer to it added to ADR-007's consequences
 
 **Verification:**
-- [ ] `cargo test`
-- [ ] Release build: baseline comparison for the four clips; on the first 60 s of the real recording, at least 20 gaps of 300 ms or more and no Apex word start more than 100 ms inside a gap
+- [x] `cargo test` (41 pass, 1 ignored)
+- [x] Release build: baseline comparison for the four clips; on the first 60 s of the real recording, at least 20 gaps of 300 ms or more and no Apex word start more than 100 ms inside a gap. Result: gaps and burst words identical on all four clips; the real clip has 74 gaps, 31 of 180 ms or more, 24 of 300 ms or more, and no word start inside a gap
 
 **Dependencies:** Task 1
 
@@ -41,8 +41,8 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/relative-silence.md](../docs/s
 
 ## Checkpoint A
 
-- [ ] `cargo test` passes
-- [ ] The baseline comparison and the real-clip check in Task 2 pass
+- [x] `cargo test` passes
+- [x] The baseline comparison and the real-clip check in Task 2 pass
 
 ## Task 3: Record the threshold and noise floor in `edit_dna.json`
 

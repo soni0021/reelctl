@@ -36,16 +36,16 @@ Audio is mixed to mono and resampled to 48 kHz first.
 
 | Field | Meaning |
 |---|---|
-| `silence_gaps` | `{start_ms, end_ms, duration_ms}` for each run of 10 ms windows whose RMS level is below −40 dBFS, if the run lasts at least 80 ms. A pause with music or room noise above −40 dBFS is not a gap. The 180 ms dead-air limit is applied later, by `diff`. |
+| `silence_gaps` | `{start_ms, end_ms, duration_ms}` for each run of 10 ms windows whose mean-square level is below the recording's silence threshold, if the run lasts at least 80 ms. Sounds shorter than 30 ms inside a run do not end it. The threshold is `max(−40, min(p10 + 6, p90 − 12))` dB, where p10 and p90 are the 10th and 90th percentiles of all window levels in the recording: 6 dB above the noise floor, at least 12 dB below the loud part, and never below −40 dBFS. A pause under room noise is a gap; a clean recording keeps −40 dBFS. The 180 ms dead-air limit is applied later, by `diff`. See [ADR-008](decisions/ADR-008-silence-relative-to-the-noise-floor.md). |
 | `integrated_lufs` | Integrated loudness following ITU-R BS.1770 / EBU R128 (K-weighting; 400 ms blocks every 100 ms; −70 LUFS absolute gate; −10 LU relative gate), rounded to 2 decimals. −70 means silence or no audio. It is measured on the mono mix, so it can differ from a stereo meter. |
 | `words` | `{text, start_ms, end_ms}` entries: transcribed words with a whisper model, voiced bursts without one; see below. |
 | `words_per_minute` | Number of `words` divided by the duration in minutes, rounded to 2 decimals |
 | `asr_backend` | `"whisper_cpp"` when `--whisper-model` was given, otherwise `"silence_bursts"` |
 | `asr_note` | Which backend ran and how. For whisper.cpp: its version, the model's file name (not its path), the DTW preset, and the detected language |
 
-With `"whisper_cpp"`, `text` is the word as whisper.cpp wrote it, with any attached punctuation, such as `air.`. `start_ms` is the word's DTW timestamp. `end_ms` is the next word's `start_ms`, or the start of the next silence gap if that is earlier, so a word never runs into a gap that `silence_gaps` lists; it can run into a pause that sits above −40 dBFS. Times have 10 ms resolution. `words_per_minute` is a real speaking rate. See [ADR-007](decisions/ADR-007-whisper-cpp-word-timing.md).
+With `"whisper_cpp"`, `text` is the word as whisper.cpp wrote it, with any attached punctuation, such as `air.`. `start_ms` is the word's DTW timestamp. `end_ms` is the next word's `start_ms`, or the start of the next silence gap if that is earlier, so a word never runs into a gap that `silence_gaps` lists; it can run into a pause louder than the recording's silence threshold. Times have 10 ms resolution. `words_per_minute` is a real speaking rate. See [ADR-007](decisions/ADR-007-whisper-cpp-word-timing.md).
 
-With `"silence_bursts"`, each word is a stretch of sound above −40 dBFS that ends at the first 40 ms of silence, kept if it lasts at least 40 ms. `text` is a placeholder: `burst-0`, `burst-1`, and so on. A continuous tone or music bed counts as one long word, so `words_per_minute` is a burst rate, not a speaking rate. See [ADR-003](decisions/ADR-003-silence-burst-word-estimator.md).
+With `"silence_bursts"`, each word is a stretch of 10 ms windows at or above the recording's silence threshold (the one `silence_gaps` uses) that ends at the first 40 ms below it, kept if it lasts at least 40 ms. `text` is a placeholder: `burst-0`, `burst-1`, and so on. A continuous tone or music bed counts as one long word, so `words_per_minute` is a burst rate, not a speaking rate. See [ADR-003](decisions/ADR-003-silence-burst-word-estimator.md).
 
 ## Color
 

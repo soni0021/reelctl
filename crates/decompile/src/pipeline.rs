@@ -17,7 +17,7 @@ use crate::histogram::aggregate;
 use crate::loudness::integrated_lufs;
 use crate::payoff::from_cuts;
 use crate::scene::{CutDetector, SceneScoreDetector, SCENE_NOTE};
-use crate::silence::detect_gaps;
+use crate::silence;
 use crate::transnet::{select_detector, CutDetectorChoice, SelectedDetector};
 
 const PCM_HALF_WINDOW_MS: u64 = 1_500;
@@ -65,7 +65,7 @@ pub fn decompile_file(request: &DecompileRequest) -> Result<DecompileOutput, Dec
     let analyze_elapsed = analyze_started.elapsed();
 
     let silence_started = Instant::now();
-    let silence_gaps = detect_gaps(&decoded.pcm, decoded.sample_rate);
+    let silence = silence::analyze(&decoded.pcm, decoded.sample_rate);
     let silence_elapsed = silence_started.elapsed();
 
     let loudness_started = Instant::now();
@@ -80,7 +80,7 @@ pub fn decompile_file(request: &DecompileRequest) -> Result<DecompileOutput, Dec
         &decoded.pcm,
         decoded.sample_rate,
         decoded.duration_ms,
-        &silence_gaps,
+        &silence,
         request.whisper_model.as_deref(),
     )?;
     let asr_elapsed = asr_started.elapsed();
@@ -89,7 +89,7 @@ pub fn decompile_file(request: &DecompileRequest) -> Result<DecompileOutput, Dec
         &decoded,
         cuts,
         histograms,
-        silence_gaps,
+        silence.gaps,
         lufs,
         payoff,
         &asr,
