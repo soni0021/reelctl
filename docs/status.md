@@ -1,6 +1,6 @@
 # Status
 
-Last updated 2026-10-21. Update this page in the same commit as any change that affects it.
+Last updated 2026-10-25. Update this page in the same commit as any change that affects it.
 
 ## Summary
 
@@ -107,6 +107,6 @@ Then, to finish P0 against its own success metric before starting P1:
 
 1. Find a decode strategy that meets 500 ms on real footage, or revise the target.
 2. Read 10-bit video, such as iPhone HDR recordings.
-3. Detect silence relative to each recording's noise floor instead of at a fixed −40 dBFS. whisper word ends depend on it too.
+3. Detect silence relative to each recording's noise floor instead of at a fixed −40 dBFS. whisper word ends depend on it too. In progress: [spec](specs/relative-silence.md) awaiting approval, branch `feature/relative-silence`.
 4. Make `diff` comparative: accept one to three outliers and compare cut rhythm second by second.
 5. Link TransNetV2. It needs ONNX weights, a download that needs an explicit go-ahead.
