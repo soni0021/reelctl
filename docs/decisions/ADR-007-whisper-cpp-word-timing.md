@@ -37,5 +37,5 @@ ADR-003 estimated words from voiced bursts because whisper.cpp could not be buil
 ## Consequences
 - Every build needs CMake and compiles whisper.cpp once.
 - Word timing is far slower than the estimator: about 19 s for 60 s of speech with the Apex model. It stays outside the 500 ms target.
-- Word ends are only as good as `silence_gaps`. Under room noise the −40 dBFS threshold misses pauses, and a word's end can run into one.
+- Word ends are only as good as `silence_gaps`. Under room noise the −40 dBFS threshold misses pauses, and a word's end can run into one. [ADR-008](ADR-008-silence-relative-to-the-noise-floor.md) (2026-10-25) sets the threshold per recording to address this.
 - Models fine-tuned from a standard shape reuse that shape's alignment heads. That worked for Apex; other fine-tunes are unmeasured.

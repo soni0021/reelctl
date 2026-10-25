@@ -20,7 +20,7 @@ P1–P3 in planer.md (Go watchtower, OpenTimelineIO / Smelter / manimgx, Qwen3-V
 ## Verify
 
 - After a code change: `cargo check` on edit, `cargo test` once at task end. Do not re-run the suite on unchanged code.
-- A green P0 run is the workspace unit tests plus `crates/reelctl/tests/p0_fixture.rs` (synthetic `fixtures/generate.sh` clips: planted cut, silence, static shot, payoff) and `whisper_fixture.rs`. No network, no scraped Reels.
+- A green P0 run is the workspace unit tests plus `crates/reelctl/tests/p0_fixture.rs` (synthetic `fixtures/generate.sh` clips: planted cut, silence, a pause under noise, static shot, payoff) and `whisper_fixture.rs`. No network, no scraped Reels.
 - The whisper model test is `#[ignore]`d. After changing word timing, also run `REELCTL_WHISPER_MODEL=~/models/whisper/ggml-apex-hinglish-q8_0.bin cargo test -p reelctl --test whisper_fixture -- --include-ignored` (macOS only: it needs `say`). Tests that spawn `reelctl` must remove `REELCTL_WHISPER_MODEL` and `REELCTL_TRANSNET_WEIGHTS` from its environment.
 - CLI: `reelctl decompile --input <reel.mp4> --out <edit_dna.json>` and `reelctl diff --draft <draft.mp4> --outlier <edit_dna.json>`.
 - `signal_ms` must be a measured structural duration (decode, cuts, silence, loudness, histograms, JSON write). Do not invent or pad it.
@@ -35,7 +35,7 @@ Update the docs in the same commit as every change, without waiting to be asked;
 - `docs/edit-dna.md`: every `edit_dna.json` field. Regenerate the schema with `cargo run -p edit-dna --example schema` when the types change.
 - `docs/decisions/`: one ADR per significant decision, named `ADR-NNN-short-title.md` with the next number. When a decision changes, add a new ADR and mark the old one superseded; never delete ADRs.
 - `docs/specs/`: one spec per feature, approved by the user before coding starts (spec-driven-development). Keep it current while building.
-- `tasks/plan.md` and `tasks/todo.md`: the active implementation plan and its checklist (planning-and-task-breakdown). Tick a task's boxes in the commit that finishes it.
+- `tasks/plan.md` and `tasks/todo.md`: the active implementation plan and its checklist (planning-and-task-breakdown). Tick a task's boxes in the commit that finishes it. When a feature is merged, move both into `tasks/archive/<feature>/`.
 - `CHANGELOG.md`: an entry under Unreleased for each change a `reelctl` user would notice.
 
 ## P0 gaps (documented, do not implement here)
@@ -53,4 +53,4 @@ Update the docs in the same commit as every change, without waiting to be asked;
 
 - Project skills live in `.agents/skills/` and are pinned in `skills-lock.json`: `actionbook/rust-skills` (`coding-guidelines`, `domain-cli`, `m10-performance`), `digitalsamba/claude-code-video-toolkit` (`ffmpeg`), `affaan-m/ecc` (`video-editing`), and `addyosmani/agent-skills`. Leave text-to-video, Remotion, Manim, Seedance, Hyperframes, and fal.ai skills out. `edenfunf/reelmimic` is an allowed optional 2D restyle worker for informational reels (see planer.md); do not vendor it or add HyperFrames as a skill.
 - Structural decompile uses `ffmpeg-next` with no ffmpeg shell-out. Synthetic clips come from `fixtures/generate.sh`.
-- `reelctl diff` flags dead air longer than 180ms, a visual window longer than 2.5s with no cut, and a missing payoff cue in the 8–10s window when the outlier has one. Silence detection is −40 dBFS and is separate from the 180ms dead-air flag.
+- `reelctl diff` flags dead air longer than 180ms, a visual window longer than 2.5s with no cut, and a missing payoff cue in the 8–10s window when the outlier has one. Silence detection uses a per-recording threshold, `max(−40, min(p10 + 6, p90 − 12))` dB over 10 ms window levels, and is separate from the 180ms dead-air flag ([ADR-008](docs/decisions/ADR-008-silence-relative-to-the-noise-floor.md)).

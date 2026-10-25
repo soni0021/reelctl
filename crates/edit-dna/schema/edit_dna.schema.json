@@ -324,6 +324,15 @@
       "format": "double",
       "type": "number"
     },
+    "noise_floor_db": {
+      "default": null,
+      "description": "10th-percentile window level in dB, the noise-floor estimate. `null`\nwithout audio, and in version 1 files, which did not measure it.",
+      "format": "double",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
     "payoff_window": {
       "$ref": "#/$defs/PayoffWindow"
     },
@@ -349,6 +358,12 @@
         "$ref": "#/$defs/SilenceGap"
       },
       "type": "array"
+    },
+    "silence_threshold_db": {
+      "default": -40.0,
+      "description": "Level in dB below which a 10 ms window counts as silent in this recording.\nA version 1 file, which has no such field, used a fixed -40 dBFS.",
+      "format": "double",
+      "type": "number"
     },
     "words": {
       "items": {

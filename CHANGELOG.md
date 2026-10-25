@@ -15,6 +15,8 @@ Notable changes to `reelctl`. Add an entry under Unreleased in the same commit a
 
 ### Changed
 
+- `edit_dna.json` is now schema version 2, with `silence_threshold_db` and `noise_floor_db`. Version 1 files still load in `reelctl diff`.
+- `silence_gaps` now uses a threshold set from each recording's own levels instead of a fixed −40 dBFS, and a sound shorter than 30 ms no longer splits a gap. Pauses under room noise become gaps, so `diff` now flags dead air in real recordings; on a 60 s iPhone recording, gaps of 300 ms or more went from 0 to 24. Clean recordings get the same gaps as before. Without a whisper model, burst words use the same threshold, so `words_per_minute` changes on noisy recordings.
 - Without `--whisper-model`, `asr_note` now says no model was given, instead of saying whisper.cpp is not linked.
 - A `--whisper-model` path that is missing or not a usable whisper model now exits with code 1. It used to be ignored.
 - Building now needs CMake, because the `whisper-rs` dependency compiles whisper.cpp 1.8.3 from source.

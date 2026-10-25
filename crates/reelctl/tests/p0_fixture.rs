@@ -97,6 +97,14 @@ fn decompile_and_diff_match_the_planted_cut_silence_and_static_shot() {
         "silence {:?}",
         draft.silence_gaps
     );
+    // A constant tone: the threshold is capped 12 dB below it, at about -33 dB.
+    assert!(
+        (-33.5..=-32.5).contains(&draft.silence_threshold_db),
+        "threshold {}",
+        draft.silence_threshold_db
+    );
+    let floor = draft.noise_floor_db.expect("draft has audio");
+    assert!((-22.0..=-20.5).contains(&floor), "noise floor {floor}");
     assert!(!draft.payoff_window.has_cue);
     assert_eq!(draft.shot_histograms.len(), draft.cuts.len() + 1);
     assert!(draft.shot_histograms[0].mean_r > draft.shot_histograms[0].mean_b);
@@ -163,6 +171,102 @@ fn decompile_and_diff_match_the_planted_cut_silence_and_static_shot() {
     assert!(flags.iter().any(|flag| {
         flag["kind"] == "static_window" && flag["duration_ms"].as_u64().unwrap_or(0) > 2_500
     }));
+
+    // An outlier written before schema version 2 has neither silence field.
+    let mut old: serde_json::Value =
+        serde_json::from_slice(&fs::read(&outlier_json).expect("outlier json")).expect("parse");
+    let object = old.as_object_mut().expect("object");
+    object.remove("silence_threshold_db");
+    object.remove("noise_floor_db");
+    object.insert("schema_version".to_string(), 1.into());
+    let old_json = root.join("outlier.v1.edit_dna.json");
+    fs::write(&old_json, serde_json::to_vec(&old).expect("serialize")).expect("write v1");
+    let old_diff = reelctl()
+        .args([
+            "diff",
+            "--draft",
+            &draft_mp4.to_string_lossy(),
+            "--outlier",
+            &old_json.to_string_lossy(),
+        ])
+        .output()
+        .expect("spawn diff");
+    assert!(
+        old_diff.status.success(),
+        "diff with a version 1 outlier failed: {}",
+        String::from_utf8_lossy(&old_diff.stderr)
+    );
+    let old_report: serde_json::Value =
+        serde_json::from_slice(&old_diff.stdout).expect("diff json");
+    assert_eq!(old_report["flags"], report["flags"]);
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_pause_under_room_noise_is_a_gap_and_dead_air() {
+    let root = std::env::temp_dir().join(format!("reelctl-noisy-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("temp dir");
+    let noisy_mp4 = root.join("noisy.mp4");
+    let noisy_json = root.join("noisy.edit_dna.json");
+    generate("noisy12", &noisy_mp4);
+
+    let output = reelctl()
+        .args(["decompile", "--input"])
+        .arg(&noisy_mp4)
+        .arg("--out")
+        .arg(&noisy_json)
+        .arg("--filmstrip-dir")
+        .arg(root.join("noisy_timeline"))
+        .output()
+        .expect("spawn reelctl");
+    assert!(
+        output.status.success(),
+        "decompile failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let dna: EditDna =
+        serde_json::from_slice(&fs::read(&noisy_json).expect("noisy json")).expect("noisy dna");
+    assert!(
+        dna.silence_threshold_db > -40.0,
+        "threshold {}",
+        dna.silence_threshold_db
+    );
+    let long: Vec<(u64, u64)> = dna
+        .silence_gaps
+        .iter()
+        .filter(|gap| gap.duration_ms >= 180)
+        .map(|gap| (gap.start_ms, gap.end_ms))
+        .collect();
+    assert_eq!(long.len(), 1, "gaps of 180 ms or more: {long:?}");
+    let (start, end) = long[0];
+    assert!(
+        start.abs_diff(2_000) <= 20 && end.abs_diff(2_500) <= 20,
+        "pause {long:?}"
+    );
+
+    let diff = reelctl()
+        .args(["diff", "--draft"])
+        .arg(&noisy_mp4)
+        .arg("--outlier")
+        .arg(&noisy_json)
+        .output()
+        .expect("spawn diff");
+    assert!(
+        diff.status.success(),
+        "diff failed: {}",
+        String::from_utf8_lossy(&diff.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&diff.stdout).expect("diff json");
+    let dead_air: Vec<&serde_json::Value> = report["flags"]
+        .as_array()
+        .expect("flags")
+        .iter()
+        .filter(|flag| flag["kind"] == "dead_air")
+        .collect();
+    assert_eq!(dead_air.len(), 1, "{dead_air:?}");
+    assert_eq!(dead_air[0]["start_ms"].as_u64(), Some(start));
 
     let _ = fs::remove_dir_all(&root);
 }
