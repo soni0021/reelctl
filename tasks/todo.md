@@ -7,12 +7,12 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/whisper-coverage.md](../docs/s
 **Description:** New `crates/decompile/src/coverage.rs` with pure functions: `find_holes(starts, gaps, duration_ms)`, `merge(first, reruns)`, and dropping words that start at or after the end of the audio. Nothing calls them yet.
 
 **Acceptance criteria:**
-- [ ] A 25 s stretch with sound and no word start is a hole; a 4 s stretch that is 3 s of silence gap is not; stretches before the first word and after the last count
-- [ ] Re-run words are shifted by the hole's start, kept only if they start inside the hole, and the merged list stays sorted
-- [ ] Words that start at or after the end of the audio are dropped; words inside silence gaps are kept
+- [x] A 25 s stretch with sound and no word start is a hole; a 4 s stretch that is 3 s of silence gap is not; stretches before the first word and after the last count
+- [x] Re-run words are shifted by the hole's start, kept only if they start inside the hole, replace the first pass's words there (an empty re-run changes nothing), and the merged list stays sorted
+- [x] Words that start at or after the end of the audio are dropped; words inside silence gaps are kept
 
 **Verification:**
-- [ ] `cargo test -p decompile coverage` (red first, then green)
+- [x] `cargo test -p decompile coverage` (red first, then green: 7 of 7). Nothing calls the module yet, so it warns as dead code until Task 2
 
 **Dependencies:** None
 

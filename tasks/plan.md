@@ -14,6 +14,7 @@ Make whisper's output cover the speech that is there, and keep a whisper.cpp abo
 ## Architecture Decisions
 
 - **One word timeline, ends computed last.** Today `words_from_segments` sets each word's end from the next word or gap as it maps segments. With re-runs, a word next to a hole only knows its neighbour after merging. So passes return timed starts (text, start, segment end), `coverage::merge` combines them, and word ends are computed once at the end with the existing rule.
+- **A hole starts at a word's start**, so its re-run transcribes that word again. A re-run's words therefore replace the first pass's words inside the hole, which avoids duplicates. A re-run that finds nothing leaves the first pass as it was. Settled in Task 1.
 - **`coverage.rs` holds the pure logic:** `find_holes(starts, gaps, duration_ms)`, `merge(first, reruns)`, and dropping words that start at or after the end of the audio. Its constants (3 s hole, 1.5 s of sound, 1 s padding) carry their evidence in the module comment.
 - **Passes reuse one loaded model.** A `Transcriber` holds the `WhisperContext` and the DTW preset, and runs `full` on a slice of the 16 kHz audio with 1 s of silence appended. Re-runs reuse it, so the model loads once per process.
 - **The child process.** `reelctl` gets a hidden subcommand, `reelctl whisper-worker`, so `--help` does not show it.
@@ -27,7 +28,7 @@ Make whisper's output cover the speech that is there, and keep a whisper.cpp abo
 ## Task List
 
 ### Phase 1: Coverage
-- [ ] Task 1: Holes and merging (pure functions)
+- [x] Task 1: Holes and merging (pure functions)
 - [ ] Task 2: Re-transcribe holes, with padding, in-process
 
 ### Checkpoint A

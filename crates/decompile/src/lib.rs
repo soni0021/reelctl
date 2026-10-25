@@ -7,6 +7,7 @@
 #![warn(clippy::all)]
 
 mod asr;
+mod coverage;
 mod decode;
 mod error;
 mod histogram;
