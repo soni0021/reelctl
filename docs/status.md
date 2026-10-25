@@ -59,6 +59,19 @@ Same machine, release builds of `main` and `feature/relative-silence` on the sam
 
 The real clip was re-cut from the original recording on 2026-10-25 with its audio copied, not re-encoded, so its word count (125) differs from the 2026-10-21 runs (183); see Known issues.
 
+## Long-form YouTube video, 2026-10-25
+
+"20000 Questions for NEET 2027 FREE" by Dr. Anand Mani (youtu.be/4taOl64cb6U), 18 min 9 s, downloaded with `yt-dlp` for a manual run and kept outside the repo. Only the 640×360 H.264 stream with HE-AAC 44.1 kHz audio would download; 1080p requests got HTTP 403 with `yt-dlp` 2026.3.17. Same machine, release build of `main`.
+
+| Check | Result |
+|---|---|
+| Structural pass, no model | 3.0 s wall clock, 250 MB peak memory; `signal_ms` 2,975, of which decode 2,795 |
+| Audio | Noise floor −68.2 dB, so the threshold stays at −40 dB; −18.93 LUFS |
+| Silence and `diff` | 782 gaps (21% of the runtime); 445 `dead_air` flags totalling 194 s, 99 of them 0.5 s or longer and 17 over 1 s, about 24 a minute throughout |
+| Cuts | 0. One continuous camera setup with app screens composited beside the presenter, full-screen title cards, and what look like punch-in zooms. FFmpeg's scene score finds nothing above 0.3 and 9 frames above 0.08, all overlay changes or possible jump cuts. `diff` therefore flags the whole video as one static window |
+| Words, Apex | 3,894 words, 214.51 words per minute (196–257 in each full minute), `asr_ms` 401,586, nothing on stderr |
+| First 30 s | No words before 30.44 s although only 4.7 s of it is silent. Cuts of 0–30 s and 0–60 s transcribe it ("Hello, kya haal chaal? Welcome to my channel…"), with re-encoded or copied audio. Appending the loudest 3 s of the video to the 60 s cut did not reproduce the loss |
+
 ## First real footage, 2026-10-20
 
 The input was an 87 s iPhone recording: HEVC Main 10 with HDR (HLG), 1080×1920 at 24 fps with B-frames, AAC stereo, and a 4-channel spatial-audio track. It ran on the same machine as above. The file stays outside the repo.
@@ -111,7 +124,8 @@ Not yet listed in AGENTS.md:
 - In a `timeline_view` PNG, the thumbnails and the waveform use different time scales. The 8 thumbnails cover about 0.27 s at 30 fps; the waveform and word ticks cover 1.5 s either side of the cut, across the same width.
 - The JSON value for TransNetV2 is `"trans_net_v2"`, but `CutDetectorKind::as_str()` returns `"transnet_v2"`. Nothing emits either until TransNetV2 is linked.
 - Colors are converted from YUV with BT.601 coefficients, while most HD video uses BT.709, so absolute RGB values are slightly off.
-- whisper with Apex skipped 15.96–30.86 s of the re-cut real clip (copied audio), on both `main` and the branch, although that stretch is no quieter than the rest. The earlier cut of the same recording, with re-encoded audio, did not lose it. Not investigated yet.
+- whisper can silently drop up to a 30 s window of speech. With Apex it skipped 15.96–30.86 s of the re-cut real clip and 0–30.44 s of the 18-minute NEET video, although neither stretch is mostly silent; other cuts of the same audio transcribe it. The cause is not known. Module `whisper-coverage` in the [P0 capability map](specs/p0-capability-map.md).
+- Audio that is not 48 kHz drifts early, because the decoder resamples each frame on its own and drops the fractional sample. At 44.1 kHz a pause planted at 50.0 s is found 10–40 ms early; over 18 minutes the drift is about 0.5 s. Module `decode-inputs`.
 - Thresholds read from FFmpeg tools are not comparable with `reelctl`'s: FFmpeg's `-ac 1` downmix reads about 3 dB louder than `reelctl`'s channel average, and `silencedetect` compares sample peaks rather than 10 ms mean-square levels.
 - The quality interview in [CONSTRAINTS.md](../CONSTRAINTS.md) has not been run, so only the floor rules plus `cargo check` and `cargo test` are enforced.
 
