@@ -85,12 +85,12 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/relative-silence.md](../docs/s
 **Description:** Run the release build on the real recording and the benchmark, run the whisper model test with both models, and record the results. Mark the spec implemented.
 
 **Acceptance criteria:**
-- [ ] `docs/status.md`: the threshold, noise floor, and gap counts on the real clip; word ends that run more than 200 ms into a pause, against 9 of 183 before (spec criterion 4); benchmark `signal_ms` within 242–261 ms; the gap and next step updated
-- [ ] The whisper model test passes with `ggml-base.en.bin` and `ggml-apex-hinglish-q8_0.bin`
-- [ ] The spec's status is updated and these boxes are ticked
+- [x] `docs/status.md`: the threshold, noise floor, and gap counts on the real clip; word ends that run more than 200 ms into a pause, against 9 of 183 before (spec criterion 4). On the re-cut clip: 8 of 125 on `main`, 2 of 125 on the branch; benchmark `signal_ms` within 242–261 ms (branch 243–250, `main` 242–248, interleaved; one earlier branch run took 262); the gap and next step updated
+- [x] The whisper model test passes with `ggml-base.en.bin` and `ggml-apex-hinglish-q8_0.bin`
+- [x] The spec's status is updated and these boxes are ticked
 
 **Verification:**
-- [ ] Release-build runs; the docs link check passes
+- [x] Release-build runs; the docs link check passes
 
 **Dependencies:** Tasks 3 and 4
 
@@ -100,6 +100,6 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/relative-silence.md](../docs/s
 
 ## Checkpoint B: Done
 
-- [ ] All seven spec success criteria verified
-- [ ] `cargo test` passes, and the whisper model test passes with both models
+- [x] All seven spec success criteria verified
+- [x] `cargo test` passes, and the whisper model test passes with both models
 - [ ] Reviewed with the user, then `feature/relative-silence` merged into `main`, and this plan moved to `tasks/archive/relative-silence/`

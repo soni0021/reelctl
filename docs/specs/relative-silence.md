@@ -1,6 +1,6 @@
 # Spec: Silence relative to each recording's noise floor
 
-Status: approved 2026-10-25, with the recommended answer to each open question (see Resolved Questions). Branch: `feature/relative-silence`. Plan: [tasks/plan.md](../../tasks/plan.md).
+Status: implemented 2026-10-25 on `feature/relative-silence`; all seven success criteria verified (see [docs/status.md](../status.md#silence-relative-to-the-noise-floor-2026-10-25)), awaiting review and merge. Approved 2026-10-25, with the recommended answer to each open question (see Resolved Questions). Branch: `feature/relative-silence`. Plan: [tasks/plan.md](../../tasks/plan.md).
 
 ## Objective
 

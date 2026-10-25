@@ -31,7 +31,7 @@ Replace the fixed −40 dBFS silence threshold with `max(−40, min(p10 + 6, p90
 ### Phase 2: Output and proof
 - [x] Task 3: Record the threshold and noise floor in `edit_dna.json`
 - [x] Task 4: `noisy12` fixture and end-to-end test
-- [ ] Task 5: Measure and close out
+- [x] Task 5: Measure and close out
 
 ### Checkpoint B
 - [ ] All seven spec success criteria verified, reviewed with the user, merged into `main`
