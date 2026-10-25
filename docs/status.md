@@ -119,7 +119,7 @@ Not yet listed in AGENTS.md:
 
 Done: real word timing with whisper.cpp ([spec](specs/whisper-asr.md)), merged 2026-10-21. A possible follow-up, not yet specified: a `--whisper-language` flag, which would skip language detection and save about 6 s per run with the Apex model.
 
-Then, to finish P0 against its own success metric before starting P1:
+Then, to finish P0 against its own success metric before starting P1. The [P0 capability map](specs/p0-capability-map.md) (draft, awaiting approval) orders these into modules:
 
 1. Find a decode strategy that meets 500 ms on real footage, or revise the target.
 2. Read 10-bit video, such as iPhone HDR recordings.
