@@ -1,6 +1,6 @@
 # Spec: whisper coverage
 
-Status: approved 2026-10-25, with the recommended answer to each open question (see Resolved Questions). Plan: [tasks/plan.md](../../tasks/plan.md). Module `whisper-coverage` in the [P0 capability map](p0-capability-map.md). Branch: `feature/whisper-coverage`.
+Status: implemented 2026-10-25 on `feature/whisper-coverage`; success criteria verified as recorded in [docs/status.md](../status.md#whisper-coverage-2026-10-25), with criterion 5 met on the within-run measure (re-runs 8.4% of the first pass; 11.0% against the earlier 401.6 s reference); awaiting review and merge. Approved 2026-10-25, with the recommended answer to each open question (see Resolved Questions). Plan: [tasks/plan.md](../../tasks/plan.md). Module `whisper-coverage` in the [P0 capability map](p0-capability-map.md). Branch: `feature/whisper-coverage`.
 
 ## Objective
 

@@ -44,7 +44,7 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/whisper-coverage.md](../docs/s
 ## Checkpoint A
 
 - [x] `cargo test` passes
-- [ ] NEET video, full: at least 80 words before 30.44 s, words in each of the three short holes, and extra `asr_ms` under 10% of 401.6 s (criteria 1 and 5). Criterion 1 passed: 86 words before 30.44 s, and 27, 18, and 17 in the short holes. Criterion 5 was not measurable: total `asr_ms` was 763.0 s under a load average near 6, which two separate runs cannot attribute; `asr_first_ms` and `asr_second_ms` were added to measure it within one run in Task 4
+- [x] NEET video, full: at least 80 words before 30.44 s, words in each of the three short holes, and extra `asr_ms` under 10% of 401.6 s (criteria 1 and 5). Criterion 1 passed: 86 words before 30.44 s, and 27, 18, and 17 in the short holes. Criterion 5 was not measurable here: total `asr_ms` was 763.0 s under a load average near 6, which two separate runs cannot attribute; `asr_first_ms` and `asr_second_ms` were added and Task 4 measured it within one run: re-runs 44.1 s, 8.4% of the 528.0 s first pass
 
 ## Task 3: Run whisper in a child process
 
@@ -70,11 +70,11 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/whisper-coverage.md](../docs/s
 **Description:** Run the release build on the NEET video and the iPhone clip through the worker, and record the results.
 
 **Acceptance criteria:**
-- [ ] `docs/status.md`: words recovered per hole, `asr_ms` before and after, the worker's start-up cost, and the known issue updated
-- [ ] Spec status updated; these boxes ticked
+- [x] `docs/status.md`: words recovered per hole, `asr_ms` before and after, the worker's start-up cost, and the known issue updated. Through the worker the NEET video gave the same 4,040 words as in-process
+- [x] Spec status updated; these boxes ticked
 
 **Verification:**
-- [ ] Release-build runs; the docs link check passes
+- [x] Release-build runs; the docs link check passes
 
 **Dependencies:** Task 3
 
@@ -84,6 +84,6 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/whisper-coverage.md](../docs/s
 
 ## Checkpoint B: Done
 
-- [ ] All seven spec success criteria verified
-- [ ] `cargo test` passes, and the whisper model test passes with both models
+- [x] All seven spec success criteria verified (criterion 5 on the within-run measure)
+- [x] `cargo test` passes, and the whisper model test passes with both models
 - [ ] Reviewed with the user, then `feature/whisper-coverage` merged into `main`, and this plan moved to `tasks/archive/whisper-coverage/`

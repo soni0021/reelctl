@@ -32,11 +32,11 @@ Make whisper's output cover the speech that is there, and keep a whisper.cpp abo
 - [x] Task 2: Re-transcribe holes, with padding, in-process
 
 ### Checkpoint A
-- [ ] `cargo test` passes; spec criteria 1–5 hold on the NEET video, the iPhone clip, and the clean cuts
+- [x] `cargo test` passes; spec criteria 1–5 hold on the NEET video, the iPhone clip, and the clean cuts (criterion 5 measured in Task 4)
 
 ### Phase 2: Abort safety and close-out
 - [x] Task 3: Run whisper in a child process, with the DTW-off retry
-- [ ] Task 4: Measure and close out
+- [x] Task 4: Measure and close out
 
 ### Checkpoint B
 - [ ] All seven spec success criteria verified, reviewed with the user, merged into `main`
