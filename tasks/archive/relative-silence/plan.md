@@ -1,6 +1,6 @@
 # Implementation Plan: Silence relative to the noise floor
 
-Spec: [docs/specs/relative-silence.md](../docs/specs/relative-silence.md), approved 2026-10-25. Branch: `feature/relative-silence`. Checklist: [tasks/todo.md](todo.md). The previous plan, for whisper word timing, is in [tasks/archive/whisper-asr/](archive/whisper-asr/plan.md).
+Spec: [docs/specs/relative-silence.md](../../../docs/specs/relative-silence.md), approved 2026-10-25. Branch: `feature/relative-silence`. Checklist: [tasks/todo.md](todo.md). The previous plan, for whisper word timing, is in [tasks/archive/whisper-asr/](../whisper-asr/plan.md).
 
 ## Overview
 
@@ -34,7 +34,7 @@ Replace the fixed −40 dBFS silence threshold with `max(−40, min(p10 + 6, p90
 - [x] Task 5: Measure and close out
 
 ### Checkpoint B
-- [ ] All seven spec success criteria verified, reviewed with the user, merged into `main`
+- [x] All seven spec success criteria verified, reviewed with the user, merged into `main`
 
 ## Risks and Mitigations
 

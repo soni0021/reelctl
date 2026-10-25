@@ -1,6 +1,6 @@
 # Tasks: Silence relative to the noise floor
 
-Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/relative-silence.md](../docs/specs/relative-silence.md). Tick each box in the commit that completes it.
+Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/relative-silence.md](../../../docs/specs/relative-silence.md). Tick each box in the commit that completes it.
 
 ## Task 1: Threshold from window levels
 
@@ -102,4 +102,4 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/relative-silence.md](../docs/s
 
 - [x] All seven spec success criteria verified
 - [x] `cargo test` passes, and the whisper model test passes with both models
-- [ ] Reviewed with the user, then `feature/relative-silence` merged into `main`, and this plan moved to `tasks/archive/relative-silence/`
+- [x] Reviewed with the user, then `feature/relative-silence` merged into `main`, and this plan moved to `tasks/archive/relative-silence/`
