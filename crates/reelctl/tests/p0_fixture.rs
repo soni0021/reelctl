@@ -202,3 +202,71 @@ fn decompile_and_diff_match_the_planted_cut_silence_and_static_shot() {
 
     let _ = fs::remove_dir_all(&root);
 }
+
+#[test]
+fn a_pause_under_room_noise_is_a_gap_and_dead_air() {
+    let root = std::env::temp_dir().join(format!("reelctl-noisy-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("temp dir");
+    let noisy_mp4 = root.join("noisy.mp4");
+    let noisy_json = root.join("noisy.edit_dna.json");
+    generate("noisy12", &noisy_mp4);
+
+    let output = reelctl()
+        .args(["decompile", "--input"])
+        .arg(&noisy_mp4)
+        .arg("--out")
+        .arg(&noisy_json)
+        .arg("--filmstrip-dir")
+        .arg(root.join("noisy_timeline"))
+        .output()
+        .expect("spawn reelctl");
+    assert!(
+        output.status.success(),
+        "decompile failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let dna: EditDna =
+        serde_json::from_slice(&fs::read(&noisy_json).expect("noisy json")).expect("noisy dna");
+    assert!(
+        dna.silence_threshold_db > -40.0,
+        "threshold {}",
+        dna.silence_threshold_db
+    );
+    let long: Vec<(u64, u64)> = dna
+        .silence_gaps
+        .iter()
+        .filter(|gap| gap.duration_ms >= 180)
+        .map(|gap| (gap.start_ms, gap.end_ms))
+        .collect();
+    assert_eq!(long.len(), 1, "gaps of 180 ms or more: {long:?}");
+    let (start, end) = long[0];
+    assert!(
+        start.abs_diff(2_000) <= 20 && end.abs_diff(2_500) <= 20,
+        "pause {long:?}"
+    );
+
+    let diff = reelctl()
+        .args(["diff", "--draft"])
+        .arg(&noisy_mp4)
+        .arg("--outlier")
+        .arg(&noisy_json)
+        .output()
+        .expect("spawn diff");
+    assert!(
+        diff.status.success(),
+        "diff failed: {}",
+        String::from_utf8_lossy(&diff.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&diff.stdout).expect("diff json");
+    let dead_air: Vec<&serde_json::Value> = report["flags"]
+        .as_array()
+        .expect("flags")
+        .iter()
+        .filter(|flag| flag["kind"] == "dead_air")
+        .collect();
+    assert_eq!(dead_air.len(), 1, "{dead_air:?}");
+    assert_eq!(dead_air[0]["start_ms"].as_u64(), Some(start));
+
+    let _ = fs::remove_dir_all(&root);
+}

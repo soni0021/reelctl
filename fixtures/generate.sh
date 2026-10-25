@@ -39,6 +39,21 @@ outlier12() {
     -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=12"
 }
 
+# draft12 with white noise throughout, so the planted 2.0-2.5 s mute is room
+# noise (-37.2 to -36.4 dB per 10 ms window) rather than digital silence. A
+# fixed -40 dBFS threshold finds no gap; the per-recording threshold
+# (about -32.9 dB) finds the pause. The seed makes the noise reproducible.
+noisy12() {
+  local out="$1"
+  local size="${2:-640x360}"
+  encode "$out" \
+    "[0:v][1:v]concat=n=2:v=1:a=0[v];[2:a]volume=volume=0:enable='between(t,2.0,2.5)'[t];[t][3:a]amix=inputs=2:normalize=0[a]" \
+    -f lavfi -i "color=c=red:s=${size}:r=30:d=6" \
+    -f lavfi -i "color=c=white:s=${size}:r=30:d=6" \
+    -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=12" \
+    -f lavfi -i "anoisesrc=color=white:amplitude=0.025:sample_rate=48000:duration=12:seed=7"
+}
+
 bench60() {
   local out="$1"
   encode "$out" \
@@ -75,6 +90,9 @@ case "$cmd" in
   bench60)
     bench60 "$out"
     ;;
+  noisy12)
+    noisy12 "$out"
+    ;;
   speech12)
     speech12 "$out"
     ;;
@@ -84,10 +102,11 @@ case "$cmd" in
     mkdir -p "$dir"
     draft12 "${dir}/draft_12s.mp4"
     outlier12 "${dir}/outlier_12s.mp4"
+    noisy12 "${dir}/noisy_12s.mp4"
     bench60 "${dir}/bench_60s.mp4"
     ;;
   *)
-    echo "usage: generate.sh draft12|outlier12|bench60|speech12|all [out.mp4]" >&2
+    echo "usage: generate.sh draft12|outlier12|noisy12|bench60|speech12|all [out.mp4]" >&2
     exit 2
     ;;
 esac

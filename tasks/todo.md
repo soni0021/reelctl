@@ -67,12 +67,12 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/relative-silence.md](../docs/s
 **Description:** `fixtures/generate.sh noisy12` makes `draft12`'s video and tone, with the tone muted from 2.0 to 2.5 s, plus white noise from `anoisesrc` with a fixed seed throughout. A new test in `p0_fixture.rs` decompiles it and runs `diff` on it.
 
 **Acceptance criteria:**
-- [ ] Every 10 ms window in the pause is at least 1 dB above −40 and at least 3 dB below the computed threshold (check while choosing the amplitude)
-- [ ] The only gap of 180 ms or more is the planted pause (±20 ms), and `diff` flags it as `dead_air`
-- [ ] README commands list `noisy12`
+- [x] Every 10 ms window in the pause is at least 1 dB above −40 and at least 3 dB below the computed threshold (check while choosing the amplitude): white noise at 0.025 puts the pause at −37.2 to −36.4 dB, 2.8 dB above −40 and 3.6 dB below the −32.85 dB threshold
+- [x] The only gap of 180 ms or more is the planted pause (±20 ms), and `diff` flags it as `dead_air`
+- [x] README commands list `noisy12`
 
 **Verification:**
-- [ ] `cargo test`, which includes the new test, on a machine without `say`
+- [x] `cargo test`, which includes the new test and needs no `say` (43 pass, 1 ignored). The same clip through a build of `main` gives no `dead_air` flag; this branch flags 2,010–2,510 ms
 
 **Dependencies:** Task 2, plus Task 3 if the test reads the new fields
 
