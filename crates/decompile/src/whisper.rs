@@ -20,10 +20,15 @@
 //! skipping language detection saved 7.5 s. The first pass is not padded,
 //! because padding changed the words on runs that had no holes
 //! (docs/specs/whisper-coverage.md, Revision).
+//!
+//! The passes run through `Passes`: in this process (`Local`), or in a child
+//! process (`worker::Remote`) so that a whisper.cpp abort cannot end the
+//! caller.
 
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use edit_dna::{SilenceGap, Word};
 use whisper_rs::{
@@ -34,6 +39,7 @@ use whisper_rs::{
 use crate::coverage::{drop_after, find_holes, merge, shift_into, Hole, WordStart};
 use crate::error::DecompileError;
 use crate::resample::to_whisper_rate;
+use crate::worker::{Remote, WhisperRunner};
 
 const GGML_MAGIC: u32 = 0x6767_6d6c;
 const WHISPER_RATE_PER_MS: usize = 16;
@@ -55,6 +61,36 @@ pub(crate) struct Transcript {
     pub language: String,
     /// Holes in the first pass and how many words their re-run found.
     pub reruns: Vec<Rerun>,
+    /// Passes whisper.cpp aborted on, which were run again without DTW.
+    pub fallbacks: Vec<Pass>,
+    /// Time of the first pass, including loading the model or starting the worker.
+    pub first_pass: Duration,
+    /// Time of all re-runs.
+    pub second_pass: Duration,
+}
+
+/// A request to transcribe `start_ms..end_ms` of the 16 kHz audio.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Pass {
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub padding: Padding,
+    /// `None` lets a multilingual model detect the language.
+    pub language: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PassOutput {
+    /// Times relative to `Pass::start_ms`.
+    pub words: Vec<WordStart>,
+    pub language: Option<String>,
+}
+
+/// Something that runs whisper passes over one recording's audio.
+pub(crate) trait Passes {
+    fn run(&mut self, pass: &Pass) -> Result<PassOutput, DecompileError>;
+    /// Passes that had to be run again without DTW.
+    fn fallbacks(&self) -> Vec<Pass>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,6 +113,7 @@ pub(crate) fn transcribe(
     pcm: &[f32],
     sample_rate: u32,
     silence_gaps: &[SilenceGap],
+    runner: &WhisperRunner,
 ) -> Result<Transcript, DecompileError> {
     if !model.is_file() {
         return Err(DecompileError::Whisper(format!(
@@ -97,17 +134,41 @@ pub(crate) fn transcribe(
             preset,
             language: String::new(),
             reruns: Vec::new(),
+            fallbacks: Vec::new(),
+            first_pass: Duration::ZERO,
+            second_pass: Duration::ZERO,
         });
     }
+    let first_started = Instant::now();
     let audio = to_whisper_rate(pcm, sample_rate)?;
     let duration_ms = (audio.len() / WHISPER_RATE_PER_MS) as u64;
-    let mut transcriber = Transcriber::load(model, model_preset)?;
-    let first = drop_after(transcriber.pass(&audio, Padding::None, None)?, duration_ms);
-    let detected = transcriber.language();
+    let mut passes: Box<dyn Passes + '_> = match runner {
+        WhisperRunner::InProcess => Box::new(Local::load(model, Some(model_preset), audio)?),
+        WhisperRunner::Worker { program, args } => {
+            Box::new(Remote::start(program, args, model, &audio)?)
+        }
+    };
+    let first = passes.run(&Pass {
+        start_ms: 0,
+        end_ms: duration_ms,
+        padding: Padding::None,
+        language: None,
+    })?;
+    let first_pass = first_started.elapsed();
+    let second_started = Instant::now();
+    let detected = first.language;
+    let first = drop_after(first.words, duration_ms);
     let mut reruns = Vec::new();
     let mut found = Vec::new();
     for hole in find_holes(&first, silence_gaps, duration_ms) {
-        let words = transcriber.pass(slice_ms(&audio, hole), Padding::Around, detected)?;
+        let words = passes
+            .run(&Pass {
+                start_ms: hole.start_ms,
+                end_ms: hole.end_ms,
+                padding: Padding::Around,
+                language: detected.clone(),
+            })?
+            .words;
         reruns.push(Rerun {
             hole,
             words_found: shift_into(hole, words.clone()).len(),
@@ -117,19 +178,59 @@ pub(crate) fn transcribe(
     Ok(Transcript {
         words: finish(&merge(first, found), silence_gaps),
         preset,
-        language: detected.unwrap_or("unknown").to_string(),
+        language: detected.unwrap_or_else(|| "unknown".to_string()),
         reruns,
+        fallbacks: passes.fallbacks(),
+        first_pass,
+        second_pass: second_started.elapsed(),
     })
 }
 
-fn slice_ms(audio: &[f32], hole: Hole) -> &[f32] {
-    let start = (hole.start_ms as usize * WHISPER_RATE_PER_MS).min(audio.len());
-    let end = (hole.end_ms as usize * WHISPER_RATE_PER_MS).clamp(start, audio.len());
+fn slice_ms(audio: &[f32], start_ms: u64, end_ms: u64) -> &[f32] {
+    let start = (start_ms as usize * WHISPER_RATE_PER_MS).min(audio.len());
+    let end = (end_ms as usize * WHISPER_RATE_PER_MS).clamp(start, audio.len());
     &audio[start..end]
 }
 
-#[derive(Debug, Clone, Copy)]
-enum Padding {
+/// Passes in this process, over audio it holds.
+pub(crate) struct Local<'a> {
+    transcriber: Transcriber<'a>,
+    audio: Vec<f32>,
+}
+
+impl<'a> Local<'a> {
+    /// Loads `model`, with DTW for `model_preset`, or without DTW when `None`.
+    pub(crate) fn load(
+        model: &'a Path,
+        model_preset: Option<DtwModelPreset>,
+        audio: Vec<f32>,
+    ) -> Result<Self, DecompileError> {
+        Ok(Self {
+            transcriber: Transcriber::load(model, model_preset)?,
+            audio,
+        })
+    }
+}
+
+impl Passes for Local<'_> {
+    fn run(&mut self, pass: &Pass) -> Result<PassOutput, DecompileError> {
+        let slice = slice_ms(&self.audio, pass.start_ms, pass.end_ms);
+        let words = self
+            .transcriber
+            .pass(slice, pass.padding, pass.language.as_deref())?;
+        Ok(PassOutput {
+            words,
+            language: self.transcriber.language().map(str::to_string),
+        })
+    }
+
+    fn fallbacks(&self) -> Vec<Pass> {
+        Vec::new()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Padding {
     None,
     /// `PADDING_MS` of silence before and after the audio.
     Around,
@@ -144,17 +245,19 @@ struct Transcriber<'a> {
 }
 
 impl<'a> Transcriber<'a> {
-    fn load(model: &'a Path, model_preset: DtwModelPreset) -> Result<Self, DecompileError> {
+    fn load(model: &'a Path, model_preset: Option<DtwModelPreset>) -> Result<Self, DecompileError> {
         // With neither of whisper-rs's log-backend features enabled, this
         // discards whisper.cpp's log output instead of printing it to stderr.
         whisper_rs::install_logging_hooks();
         let mut context_params = WhisperContextParameters::default();
         // whisper.cpp computes DTW timestamps only without flash attention.
         context_params.flash_attn(false);
-        context_params.dtw_parameters(DtwParameters {
-            mode: DtwMode::ModelPreset { model_preset },
-            ..Default::default()
-        });
+        if let Some(model_preset) = model_preset {
+            context_params.dtw_parameters(DtwParameters {
+                mode: DtwMode::ModelPreset { model_preset },
+                ..Default::default()
+            });
+        }
         let context = WhisperContext::new_with_params(model, context_params)
             .map_err(|err| failed("load", model, err))?;
         let state = context
@@ -489,7 +592,8 @@ mod tests {
     #[test]
     fn a_missing_model_is_an_error_naming_the_path() {
         let path = Path::new("/nonexistent/ggml-missing.bin");
-        let err = transcribe(path, &[0.0; 4_800], 48_000, &[]).expect_err("no model file");
+        let err = transcribe(path, &[0.0; 4_800], 48_000, &[], &WhisperRunner::InProcess)
+            .expect_err("no model file");
         assert!(
             err.to_string().contains("/nonexistent/ggml-missing.bin"),
             "{err}"

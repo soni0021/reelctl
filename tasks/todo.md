@@ -43,21 +43,21 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/whisper-coverage.md](../docs/s
 
 ## Checkpoint A
 
-- [ ] `cargo test` passes
-- [ ] NEET video, full: at least 80 words before 30.44 s, words in each of the three short holes, and extra `asr_ms` under 10% of 401.6 s (criteria 1 and 5)
+- [x] `cargo test` passes
+- [ ] NEET video, full: at least 80 words before 30.44 s, words in each of the three short holes, and extra `asr_ms` under 10% of 401.6 s (criteria 1 and 5). Criterion 1 passed: 86 words before 30.44 s, and 27, 18, and 17 in the short holes. Criterion 5 was not measurable: total `asr_ms` was 763.0 s under a load average near 6, which two separate runs cannot attribute; `asr_first_ms` and `asr_second_ms` were added to measure it within one run in Task 4
 
 ## Task 3: Run whisper in a child process
 
 **Description:** A hidden `reelctl whisper-worker` subcommand runs whisper passes for the parent. `decompile` gets `WhisperRunner::{InProcess, Worker}`, and `reelctl` uses `Worker` with its own executable. Audio goes through a temporary file, requests through stdin as JSON, and results come back as one JSON line per pass. If the worker dies from a signal, the parent re-runs the unfinished passes with DTW off and says so in `asr_note`.
 
 **Acceptance criteria:**
-- [ ] A unit test with a fake worker that aborts (`/bin/sh -c 'kill -ABRT $$'`) gets the abort reported and the retry attempted; when the retry also fails, the error names the abort and exit code 1 follows
-- [ ] With the real worker, `speech12` gives the same `words` as in-process with both models, and `--help` does not list the worker subcommand
-- [ ] The temporary audio file is removed after the run, on success and on failure
-- [ ] Docs: `docs/cli.md` (worker process, temporary file location), CHANGELOG
+- [x] A unit test with a fake worker that aborts (`/bin/sh -c 'kill -ABRT $$'`) gets the abort reported and the retry attempted; when the retry also fails, the error names the abort and exit code 1 follows. A mutation that keeps DTW on the retry makes the retry test fail
+- [x] With the real worker, `speech12` gives the same `words` as in-process with both models, and `--help` does not list the worker subcommand
+- [x] The temporary audio file is removed after the run, on success and on failure
+- [x] Docs: `docs/cli.md` (worker process, temporary file location), CHANGELOG
 
 **Verification:**
-- [ ] `cargo test`; the whisper model test with both models
+- [x] `cargo test` (57 pass, 2 ignored); the whisper model tests with both models; the iPhone clip gives the same 183 words through the worker as in-process
 
 **Dependencies:** Task 2
 

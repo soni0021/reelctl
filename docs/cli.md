@@ -46,10 +46,10 @@ signal_ms=11 asr_ms=0 asr_us=333 structural_under_500ms=true cuts=1 silence_gaps
 If `REELCTL_PROFILE` is set to any value, stderr also gets the time of each stage:
 
 ```
-profile decode_ms=9 analyze_ms=0 silence_ms=0 loudness_ms=1 asr_ms=0 json_ms=0 filmstrips=1
+profile decode_ms=9 analyze_ms=0 silence_ms=0 loudness_ms=1 asr_ms=0 asr_first_ms=0 asr_second_ms=0 json_ms=0 filmstrips=1
 ```
 
-`decode_ms` includes cut scoring, color sampling, and thumbnail capture, which happen inside the decode loop. `analyze_ms` covers choosing cuts from the scores, building per-shot histograms, and finding the payoff cue. `filmstrips` is the number of PNGs written.
+`decode_ms` includes cut scoring, color sampling, and thumbnail capture, which happen inside the decode loop. `analyze_ms` covers choosing cuts from the scores, building per-shot histograms, and finding the payoff cue. `asr_first_ms` and `asr_second_ms` split `asr_ms` with a whisper model: the first pass, including starting the worker and loading the model, and the re-runs of stretches the first pass left without words. Both are 0 without a model. `filmstrips` is the number of PNGs written.
 
 Files written:
 
@@ -78,6 +78,8 @@ reelctl decompile --input reel.mp4 --out reel.edit_dna.json \
 - English-only (`.en`) models transcribe English; multilingual models detect the language.
 - Each word starts at its DTW timestamp and ends at the next word's start, or at the next silence gap if that comes first. DTW needs the model's alignment-head preset, which `reelctl` picks from the shape in the model file's header, so renamed files work.
 - whisper.cpp prints nothing. Its time is `asr_ms`, which is not part of `signal_ms` or the 500 ms target. A 60 s clip took about 19 s with the Apex model on an Apple M3.
+- Stretches of sound that the first pass left without words are transcribed again, and `asr_note` lists them ([edit-dna.md](edit-dna.md#audio)).
+- whisper runs in a child process, `reelctl whisper-worker`, which `--help` does not list. The parent writes the 16 kHz audio to `$TMPDIR/reelctl-whisper-<pid>-<time>.f32` and removes it when the run ends, also after an error. whisper.cpp 1.8.3 can abort the process on short windows when DTW is on; if the worker dies, that one pass runs again in a fresh worker without DTW, and `asr_note` says which. If it dies again, `decompile` exits with code 1, for example `error: decompile: whisper: the whisper worker was killed by signal 6 (SIGABRT) on 16.0-30.9 s, and was killed by signal 6 (SIGABRT) again without DTW`. If `reelctl` cannot find its own executable, whisper runs in-process instead.
 - `reelctl` never picks a model on its own. To use one by default, export `REELCTL_WHISPER_MODEL` in your shell profile.
 
 ## reelctl diff

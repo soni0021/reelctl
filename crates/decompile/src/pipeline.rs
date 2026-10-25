@@ -19,6 +19,7 @@ use crate::payoff::from_cuts;
 use crate::scene::{CutDetector, SceneScoreDetector, SCENE_NOTE};
 use crate::silence;
 use crate::transnet::{select_detector, CutDetectorChoice, SelectedDetector};
+use crate::worker::WhisperRunner;
 
 const PCM_HALF_WINDOW_MS: u64 = 1_500;
 
@@ -27,6 +28,7 @@ pub struct DecompileRequest {
     pub output: Option<PathBuf>,
     pub transnet_weights: Option<PathBuf>,
     pub whisper_model: Option<PathBuf>,
+    pub whisper_runner: WhisperRunner,
     pub cut_detector: CutDetectorChoice,
 }
 
@@ -36,6 +38,9 @@ pub struct StageProfile {
     pub silence: Duration,
     pub loudness: Duration,
     pub asr: Duration,
+    /// Parts of `asr`: whisper's first pass and its re-runs of skipped stretches.
+    pub asr_first_pass: Duration,
+    pub asr_second_pass: Duration,
     pub json: Duration,
 }
 
@@ -82,6 +87,7 @@ pub fn decompile_file(request: &DecompileRequest) -> Result<DecompileOutput, Dec
         decoded.duration_ms,
         &silence,
         request.whisper_model.as_deref(),
+        &request.whisper_runner,
     )?;
     let asr_elapsed = asr_started.elapsed();
 
@@ -116,6 +122,8 @@ pub fn decompile_file(request: &DecompileRequest) -> Result<DecompileOutput, Dec
             silence: silence_elapsed,
             loudness: loudness_elapsed,
             asr: asr_elapsed,
+            asr_first_pass: asr.first_pass,
+            asr_second_pass: asr.second_pass,
             json: json_elapsed,
         },
     })
