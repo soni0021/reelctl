@@ -109,3 +109,13 @@ Answered 2026-10-25 with the recommended options:
    - **C:** point `whisper-rs-sys` at a whisper.cpp revision that has the fix, with a Cargo `[patch]` to a git dependency. Fixes it at the source, but leaves the released crates.
 2. **Where to report re-transcribed holes.** In `asr_note` text, with no schema change. The alternative is a new `asr_reruns` field and schema version 3, which tools could read.
 3. **Holes over music or noise.** A hole is any stretch with sound and no words, so a music bed or a noisy stretch also triggers a re-run, and whisper may invent words there. Accepted; every re-run is reported in `asr_note` so it can be checked. The alternative is to skip holes whose level stays near-constant, which needs its own measurements.
+
+## Revision 2026-10-25
+
+Found while building Task 2 (numbers in [ADR-009](../decisions/ADR-009-transcribe-skipped-stretches-again.md)):
+
+- **The first pass is not padded.** Padding it by 1 s changed the text of 4 of the 5 hole-free 60 s cuts, which the Boundaries rule "keep the output identical when there are no holes" forbids. The abort it was meant to guard against is handled by the child process in Task 3.
+- **Re-runs get 1 s of silence before and after the hole, and reuse the first pass's language.** On the iPhone clip, padding only after the hole recovered no words in 9.9–15.6 s; padding before and after recovered 10, for 183 in total. Reusing the language gave the same words and saved 7.5 s of `asr_ms`.
+- **Forcing a hole synthetically did not work.** Speech after a 25 s tone and speech starting at 29 s both transcribed without a hole. The tone-then-speech clip (`generate.sh tonespeech`) still tests the hole path end to end: the tone is flagged, re-run, and stays empty, and the speech is kept. It is an ignored model test.
+- **Apex invents words over long silence before English speech.** On speech starting at 29 s after digital silence, it wrote 6 words at 0.1 s and garbled the first sentence. That is the first pass, outside this spec, and is recorded in [status.md](../status.md#known-issues).
+

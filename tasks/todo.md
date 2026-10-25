@@ -25,15 +25,15 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/whisper-coverage.md](../docs/s
 **Description:** Refactor `whisper.rs` around a `Transcriber` that loads the model once and runs padded passes over slices of the 16 kHz audio. The first pass covers the whole audio. Holes found in its output are re-run, merged, and word ends computed once. `asr_note` reports the re-runs, the words they added, and any holes that stayed empty.
 
 **Acceptance criteria:**
-- [ ] Before the change, save `words` from `speech12` (both models) and the five clean cuts; after it, they are identical (spec criterion 4)
-- [ ] iPhone clip, first 60 s with copied audio: at least 180 words, with words in 9.9–15.6 and 16.0–30.9 s (criterion 2)
-- [ ] No word starts at or after the end of the audio (criterion 3)
-- [ ] A synthetic clip that forces a hole is tried; if one works, it becomes an ignored model test; if not, the attempts are recorded in the spec
-- [ ] Docs: `docs/edit-dna.md` (`words`, `asr_note`), CHANGELOG, ADR-009
+- [x] Before the change, save `words` from `speech12` (both models) and the five clean cuts; after it, they are identical (spec criterion 4). They are, once the first pass is left unpadded; padding it changed 4 of 5 cuts
+- [x] iPhone clip, first 60 s with copied audio: at least 180 words, with words in 9.9–15.6 and 16.0–30.9 s (criterion 2): 183 words, 10 and 52
+- [x] No word starts at or after the end of the audio (criterion 3)
+- [x] A synthetic clip that forces a hole is tried; if one works, it becomes an ignored model test; if not, the attempts are recorded in the spec. Neither attempt forced a speech loss; the tone-then-speech clip became an ignored test of the hole path
+- [x] Docs: `docs/edit-dna.md` (`words`, `asr_note`), CHANGELOG, ADR-009
 
 **Verification:**
-- [ ] `cargo test`; the whisper model test with both models
-- [ ] Release-build runs on the iPhone clip and the saved cuts
+- [x] `cargo test` (52 pass, 1 ignored); the whisper model tests with both models (3 of 3 each)
+- [x] Release-build runs on the iPhone clip and the saved cuts
 
 **Dependencies:** Task 1
 

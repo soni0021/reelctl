@@ -32,6 +32,12 @@ pub(crate) struct Hole {
     pub end_ms: u64,
 }
 
+impl Hole {
+    fn contains(&self, time_ms: u64) -> bool {
+        time_ms >= self.start_ms && time_ms < self.end_ms
+    }
+}
+
 /// Holes in `words`, which must be sorted by start.
 pub(crate) fn find_holes(words: &[WordStart], gaps: &[SilenceGap], duration_ms: u64) -> Vec<Hole> {
     let mut bounds = Vec::with_capacity(words.len() + 2);
@@ -65,24 +71,29 @@ fn silent_ms(gaps: &[SilenceGap], start_ms: u64, end_ms: u64) -> u64 {
 pub(crate) fn merge(first: Vec<WordStart>, reruns: Vec<(Hole, Vec<WordStart>)>) -> Vec<WordStart> {
     let mut words = first;
     for (hole, rerun) in reruns {
-        let inside = |start_ms: u64| start_ms >= hole.start_ms && start_ms < hole.end_ms;
-        let found: Vec<WordStart> = rerun
-            .into_iter()
-            .map(|word| WordStart {
-                start_ms: word.start_ms + hole.start_ms,
-                segment_end_ms: word.segment_end_ms + hole.start_ms,
-                text: word.text,
-            })
-            .filter(|word| inside(word.start_ms))
-            .collect();
+        let found = shift_into(hole, rerun);
         if found.is_empty() {
             continue;
         }
-        words.retain(|word| !inside(word.start_ms));
+        words.retain(|word| !hole.contains(word.start_ms));
         words.extend(found);
     }
     words.sort_by_key(|word| word.start_ms);
     words
+}
+
+/// Shifts a re-run's words, timed from the start of `hole`, onto the
+/// recording, and keeps those that start inside the hole.
+pub(crate) fn shift_into(hole: Hole, rerun: Vec<WordStart>) -> Vec<WordStart> {
+    rerun
+        .into_iter()
+        .map(|word| WordStart {
+            start_ms: word.start_ms + hole.start_ms,
+            segment_end_ms: word.segment_end_ms + hole.start_ms,
+            text: word.text,
+        })
+        .filter(|word| hole.contains(word.start_ms))
+        .collect()
 }
 
 /// Drops words that start at or after `end_ms`, the end of the real audio.

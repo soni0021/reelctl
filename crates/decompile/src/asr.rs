@@ -13,7 +13,7 @@ use edit_dna::{AsrBackend, Word};
 
 use crate::error::DecompileError;
 use crate::silence::SilenceAnalysis;
-use crate::whisper;
+use crate::whisper::{self, Rerun};
 
 const WINDOW_MS: u64 = 10;
 const MIN_BURST_MS: u64 = 40;
@@ -58,10 +58,11 @@ pub fn transcribe(
         "whisper.cpp {} transcribed the audio with {file_name} (DTW preset {}, language {}). \
 Each word starts at its DTW timestamp and ends at the next word's start or the next silence \
 gap, whichever is earlier. words_per_minute is word_count / (duration_ms / 60000) over the \
-whole reel.",
+whole reel. {}",
         whisper_rs::get_whisper_version(),
         transcript.preset,
         transcript.language,
+        coverage_sentence(&transcript.reruns),
     );
     Ok(AsrEstimate {
         words_per_minute: per_minute(transcript.words.len(), duration_ms),
@@ -69,6 +70,34 @@ whole reel.",
         backend: AsrBackend::WhisperCpp,
         note,
     })
+}
+
+/// What the second pass did: which stretches whisper left without words, and
+/// how many words transcribing each again found.
+fn coverage_sentence(reruns: &[Rerun]) -> String {
+    if reruns.is_empty() {
+        return "No stretch longer than 3 s with at least 1.5 s of sound was left without words."
+            .to_string();
+    }
+    let found: usize = reruns.iter().map(|rerun| rerun.words_found).sum();
+    let each: Vec<String> = reruns
+        .iter()
+        .map(|rerun| {
+            format!(
+                "{:.1}-{:.1} s: {}",
+                rerun.hole.start_ms as f64 / 1_000.0,
+                rerun.hole.end_ms as f64 / 1_000.0,
+                rerun.words_found
+            )
+        })
+        .collect();
+    format!(
+        "The first pass left {} stretches with sound but no words; transcribing each again \
+found {found} words, which replace that stretch's first-pass words ({}). A stretch whose \
+second pass found nothing keeps its first-pass words.",
+        reruns.len(),
+        each.join("; ")
+    )
 }
 
 fn per_minute(count: usize, duration_ms: u64) -> f64 {
@@ -125,6 +154,28 @@ fn round2(value: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::coverage::Hole;
+
+    fn rerun(start_ms: u64, end_ms: u64, words_found: usize) -> Rerun {
+        Rerun {
+            hole: Hole { start_ms, end_ms },
+            words_found,
+        }
+    }
+
+    #[test]
+    fn the_note_says_when_no_stretch_was_left_without_words() {
+        assert!(coverage_sentence(&[]).starts_with("No stretch longer than 3 s"));
+    }
+
+    #[test]
+    fn the_note_lists_each_rerun_and_the_words_it_found() {
+        let sentence = coverage_sentence(&[rerun(9_900, 15_600, 13), rerun(16_000, 30_900, 0)]);
+        assert!(sentence.contains("left 2 stretches"), "{sentence}");
+        assert!(sentence.contains("found 13 words"), "{sentence}");
+        assert!(sentence.contains("9.9-15.6 s: 13"), "{sentence}");
+        assert!(sentence.contains("16.0-30.9 s: 0"), "{sentence}");
+    }
 
     #[test]
     fn a_silence_gap_splits_one_tone_into_two_words() {

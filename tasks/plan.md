@@ -29,7 +29,7 @@ Make whisper's output cover the speech that is there, and keep a whisper.cpp abo
 
 ### Phase 1: Coverage
 - [x] Task 1: Holes and merging (pure functions)
-- [ ] Task 2: Re-transcribe holes, with padding, in-process
+- [x] Task 2: Re-transcribe holes, with padding, in-process
 
 ### Checkpoint A
 - [ ] `cargo test` passes; spec criteria 1–5 hold on the NEET video, the iPhone clip, and the clean cuts

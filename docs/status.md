@@ -125,6 +125,7 @@ Not yet listed in AGENTS.md:
 - The JSON value for TransNetV2 is `"trans_net_v2"`, but `CutDetectorKind::as_str()` returns `"transnet_v2"`. Nothing emits either until TransNetV2 is linked.
 - Colors are converted from YUV with BT.601 coefficients, while most HD video uses BT.709, so absolute RGB values are slightly off.
 - whisper can silently drop up to a 30 s window of speech. With Apex it skipped 15.96–30.86 s of the re-cut real clip and 0–30.44 s of the 18-minute NEET video, although neither stretch is mostly silent; other cuts of the same audio transcribe it. The cause is not known. Module `whisper-coverage` in the [P0 capability map](specs/p0-capability-map.md).
+- With the Apex model, 29 s of digital silence before English speech (`say`) produced 6 invented words at 0.1 s and a garbled first sentence. `base.en` did not do this. Found 2026-10-25; not addressed.
 - Audio that is not 48 kHz drifts early, because the decoder resamples each frame on its own and drops the fractional sample. At 44.1 kHz a pause planted at 50.0 s is found 10–40 ms early; over 18 minutes the drift is about 0.5 s. Module `decode-inputs`.
 - Thresholds read from FFmpeg tools are not comparable with `reelctl`'s: FFmpeg's `-ac 1` downmix reads about 3 dB louder than `reelctl`'s channel average, and `silencedetect` compares sample peaks rather than 10 ms mean-square levels.
 - The quality interview in [CONSTRAINTS.md](../CONSTRAINTS.md) has not been run, so only the floor rules plus `cargo check` and `cargo test` are enforced.

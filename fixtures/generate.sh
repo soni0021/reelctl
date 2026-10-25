@@ -78,6 +78,23 @@ speech12() {
   rm -f "$base" "$speech"
 }
 
+# 40 s: a 25 s tone, then synthesized speech, then silence. The tone is sound
+# with no words, so the whisper pass finds a hole there, transcribes it again,
+# and finds nothing; the speech after it is transcribed as usual.
+tonespeech() {
+  local out="$1"
+  local base speech
+  base="$(mktemp -t reelctl-speech)"
+  speech="${base}.aiff"
+  say -v Samantha -o "$speech" "Cut the dead air. Show the proof before the viewer scrolls away."
+  encode "$out" \
+    "[1:a]volume=0.5[t];[2:a]aresample=48000[s];[t][s]concat=n=2:v=0:a=1,apad,atrim=duration=40[a];[0:v]null[v]" \
+    -f lavfi -i "color=c=blue:s=640x360:r=30:d=40" \
+    -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=25" \
+    -i "$speech"
+  rm -f "$base" "$speech"
+}
+
 cmd="${1:-}"
 out="${2:-}"
 case "$cmd" in
@@ -96,6 +113,9 @@ case "$cmd" in
   speech12)
     speech12 "$out"
     ;;
+  tonespeech)
+    tonespeech "$out"
+    ;;
   all)
     root="$(cd "$(dirname "$0")" && pwd)"
     dir="${root}/generated"
@@ -106,7 +126,7 @@ case "$cmd" in
     bench60 "${dir}/bench_60s.mp4"
     ;;
   *)
-    echo "usage: generate.sh draft12|outlier12|noisy12|bench60|speech12|all [out.mp4]" >&2
+    echo "usage: generate.sh draft12|outlier12|noisy12|bench60|speech12|tonespeech|all [out.mp4]" >&2
     exit 2
     ;;
 esac
