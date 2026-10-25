@@ -1,6 +1,6 @@
 # Spec: whisper coverage
 
-Status: draft, 2026-10-25, awaiting the user's approval. Module `whisper-coverage` in the [P0 capability map](p0-capability-map.md). Branch: `feature/whisper-coverage`.
+Status: approved 2026-10-25, with the recommended answer to each open question (see Resolved Questions). Plan: [tasks/plan.md](../../tasks/plan.md). Module `whisper-coverage` in the [P0 capability map](p0-capability-map.md). Branch: `feature/whisper-coverage`.
 
 ## Objective
 
@@ -26,7 +26,7 @@ Behavior:
 - **Pad the first pass** with 1 s of silence after the audio, as cheap insurance against a short last window.
 - **Drop words from the padding.** A word that starts at or after the end of the real audio is removed. Apex wrote "nan" for 20 s of digital silence and for 20 s of white noise, so padding can produce invented words, and they can only start in the padding.
 - **No general silence filter.** On the NEET video, 3 of 3,894 real words have DTW starts 110–200 ms inside a silence gap ("let **say.**" at the start of a 1.41 s gap, "death **se.**", "saari **chiz** se"), so dropping words that start inside gaps would delete real speech.
-- **Survive an abort.** See Open Question 1.
+- **Survive an abort.** whisper runs in a child `reelctl` process (Resolved Question 1).
 - `asr_note` says how many holes were re-transcribed, how many words that added, and which holes stayed empty, with their times.
 - Without holes the output is unchanged, because whisper with greedy sampling is deterministic. Re-transcription counts toward `asr_ms` and stays outside `signal_ms`.
 
@@ -55,7 +55,7 @@ target/release/reelctl decompile --input video.mp4 --out video.edit_dna.json \
 | `crates/decompile/src/whisper.rs` | Run passes on one loaded model; padding; hole re-runs; merging |
 | `crates/decompile/src/coverage.rs` (new) | Pure functions: find holes from words, gaps, and duration; merge re-run words; drop words from the padding |
 | `crates/decompile/src/asr.rs` | `asr_note` text |
-| `crates/reelctl/src/main.rs` | Only if Open Question 1 picks the worker process |
+| `crates/reelctl/src/main.rs` | A hidden worker subcommand that runs whisper passes for the parent process |
 | `crates/reelctl/tests/whisper_fixture.rs` | A model test where a hole is forced, if one can be made synthetically (see Testing Strategy) |
 | Docs | `docs/edit-dna.md` (`words`, `asr_note`), `docs/cli.md`, `docs/status.md`, CHANGELOG, ADR-009 |
 
@@ -96,14 +96,16 @@ Test-first.
 3. No word starts at or after the end of the audio, on either recording or `speech12`.
 4. Runs without holes give identical `words`: `speech12` with both models, and the five NEET and iPhone cuts that had no holes.
 5. Extra `asr_ms` for the NEET video is under 10% of its first pass (401.6 s).
-6. A whisper.cpp abort is handled as Open Question 1 decides, with a test.
+6. A whisper.cpp abort in the child process does not end `reelctl`: the pass is retried without DTW, `asr_note` says so, and a test covers it.
 7. `cargo test` passes, and the docs listed under Project Structure are updated.
 
-## Open Questions
+## Resolved Questions
+
+Answered 2026-10-25 with the recommended options:
 
 1. **The DTW abort.** It ends the whole process in whisper.cpp 1.8.3, and no released whisper-rs has the fix.
-   - **A (recommended):** run whisper in a child `reelctl` process, so an abort becomes an error the parent handles. The parent re-runs the failed pass without DTW, falling back to segment timestamps, and says so in `asr_note`. Costs: the 16 kHz audio goes to the child through a temporary file, and the model loads once per child (about 1 s for Apex).
+   - **A (chosen):** run whisper in a child `reelctl` process, so an abort becomes an error the parent handles. The parent re-runs the failed pass without DTW, falling back to segment timestamps, and says so in `asr_note`. Costs: the 16 kHz audio goes to the child through a temporary file, and the model loads once per child (about 1 s for Apex).
    - **B:** accept the abort for now, document it, and upgrade when whisper-rs ships a whisper.cpp with PR #4096.
    - **C:** point `whisper-rs-sys` at a whisper.cpp revision that has the fix, with a Cargo `[patch]` to a git dependency. Fixes it at the source, but leaves the released crates.
-2. **Where to report re-transcribed holes.** Recommended: in `asr_note` text, with no schema change. The alternative is a new `asr_reruns` field and schema version 3, which tools could read.
-3. **Holes over music or noise.** A hole is any stretch with sound and no words, so a music bed or a noisy stretch also triggers a re-run, and whisper may invent words there. Recommended: accept this, and report every re-run in `asr_note` so it can be checked. The alternative is to skip holes whose level stays near-constant, which needs its own measurements.
+2. **Where to report re-transcribed holes.** In `asr_note` text, with no schema change. The alternative is a new `asr_reruns` field and schema version 3, which tools could read.
+3. **Holes over music or noise.** A hole is any stretch with sound and no words, so a music bed or a noisy stretch also triggers a re-run, and whisper may invent words there. Accepted; every re-run is reported in `asr_note` so it can be checked. The alternative is to skip holes whose level stays near-constant, which needs its own measurements.
