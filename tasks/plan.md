@@ -29,7 +29,7 @@ Replace the fixed −40 dBFS silence threshold with `max(−40, min(p10 + 6, p90
 - [x] `cargo test` passes; the four synthetic clips' `silence_gaps` match the baseline captured before Task 2; the real clip meets spec criterion 3
 
 ### Phase 2: Output and proof
-- [ ] Task 3: Record the threshold and noise floor in `edit_dna.json`
+- [x] Task 3: Record the threshold and noise floor in `edit_dna.json`
 - [ ] Task 4: `noisy12` fixture and end-to-end test
 - [ ] Task 5: Measure and close out
 

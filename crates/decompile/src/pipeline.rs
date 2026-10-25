@@ -89,7 +89,7 @@ pub fn decompile_file(request: &DecompileRequest) -> Result<DecompileOutput, Dec
         &decoded,
         cuts,
         histograms,
-        silence.gaps,
+        silence,
         lufs,
         payoff,
         &asr,
@@ -177,7 +177,7 @@ fn assemble(
     decoded: &DecodedReel,
     cuts: Vec<edit_dna::Cut>,
     histograms: Vec<edit_dna::ShotHistogram>,
-    silence_gaps: Vec<edit_dna::SilenceGap>,
+    silence: silence::SilenceAnalysis,
     lufs: f64,
     payoff: edit_dna::PayoffWindow,
     asr: &AsrEstimate,
@@ -193,7 +193,9 @@ fn assemble(
     dna.schema_version = SCHEMA_VERSION;
     dna.frame_count = decoded.frames.len() as u64;
     dna.cuts = cuts;
-    dna.silence_gaps = silence_gaps;
+    dna.silence_gaps = silence.gaps;
+    dna.silence_threshold_db = round2(silence.threshold_db);
+    dna.noise_floor_db = silence.noise_floor_db.map(round2);
     dna.words = asr.words.clone();
     dna.words_per_minute = asr.words_per_minute;
     dna.integrated_lufs = lufs;
@@ -282,6 +284,10 @@ fn write_dna(path: &std::path::Path, dna: &EditDna) -> Result<(), DecompileError
     writer.write_all(b"\n")?;
     writer.flush()?;
     Ok(())
+}
+
+fn round2(value: f64) -> f64 {
+    (value * 100.0).round() / 100.0
 }
 
 fn duration_ms(duration: Duration) -> u64 {

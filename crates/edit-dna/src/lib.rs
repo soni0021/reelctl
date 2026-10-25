@@ -8,8 +8,12 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// Bump when a decoded file would no longer match this crate's types.
-pub const SCHEMA_VERSION: u32 = 1;
+/// Bump when the format changes. Version 2 added `silence_threshold_db` and
+/// `noise_floor_db`; version 1 files still parse, with those fields' defaults.
+pub const SCHEMA_VERSION: u32 = 2;
+
+/// The silence threshold every version 1 file used.
+pub const LEGACY_SILENCE_THRESHOLD_DB: f64 = -40.0;
 
 /// Octupie payoff sits on a 9 second marker. The diff window is 8–10 seconds.
 pub const PAYOFF_MARKER_MS: u64 = 9_000;
@@ -194,6 +198,14 @@ pub struct EditDna {
     pub frame_count: u64,
     pub cuts: Vec<Cut>,
     pub silence_gaps: Vec<SilenceGap>,
+    /// Level in dB below which a 10 ms window counts as silent in this recording.
+    /// A version 1 file, which has no such field, used a fixed -40 dBFS.
+    #[serde(default = "legacy_silence_threshold_db")]
+    pub silence_threshold_db: f64,
+    /// 10th-percentile window level in dB, the noise-floor estimate. `null`
+    /// without audio, and in version 1 files, which did not measure it.
+    #[serde(default)]
+    pub noise_floor_db: Option<f64>,
     pub words: Vec<Word>,
     pub words_per_minute: f64,
     pub integrated_lufs: f64,
@@ -222,6 +234,8 @@ impl EditDna {
             frame_count: 0,
             cuts: Vec::new(),
             silence_gaps: Vec::new(),
+            silence_threshold_db: LEGACY_SILENCE_THRESHOLD_DB,
+            noise_floor_db: None,
             words: Vec::new(),
             words_per_minute: 0.0,
             integrated_lufs: -70.0,
@@ -238,6 +252,10 @@ impl EditDna {
             decode_note: String::new(),
         }
     }
+}
+
+fn legacy_silence_threshold_db() -> f64 {
+    LEGACY_SILENCE_THRESHOLD_DB
 }
 
 /// Thumbnails and a PCM window around one cut, for a `timeline_view` PNG.
@@ -278,6 +296,8 @@ mod tests {
             "frame_size",
             "cuts",
             "silence_gaps",
+            "silence_threshold_db",
+            "noise_floor_db",
             "words_per_minute",
             "integrated_lufs",
             "shot_histograms",
@@ -289,6 +309,19 @@ mod tests {
         ] {
             assert!(props.contains_key(key), "schema missing {key}");
         }
+    }
+
+    #[test]
+    fn a_version_1_file_reads_with_the_fixed_silence_threshold() {
+        let mut value =
+            serde_json::to_value(EditDna::empty(1_000, 30.0, 64, 36)).expect("serialize");
+        let object = value.as_object_mut().expect("object");
+        object.remove("silence_threshold_db");
+        object.remove("noise_floor_db");
+        object.insert("schema_version".to_string(), 1.into());
+        let dna: EditDna = serde_json::from_value(value).expect("a version 1 file parses");
+        assert_eq!(dna.silence_threshold_db, -40.0);
+        assert_eq!(dna.noise_floor_db, None);
     }
 
     #[test]

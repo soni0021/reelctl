@@ -49,12 +49,12 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/relative-silence.md](../docs/s
 **Description:** Add `silence_threshold_db` (a file without it reads as −40) and `noise_floor_db` (`null` with no audio or in older files) to `EditDna`, set `SCHEMA_VERSION` to 2, fill both from `SilenceAnalysis`, and regenerate the schema.
 
 **Acceptance criteria:**
-- [ ] A version-1 JSON without the fields deserializes, with −40 and `null`, and `reelctl diff` accepts it as `--outlier`
-- [ ] `draft12` reports `silence_threshold_db` −33 and a `noise_floor_db` of about −21.2; a clip with no audio reports −40 and `null`
-- [ ] Docs: `docs/edit-dna.md` (both fields and `schema_version` 2), schema regenerated, CHANGELOG
+- [x] A version-1 JSON without the fields deserializes, with −40 and `null`, and `reelctl diff` accepts it as `--outlier`
+- [x] `draft12` reports `silence_threshold_db` −33 and a `noise_floor_db` of about −21.2; a clip with no audio reports −40 and `null`
+- [x] Docs: `docs/edit-dna.md` (both fields and `schema_version` 2), schema regenerated, CHANGELOG
 
 **Verification:**
-- [ ] `cargo test`; `cargo run -p edit-dna --example schema` leaves no further diff
+- [x] `cargo test` (42 pass, 1 ignored); `cargo run -p edit-dna --example schema` leaves no further diff. Manual: `draft12` gives −33.0 and −21.17; a video-only clip gives −40.0 and `null`
 
 **Dependencies:** Task 2
 
