@@ -1,6 +1,6 @@
 # Spec: Silence relative to each recording's noise floor
 
-Status: draft, 2026-10-25, awaiting the user's approval. Branch: `feature/relative-silence`.
+Status: approved 2026-10-25, with the recommended answer to each open question (see Resolved Questions). Branch: `feature/relative-silence`. Plan: [tasks/plan.md](../../tasks/plan.md).
 
 ## Objective
 
@@ -18,7 +18,7 @@ Behavior:
 - **The burst estimator** (the no-model word path in `asr.rs`) uses the same threshold, so bursts and gaps agree. Its 40 ms split rule does not change.
 - `signal_ms` includes the threshold calculation, because silence detection is part of the structural path. Sorting about 6,000 window levels for a 60 s clip costs well under a millisecond.
 
-Out of scope: voice activity detection models, spectral noise estimation, per-section thresholds that change over a recording, a CLI override flag (see Open Questions), and any change to the 180 ms dead-air limit in `diff`.
+Out of scope: voice activity detection models, spectral noise estimation, per-section thresholds that change over a recording, a CLI override flag (see Resolved Questions), and any change to the 180 ms dead-air limit in `diff`.
 
 ## Evidence
 
@@ -71,7 +71,7 @@ target/release/reelctl decompile --input clip.mp4 --out clip.edit_dna.json
 | `crates/decompile/src/silence.rs` | `threshold_db(levels)`; gaps end only after 30 ms of sound; `detect_gaps` takes the threshold |
 | `crates/decompile/src/asr.rs` | The burst estimator takes the same threshold |
 | `crates/decompile/src/pipeline.rs` | Compute window levels and the threshold once, pass them to silence and ASR, record them in the output |
-| `crates/edit-dna/src/lib.rs`, schema | Only if Open Question 1 is answered yes |
+| `crates/edit-dna/src/lib.rs`, schema | `silence_threshold_db` and `noise_floor_db`; `SCHEMA_VERSION` 2 |
 | `fixtures/generate.sh` | New `noisy12` clip: `draft12`'s video and tone, plus white noise that continues through the planted mute |
 | `crates/reelctl/tests/p0_fixture.rs` | Decompile `noisy12`; check the planted pause is a gap and `diff` flags it as dead air |
 | Docs | `docs/edit-dna.md`, `docs/cli.md` if output changes, `docs/status.md`, README commands, AGENTS.md (the fixed −40 dBFS fact), CHANGELOG, ADR-008, and the ADR-003 and ADR-007 consequences that mention −40 dBFS |
@@ -115,7 +115,7 @@ Test-first with `cargo test`. All default tests are synthetic and offline.
   - Keep the threshold calculation inside `signal_ms`.
   - Update the docs in the same commit.
 - **Ask first:**
-  - Changing the `edit_dna.json` schema beyond what Open Question 1 settles.
+  - Changing the `edit_dna.json` schema beyond the two fields in Resolved Question 1.
   - Changing the 180 ms dead-air limit or the 80 ms minimum gap.
   - Adding a dependency.
 - **Never:**
@@ -132,8 +132,10 @@ Test-first with `cargo test`. All default tests are synthetic and offline.
 6. `cargo test` passes, and the whisper model test passes with both development models.
 7. The docs listed under Project Structure are updated.
 
-## Open Questions
+## Resolved Questions
 
-1. **Record the threshold in `edit_dna.json`?** Recommended: yes. Add `silence_threshold_db` and `noise_floor_db` (the p10 level), set `SCHEMA_VERSION` to 2, and give both fields `#[serde(default)]`, so `diff` still reads outlier files written before this change. A reader then knows why a pause was or was not a gap. The alternative is no schema change, with the threshold printed only in `asr_note`-style text, which tools cannot read.
-2. **Should the burst estimator share the threshold?** Recommended: yes, as written above. Otherwise, without a whisper model, bursts and gaps disagree on what is silence.
-3. **A `--silence-threshold-db` flag to override the rule?** Recommended: no for now. Nothing needs it yet, and it can be added later without changing the rule.
+Answered 2026-10-25 with the recommended options:
+
+1. **Record the threshold in `edit_dna.json`?** Yes. Add `silence_threshold_db` and `noise_floor_db` (the p10 level), set `SCHEMA_VERSION` to 2, and give both fields `#[serde(default)]`, so `diff` still reads outlier files written before this change. A reader then knows why a pause was or was not a gap. The alternative is no schema change, with the threshold printed only in `asr_note`-style text, which tools cannot read.
+2. **Should the burst estimator share the threshold?** Yes, as written above. Otherwise, without a whisper model, bursts and gaps disagree on what is silence.
+3. **A `--silence-threshold-db` flag to override the rule?** No for now. Nothing needs it yet, and it can be added later without changing the rule.

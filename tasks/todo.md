@@ -1,128 +1,105 @@
-# Tasks: Real word timing with whisper.cpp
+# Tasks: Silence relative to the noise floor
 
-Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/whisper-asr.md](../docs/specs/whisper-asr.md). Tick each box in the commit that completes it.
+Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/relative-silence.md](../docs/specs/relative-silence.md). Tick each box in the commit that completes it.
 
-## Task 1: `whisper-rs` builds and links
+## Task 1: Threshold from window levels
 
-**Description:** Add `whisper-rs` 0.16.0 as a dependency of `decompile` and prove that whisper.cpp compiles and links on this Mac before anything depends on it.
+**Description:** Pure functions in `silence.rs`: `window_levels(pcm, sample_rate)` (one dB value per 10 ms window, using the existing `window_db`), `percentile(levels, p)` (nearest rank), and `threshold_db(levels)` = `max(−40, min(p10 + 6, p90 − 12))`. Nothing calls them yet.
 
 **Acceptance criteria:**
-- [x] `cargo build --release` compiles whisper.cpp 1.8.3 with CMake 4.4.4
-- [x] A unit test calls into whisper.cpp (`whisper_rs::get_whisper_version()`) and gets `1.8.3`
-- [x] README prerequisites and CHANGELOG say that building needs CMake
+- [ ] Digital silence plus a −14 dB level gives −40
+- [ ] A −40 dB floor under a −14 dB level gives −34 (`p10 + 6`, below the cap of −26); a constant −21 dB level gives −33 (`p90 − 12`, below `p10 + 6` = −15)
+- [ ] An empty list gives −40, and `window_levels` returns `ceil(samples / 480)` values at 48 kHz
 
 **Verification:**
-- [x] `cargo check`, then `cargo test` (18 of 18 pass)
-- [x] First-build time noted for Task 6: 41 s for the test profile, 24 s for release; no extra link flags were needed
+- [ ] `cargo test -p decompile silence` (new tests red first, then green)
 
 **Dependencies:** None
 
-**Files likely touched:** `Cargo.toml`, `crates/decompile/Cargo.toml`, `crates/decompile/src/whisper.rs` (new), `crates/decompile/src/lib.rs`, `README.md`, `CHANGELOG.md`, and `.cargo/config.toml` only if linking needs it
+**Files likely touched:** `crates/decompile/src/silence.rs`
 
 **Estimated scope:** Small
 
-## Task 2: Resample 48 kHz to 16 kHz
+## Task 2: Gaps and bursts use the threshold
 
-**Description:** A pure function that converts the decoded mono PCM to whisper's input rate: a windowed-sinc low-pass filter, then every third sample. Other input rates return an error.
-
-**Acceptance criteria:**
-- [x] 48,000 samples in, 16,000 out
-- [x] A 1 kHz tone keeps its RMS level within 5%; a 12 kHz tone drops by at least 30 dB
-- [x] Input that is not 48 kHz returns an error
-
-**Verification:**
-- [x] `cargo test -p decompile resample` (4 of 4 pass). The function shows `dead_code` warnings until Task 4 calls it.
-
-**Dependencies:** None
-
-**Files likely touched:** `crates/decompile/src/resample.rs` (new), `crates/decompile/src/lib.rs`
-
-**Estimated scope:** Small
-
-## Task 3: whisper module
-
-**Description:** `words_from_segments` (pure) and `whisper::words(model, pcm, sample_rate)`. The latter checks the path, installs the logging hooks, loads the model, and sets the spec's parameters: greedy sampling, token timestamps, `max_len` 1, split on word, English unless the model is multilingual, non-speech tokens suppressed, and no printing. It then runs the model and maps the segments.
+**Description:** `silence::analyze` returns gaps, the threshold, and the noise floor (p10). Gap detection takes the threshold and ends a gap only after 30 ms of sound; the 80 ms minimum stays. The pipeline calls `analyze` in the silence stage and passes the result to `asr::transcribe`. The burst estimator takes the threshold instead of its own −40. Docs that describe silence detection change in the same commit.
 
 **Acceptance criteria:**
-- [x] `words_from_segments` converts centiseconds to milliseconds, trims text, and drops empty, punctuation-only, and bracketed segments such as `[BLANK_AUDIO]`
-- [x] A missing model path returns `DecompileError::Whisper` naming the path
-- [x] A manual run on a `say` clip returns the spoken words: all 13 words of "Cut the dead air. Show the proof before the viewer scrolls away." Timing problem found, see Risks in [plan.md](plan.md)
+- [ ] A −38 dB noise pause inside a −20 dB tone is a gap at the computed threshold and not at −40; 10 and 20 ms sounds inside a gap do not split it, 30 ms does; a gap still open at the end of the audio closes there
+- [ ] `draft12`, `outlier12`, `bench60`, and `speech12` give exactly the `silence_gaps` they gave on `main` (baseline saved before the change)
+- [ ] Docs: `docs/edit-dna.md` (`silence_gaps` and burst text), AGENTS.md (the −40 dBFS workspace fact), CHANGELOG, and ADR-008, with a pointer to it added to ADR-007's consequences
 
 **Verification:**
-- [x] `cargo test -p decompile whisper` (5 of 5 pass)
-- [x] Manual run result recorded in the commit message
+- [ ] `cargo test`
+- [ ] Release build: baseline comparison for the four clips; on the first 60 s of the real recording, at least 20 gaps of 300 ms or more and no Apex word start more than 100 ms inside a gap
 
-**Dependencies:** Tasks 1 and 2
+**Dependencies:** Task 1
 
-**Files likely touched:** `crates/decompile/src/whisper.rs`, `crates/decompile/src/error.rs`
-
-**Estimated scope:** Small to medium
-
-## Checkpoint A
-
-- [x] `cargo test` passes (26 of 26)
-- [x] `cargo build --release` is clean
-
-## Task 4: Use whisper for words when a model is given
-
-**Description:** `asr::transcribe` sends audio to whisper (DTW word starts, ends at the next word or silence gap, preset from the model header, per the 2026-10-21 spec revision) when a model is given and to the burst estimator (with the new note) when not, and returns a `Result` that the pipeline propagates. `p0_fixture.rs` checks the new note and spawns `reelctl` without `REELCTL_*` variables. The user-facing docs and ADR-007 land in the same commit.
-
-**Acceptance criteria:**
-- [x] `--whisper-model <model>` gives `asr_backend: "whisper_cpp"` and an `asr_note` naming the model file and whisper.cpp version
-- [x] Without a model, output is unchanged except `asr_note` ("No whisper model was given ...")
-- [x] `--whisper-model /missing.bin` exits with code 1 and an error naming the path
-- [x] Docs updated: `docs/cli.md`, `docs/edit-dna.md`, README usage, CHANGELOG, AGENTS.md P0 gaps, and ADR-007, with ADR-003 marked superseded
-
-**Verification:**
-- [x] `cargo test` (30 of 30 pass)
-- [x] Manual runs of the three cases above, on the first 60 s of the real recording: Apex gave 183 words with `asr_backend` `whisper_cpp`; no model gave the new note; `/missing.bin` exited with 1 and `error: decompile: whisper: model not found at /missing.bin`
-
-**Dependencies:** Task 3
-
-**Files likely touched:** `crates/decompile/src/asr.rs`, `crates/decompile/src/pipeline.rs`, `crates/reelctl/tests/p0_fixture.rs`, plus the docs above
+**Files likely touched:** `crates/decompile/src/silence.rs`, `crates/decompile/src/asr.rs`, `crates/decompile/src/pipeline.rs`, plus the docs above
 
 **Estimated scope:** Medium
 
-## Task 5: `speech12` fixture and end-to-end tests
+## Checkpoint A
 
-**Description:** `fixtures/generate.sh speech12` builds 12 s of solid color with `say -v Samantha` speech and a planted 1-second pause. `crates/reelctl/tests/whisper_fixture.rs` holds two tests: (a) a missing model path exits with code 1, which runs in the default suite; and (b) the model test for spec success criteria 1 and 2, ignored by default.
+- [ ] `cargo test` passes
+- [ ] The baseline comparison and the real-clip check in Task 2 pass
 
-**Acceptance criteria:**
-- [x] `bash fixtures/generate.sh speech12 out.mp4` works offline
-- [x] Default `cargo test` runs (a) and it passes; (b) is listed as ignored with its reason
-- [x] With `REELCTL_WHISPER_MODEL` set and `--include-ignored`, (b) passes: the six key words in order, times increasing and inside the clip, and nothing more than 200 ms inside the pause
-- [x] README commands and the AGENTS.md Verify section document the model test
+## Task 3: Record the threshold and noise floor in `edit_dna.json`
 
-**Verification:**
-- [x] `cargo test` (31 of 31 pass, 1 ignored)
-- [x] `REELCTL_WHISPER_MODEL=~/models/whisper/ggml-apex-hinglish-q8_0.bin cargo test -- --include-ignored`, and the same with `ggml-base.en.bin`: both pass. Every word was transcribed correctly, and "air." ends at 1,280 ms, where the pause starts, with both models
-
-**Dependencies:** Task 4
-
-**Files likely touched:** `fixtures/generate.sh`, `crates/reelctl/tests/whisper_fixture.rs` (new), `README.md`, `AGENTS.md`
-
-**Estimated scope:** Small to medium
-
-## Task 6: Measure and close out
-
-**Description:** Choose the thread count by comparing 4 and 8 threads on a 60 s speech clip. Record `asr_ms` for 12 s and 60 s speech, the first-build time, and the 60 s benchmark's `signal_ms` in `docs/status.md`. Mark the spec implemented.
+**Description:** Add `silence_threshold_db` (a file without it reads as −40) and `noise_floor_db` (`null` with no audio or in older files) to `EditDna`, set `SCHEMA_VERSION` to 2, fill both from `SilenceAnalysis`, and regenerate the schema.
 
 **Acceptance criteria:**
-- [x] `docs/status.md` shows the whisper gap closed, with measured numbers and the date
-- [x] The benchmark's `signal_ms` stays within its earlier range (284–316 ms): 242–261 ms, slightly faster
-- [x] The spec's status is updated and these boxes are ticked
+- [ ] A version-1 JSON without the fields deserializes, with −40 and `null`, and `reelctl diff` accepts it as `--outlier`
+- [ ] `draft12` reports `silence_threshold_db` −33 and a `noise_floor_db` of about −21.2; a clip with no audio reports −40 and `null`
+- [ ] Docs: `docs/edit-dna.md` (both fields and `schema_version` 2), schema regenerated, CHANGELOG
 
 **Verification:**
-- [x] Release-build runs; the docs link check passes. Thread count: 4, 6, and 8 were the same within noise, so whisper.rs is unchanged
+- [ ] `cargo test`; `cargo run -p edit-dna --example schema` leaves no further diff
 
-**Dependencies:** Task 5
+**Dependencies:** Task 2
 
-**Files likely touched:** `crates/decompile/src/whisper.rs` (only if the thread count changes), `docs/status.md`, `docs/specs/whisper-asr.md`, `tasks/todo.md`
+**Files likely touched:** `crates/edit-dna/src/lib.rs`, `crates/edit-dna/schema/edit_dna.schema.json`, `crates/decompile/src/pipeline.rs`, `docs/edit-dna.md`, `CHANGELOG.md`
+
+**Estimated scope:** Medium
+
+## Task 4: `noisy12` fixture and end-to-end test
+
+**Description:** `fixtures/generate.sh noisy12` makes `draft12`'s video and tone, with the tone muted from 2.0 to 2.5 s, plus white noise from `anoisesrc` with a fixed seed throughout. A new test in `p0_fixture.rs` decompiles it and runs `diff` on it.
+
+**Acceptance criteria:**
+- [ ] Every 10 ms window in the pause is at least 1 dB above −40 and at least 3 dB below the computed threshold (check while choosing the amplitude)
+- [ ] The only gap of 180 ms or more is the planted pause (±20 ms), and `diff` flags it as `dead_air`
+- [ ] README commands list `noisy12`
+
+**Verification:**
+- [ ] `cargo test`, which includes the new test, on a machine without `say`
+
+**Dependencies:** Task 2, plus Task 3 if the test reads the new fields
+
+**Files likely touched:** `fixtures/generate.sh`, `crates/reelctl/tests/p0_fixture.rs`, `README.md`
+
+**Estimated scope:** Small
+
+## Task 5: Measure and close out
+
+**Description:** Run the release build on the real recording and the benchmark, run the whisper model test with both models, and record the results. Mark the spec implemented.
+
+**Acceptance criteria:**
+- [ ] `docs/status.md`: the threshold, noise floor, and gap counts on the real clip; word ends that run more than 200 ms into a pause, against 9 of 183 before (spec criterion 4); benchmark `signal_ms` within 242–261 ms; the gap and next step updated
+- [ ] The whisper model test passes with `ggml-base.en.bin` and `ggml-apex-hinglish-q8_0.bin`
+- [ ] The spec's status is updated and these boxes are ticked
+
+**Verification:**
+- [ ] Release-build runs; the docs link check passes
+
+**Dependencies:** Tasks 3 and 4
+
+**Files likely touched:** `docs/status.md`, `docs/specs/relative-silence.md`, `tasks/plan.md`, `tasks/todo.md`
 
 **Estimated scope:** Small
 
 ## Checkpoint B: Done
 
-- [x] All seven spec success criteria verified
-- [x] `cargo test` passes, and the model test passes
-- [x] Reviewed with the user, then `feature/whisper-asr` merged into `main`
+- [ ] All seven spec success criteria verified
+- [ ] `cargo test` passes, and the whisper model test passes with both models
+- [ ] Reviewed with the user, then `feature/relative-silence` merged into `main`, and this plan moved to `tasks/archive/relative-silence/`

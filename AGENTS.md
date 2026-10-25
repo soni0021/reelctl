@@ -35,7 +35,7 @@ Update the docs in the same commit as every change, without waiting to be asked;
 - `docs/edit-dna.md`: every `edit_dna.json` field. Regenerate the schema with `cargo run -p edit-dna --example schema` when the types change.
 - `docs/decisions/`: one ADR per significant decision, named `ADR-NNN-short-title.md` with the next number. When a decision changes, add a new ADR and mark the old one superseded; never delete ADRs.
 - `docs/specs/`: one spec per feature, approved by the user before coding starts (spec-driven-development). Keep it current while building.
-- `tasks/plan.md` and `tasks/todo.md`: the active implementation plan and its checklist (planning-and-task-breakdown). Tick a task's boxes in the commit that finishes it.
+- `tasks/plan.md` and `tasks/todo.md`: the active implementation plan and its checklist (planning-and-task-breakdown). Tick a task's boxes in the commit that finishes it. When a feature is merged, move both into `tasks/archive/<feature>/`.
 - `CHANGELOG.md`: an entry under Unreleased for each change a `reelctl` user would notice.
 
 ## P0 gaps (documented, do not implement here)
