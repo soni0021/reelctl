@@ -282,6 +282,13 @@ pub fn compare_many(draft: NamedReel<'_>, outliers: &[NamedReel<'_>]) -> Report 
     }
 }
 
+/// The report as plain text: the metrics side by side, the cut counts per
+/// window, and every finding on its own line.
+pub fn render_text(report: &Report) -> String {
+    let _ = report;
+    String::new()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -582,5 +589,78 @@ mod tests {
         assert_eq!(value["comparison"]["flags"][0]["kind"], "rhythm_gap");
         assert_eq!(value["comparison"]["draft"]["name"], "draft");
         assert_eq!(value["comparison"]["outliers"][0]["name"], "a");
+    }
+
+    fn real_pair_report() -> Report {
+        // The milk clip as the draft and the NEET explainer as the outlier.
+        let mut draft = with_gaps(reel(15_092, &[]), &[990, 270, 90]);
+        draft.words_per_minute = 19.88;
+        draft.integrated_lufs = -48.59;
+        let mut outlier = with_gaps(reel(38_498, &[8_466]), &[560, 590, 540, 520]);
+        outlier.words_per_minute = 144.94;
+        outlier.integrated_lufs = -22.44;
+        compare_many(
+            NamedReel {
+                name: "milk",
+                dna: &draft,
+            },
+            &[NamedReel {
+                name: "neet",
+                dna: &outlier,
+            }],
+        )
+    }
+
+    #[test]
+    fn the_text_report_puts_the_reels_side_by_side() {
+        let text = render_text(&real_pair_report());
+        let line = |label: &str| {
+            text.lines()
+                .find(|line| line.trim_start().starts_with(label))
+                .unwrap_or_else(|| panic!("no line starting {label:?} in\n{text}"))
+        };
+        let header = text.lines().next().expect("header");
+        assert!(
+            header.contains("milk") && header.contains("neet"),
+            "{header}"
+        );
+        assert!(header.find("milk") < header.find("neet"));
+        assert!(line("length").contains("15.1 s") && line("length").contains("38.5 s"));
+        assert!(line("cuts ").contains('0') && line("cuts ").contains('1'));
+        assert!(line("mean shot").contains("15.1 s") && line("mean shot").contains("19.2 s"));
+        assert!(line("longest shot").contains("15.1 s") && line("longest shot").contains("30.0 s"));
+        // Gaps over 180 ms: 2 of 15.1 s is 8 per minute, 4 of 38.5 s is 6.
+        assert!(line("pauses").contains("2 (8/min)") && line("pauses").contains("4 (6/min)"));
+        assert!(line("silent").contains("9 %") && line("silent").contains("6 %"));
+        assert!(line("loudness").contains("-48.6 LUFS") && line("loudness").contains("-22.4 LUFS"));
+        assert!(line("words").contains("19.9") && line("words").contains("144.9"));
+    }
+
+    #[test]
+    fn the_text_report_shows_the_cut_rhythm_and_names_the_gap() {
+        let text = render_text(&real_pair_report());
+        assert!(text.contains("cuts per 5 s window"), "{text}");
+        assert!(
+            text.contains("0-5") && text.contains("5-10") && text.contains("10-15"),
+            "{text}"
+        );
+        assert!(
+            text.contains("NO CUT 5.0-10.0 s: 1 of 1 outliers cut here, the draft does not"),
+            "{text}"
+        );
+        // The older flags are listed too.
+        assert!(text.contains("DEAD AIR 0.00-0.99 s (990 ms)"), "{text}");
+        assert!(text.contains("NO PAYOFF 8-10 s"), "{text}");
+    }
+
+    #[test]
+    fn the_text_report_names_pause_density() {
+        let draft = paused(10);
+        let outlier = paused(5);
+        let text = render_text(&run(&draft, &[&outlier]));
+        assert!(
+            text.contains("PAUSES 10.0 per minute against 5.0 in the outliers"),
+            "{text}"
+        );
     }
 }
