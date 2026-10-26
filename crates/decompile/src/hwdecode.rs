@@ -121,7 +121,8 @@ mod videotoolbox {
         if software.width() != hardware.width() || software.height() != hardware.height() {
             *software = VideoFrame::empty();
         }
-        // SAFETY: both frames are valid for the calls. `software` is empty or
+        // SAFETY: both frames are valid for the calls, and the side data array is
+        // the one `software` owns. `software` is empty or
         // has the size of `hardware`, which libavutil requires, so the transfer
         // allocates its buffers or fills ones of the right size. A change of
         // pixel format makes the call fail, and is reported below.
@@ -135,6 +136,11 @@ mod videotoolbox {
             }
             // The transfer copies properties only into a frame it allocates,
             // and pts, range, and transfer characteristic are read later.
+            // Copying adds the side data of `hardware` to what `software`
+            // already holds from the last frame, which grows without end on
+            // HDR video, so release the old entries first.
+            let raw = software.as_mut_ptr();
+            ffi::av_frame_side_data_free(&mut (*raw).side_data, &mut (*raw).nb_side_data);
             let code = ffi::av_frame_copy_props(software.as_mut_ptr(), hardware.as_ptr());
             if code < 0 {
                 return Err(format!(
@@ -158,6 +164,14 @@ mod videotoolbox {
 
 #[cfg(target_os = "macos")]
 pub(crate) use videotoolbox::{attach, download, HardwareDevice};
+
+/// How many side data entries (HDR metadata, SEI messages) a frame holds.
+#[cfg(all(test, target_os = "macos"))]
+pub(crate) fn side_data_count(frame: &ffmpeg_next::frame::Video) -> usize {
+    // SAFETY: `frame` is a valid frame, and `nb_side_data` is a plain field.
+    let count = unsafe { (*frame.as_ptr()).nb_side_data };
+    count.max(0) as usize
+}
 
 /// Other platforms have no hardware path: `choose_decoder` never asks for it,
 /// and these exist only so the decode code compiles.

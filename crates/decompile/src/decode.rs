@@ -1008,12 +1008,7 @@ fn chroma_planes<'a>(
             "yuv420 frame is missing chroma planes".into(),
         ));
     }
-    // 8-bit full range has its own pixel format, yuvj420p. 10-bit has none,
-    // so its range comes from the frame's metadata.
-    let full = match depth {
-        Depth::Eight => pixel == Pixel::YUVJ420P,
-        Depth::Ten | Depth::P010 => frame.color_range() == Range::JPEG,
-    };
+    let full = pixel == Pixel::YUVJ420P || frame.color_range() == Range::JPEG;
     Ok(ChromaPlanes::Planar {
         u: plane(frame, 1, depth, chroma_w, chroma_h, "u chroma")?,
         v: plane(frame, 2, depth, chroma_w, chroma_h, "v chroma")?,
@@ -1597,6 +1592,29 @@ mod tests {
         );
     }
 
+    /// Software gives `yuvj420p` for most full-range 8-bit video, but a frame
+    /// can also be `yuv420p` with a full range in its metadata (VP9 and AV1
+    /// files do this). Every format follows the same rule.
+    #[test]
+    fn a_planar_8_bit_frame_is_full_range_when_its_metadata_says_so() {
+        ensure_ffmpeg().expect("ffmpeg");
+        let grey = |pixel: Pixel, range: Range| {
+            let mut frame = VideoFrame::new(pixel, 4, 4);
+            frame.set_color_range(range);
+            for index in 0..3 {
+                frame.data_mut(index).fill(128);
+            }
+            pixel_rgb(&yuv_view(&frame).expect("view"), 1, 1)
+        };
+        assert_eq!(grey(Pixel::YUV420P, Range::JPEG), [128, 128, 128]);
+        assert_eq!(grey(Pixel::YUVJ420P, Range::JPEG), [128, 128, 128]);
+        // The pixel format alone says full range for yuvj420p.
+        assert_eq!(grey(Pixel::YUVJ420P, Range::Unspecified), [128, 128, 128]);
+        let limited = yuv601_to_rgb(128, 128, 128, false);
+        assert_eq!(grey(Pixel::YUV420P, Range::MPEG), limited);
+        assert_eq!(grey(Pixel::YUV420P, Range::Unspecified), limited);
+    }
+
     #[test]
     fn the_software_note_does_not_say_the_media_engine_is_unavailable() {
         assert!(!DECODE_NOTE.contains("does not expose"), "{DECODE_NOTE}");
@@ -1711,6 +1729,60 @@ mod tests {
         }
         let note = decode_note(fell_back.format, &fell_back.decoder);
         assert!(note.contains("was tried and not used"), "{note}");
+    }
+
+    /// Frames from the media engine are copied into one reused software frame.
+    /// HDR video carries side data (mastering display, light level, SEI
+    /// messages) on every frame, and copying properties into a frame that still
+    /// holds the last frame's side data adds to it: the count must not grow.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn side_data_does_not_pile_up_on_the_reused_frame() {
+        ensure_ffmpeg().expect("ffmpeg");
+        let path =
+            std::env::temp_dir().join(format!("reelctl-sidedata-{}.mp4", std::process::id()));
+        let params = "log-level=error:master-display=G(13250,34500)B(7500,3000)R(34000,16000)\
+            WP(15635,16450)L(10000000,1):max-cll=1000,400:hdr10-opt=1:repeat-headers=1:\
+            colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc";
+        let status = std::process::Command::new("ffmpeg")
+            .args(["-y", "-hide_banner", "-loglevel", "error"])
+            .args(["-f", "lavfi", "-i", "testsrc2=s=320x180:r=24:d=2"])
+            .args(["-c:v", "libx265", "-preset", "ultrafast"])
+            .args(["-pix_fmt", "yuv420p10le", "-tag:v", "hvc1"])
+            .args(["-x265-params", params])
+            .arg(&path)
+            .status()
+            .expect("spawn ffmpeg");
+        assert!(status.success(), "ffmpeg could not make the clip");
+
+        let device = HardwareDevice::create().expect("VideoToolbox device");
+        let mut input = ffmpeg::format::input(&path).expect("open clip");
+        let (index, params) = {
+            let stream = input.streams().best(MediaType::Video).expect("video");
+            (stream.index(), stream.parameters())
+        };
+        let video = open_video(params, Some(&device)).expect("open decoder");
+        let mut receiver = Receiver::new(video, true);
+        let mut most = 0;
+        let mut frames = 0;
+        let mut drain = |receiver: &mut Receiver| {
+            while let Ok(Received::Frame) = receiver.receive() {
+                most = most.max(hwdecode::side_data_count(receiver.frame()));
+                frames += 1;
+            }
+        };
+        for (stream, packet) in input.packets() {
+            if stream.index() == index {
+                send_video(&mut receiver.video, &packet).expect("send");
+                drain(&mut receiver);
+            }
+        }
+        receiver.video.send_eof().expect("eof");
+        drain(&mut receiver);
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(frames, 48);
+        assert!(most < 10, "a frame held {most} side data entries");
     }
 
     /// Resident memory of this process in KiB, from `ps`.

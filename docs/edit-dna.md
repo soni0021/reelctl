@@ -65,7 +65,7 @@ With `"silence_bursts"`, each word is a stretch of 10 ms windows at or above the
 | `mean_r`, `mean_g`, `mean_b` | Mean 8-bit RGB value over the shot, rounded to 2 decimals |
 | `bins_r`, `bins_g`, `bins_b` | 8 bins per channel (0–31, 32–63, …, 224–255); each value is the fraction of samples in that bin, rounded to 4 decimals |
 
-Each frame contributes a grid of roughly 32×18 samples, converted from YUV to RGB with BT.601 coefficients (full range only for `yuvj420p`). Most HD video uses BT.709, so absolute colors are slightly off; use the histograms to compare shots rather than as exact color.
+Each frame contributes a grid of roughly 32×18 samples, converted from YUV to RGB with BT.601 coefficients (full range for `yuvj420p` and for frames whose metadata says full range). Most HD video uses BT.709, so absolute colors are slightly off; use the histograms to compare shots rather than as exact color.
 
 ## Payoff window
 

@@ -121,6 +121,23 @@ resize12_hevc() {
   rm -rf "$dir"
 }
 
+# 6 s of HEVC that changes from 8-bit Main to 10-bit Main 10 after 3 s, as raw
+# Annex B, at one frame size. Video only.
+depth12_hevc() {
+  local out="$1" dir format
+  dir="$(mktemp -d -t reelctl-depth)"
+  for format in yuv420p yuv420p10le; do
+    ffmpeg -y -hide_banner -loglevel error \
+      -f lavfi -i "testsrc2=s=640x360:r=24:d=3" \
+      -c:v libx265 -preset fast -crf 24 -pix_fmt "$format" \
+      -x265-params "keyint=25:min-keyint=25:scenecut=0:bframes=3:log-level=error" \
+      -f hevc "${dir}/${format}.hevc"
+  done
+  mkdir -p "$(dirname "$out")"
+  cat "${dir}/yuv420p.hevc" "${dir}/yuv420p10le.hevc" > "$out"
+  rm -rf "$dir"
+}
+
 outlier12() {
   local out="$1"
   local size="${2:-640x360}"
@@ -215,6 +232,9 @@ case "$cmd" in
   resize12_hevc)
     resize12_hevc "$out"
     ;;
+  depth12_hevc)
+    depth12_hevc "$out"
+    ;;
   outlier12)
     outlier12 "$out"
     ;;
@@ -242,12 +262,13 @@ case "$cmd" in
     textured_cuts12_hevc "${dir}/textured_cuts_12s_hevc8.mp4" yuv420p
     textured_cuts12_hevc_full "${dir}/textured_cuts_12s_hevc_full.mp4"
     resize12_hevc "${dir}/resize_6s.hevc"
+    depth12_hevc "${dir}/depth_6s.hevc"
     outlier12 "${dir}/outlier_12s.mp4"
     noisy12 "${dir}/noisy_12s.mp4"
     bench60 "${dir}/bench_60s.mp4"
     ;;
   *)
-    echo "usage: generate.sh draft12|draft12_10bit|draft12_44k|textured_cuts12|textured_cuts12_hevc|textured_cuts12_hevc8|textured_cuts12_hevc_full|resize12_hevc|outlier12|noisy12|bench60|speech12|tonespeech|all [out.mp4]" >&2
+    echo "usage: generate.sh draft12|draft12_10bit|draft12_44k|textured_cuts12|textured_cuts12_hevc|textured_cuts12_hevc8|textured_cuts12_hevc_full|resize12_hevc|depth12_hevc|outlier12|noisy12|bench60|speech12|tonespeech|all [out.mp4]" >&2
     exit 2
     ;;
 esac

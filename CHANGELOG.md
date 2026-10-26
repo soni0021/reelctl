@@ -19,6 +19,7 @@ Notable changes to `reelctl`. Add an entry under Unreleased in the same commit a
 
 ### Changed
 
+- A video frame is read as full range if it is `yuvj420p` or its metadata says full range. Before, a `yuv420p` frame flagged full range (as VP9 and AV1 files can be) was read as limited, so its per-shot colors and thumbnails were off. Files in the usual limited range are unchanged.
 - Software decoding now runs the loop filter on every frame. It used to skip it on non-reference frames, which saved 6% of decode time but moved HEVC scene scores by up to 0.022 against the hardware decoder. Cuts, scene scores, colors, and thumbnails of the existing test clips are unchanged; `decode_note` no longer mentions skipping the loop filter.
 - Audio that is not 48 kHz is now resampled as one stream instead of one decoded frame at a time. Per-frame resampling dropped a fractional sample at each frame, so at 44.1 kHz silence gaps and word times came out early: a pause at 50 s by 16–33 ms, and about 0.5 s by 18 minutes. 48 kHz audio is untouched. The interpolation is linear with no low-pass filter, so audio above 48 kHz (88.2 or 96 kHz) can alias.
 - `edit_dna.json` is now schema version 2, with `silence_threshold_db` and `noise_floor_db`. Version 1 files still load in `reelctl diff`.

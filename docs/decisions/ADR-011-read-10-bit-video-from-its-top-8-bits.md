@@ -1,7 +1,7 @@
 # ADR-011: Read 10-bit video from its top 8 bits, without tone mapping
 
 ## Status
-Accepted
+Accepted. Partly superseded by [ADR-012](ADR-012-decode-hevc-in-hardware-and-every-frame-exactly.md): P010 is now read (it stopped with an error here), and range follows the frame's metadata in every format, not only for 10-bit.
 
 ## Date
 2026-10-26

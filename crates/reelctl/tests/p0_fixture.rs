@@ -602,3 +602,34 @@ fn a_hevc_stream_that_grows_decodes_the_same_on_both_decoders() {
 
     let _ = fs::remove_dir_all(&root);
 }
+
+/// A stream that changes from 8-bit to 10-bit part-way through cannot be copied
+/// out of the media engine into the frame made for the first format. Either
+/// decoder may end up doing the work, but the results must be the same, and
+/// the note must say which one ran.
+#[test]
+fn a_hevc_stream_that_changes_bit_depth_decodes_the_same_on_both_decoders() {
+    let root = std::env::temp_dir().join(format!("reelctl-depth-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("temp dir");
+    let hevc = root.join("depth12_hevc.hevc");
+    generate("depth12_hevc", &hevc);
+
+    let (auto, auto_views) = decompile_with(&root, &hevc, "auto", "auto");
+    let (soft, soft_views) = decompile_with(&root, &hevc, "soft", "software");
+
+    if cfg!(target_os = "macos") {
+        let note = &auto.decode_note;
+        assert!(
+            note.contains("Apple media engine") || note.contains("was tried and not used"),
+            "{note}"
+        );
+    }
+    assert_eq!(auto.frame_size, soft.frame_size);
+    assert_eq!(auto.frame_count, soft.frame_count);
+    assert_eq!(auto.cuts.len(), soft.cuts.len(), "{:?}", auto.cuts);
+    assert_eq!(auto.shot_histograms, soft.shot_histograms);
+    assert_eq!(pngs(&auto_views), pngs(&soft_views), "thumbnails differ");
+
+    let _ = fs::remove_dir_all(&root);
+}
