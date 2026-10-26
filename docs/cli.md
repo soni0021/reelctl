@@ -155,7 +155,7 @@ Flags come in that order: all dead air, then all static windows, then the payoff
 
 The 1.5, the 3, and the 5 s window were chosen on two slow reels; they have not been tried against a fast-cut outlier. Speaking rate and loudness are listed, not judged. For `draft12` against `outlier12`, `comparison.flags` is a `rhythm_gap` for 0–5 s (the outlier cuts at 3 s; the draft first cuts at 6 s) and a `pause_density` of 5.0 against 0.0 per minute.
 
-`--format text` prints the same report as a table, then one line per flag (the older flags first, then the relative ones). This is the actual output for `draft12` against `outlier12`:
+`--format text` prints the same report as a table, with reel names cut to 20 characters (and numbered if two cut names would match; the JSON keeps the full names), then one line per flag (the older flags first, then the relative ones). This is the actual output for `draft12` against `outlier12`:
 
 ```
                     draft12         outlier12

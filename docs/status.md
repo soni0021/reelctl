@@ -59,6 +59,22 @@ Same machine, release builds of `main` and `feature/relative-silence` on the sam
 
 The real clip was re-cut from the original recording on 2026-10-25 with its audio copied, not re-encoded, so its word count (125) differs from the 2026-10-21 runs (183); see Known issues.
 
+## Comparative diff, 2026-10-26
+
+Apple M3 MacBook Air, release build of `feature/comparative-diff` ([spec](specs/comparative-diff.md), [ADR-014](decisions/ADR-014-compare-a-draft-with-several-outliers-in-a-separate-key.md)). The two real reels are downloads kept outside the repo.
+
+| Check | Result |
+|---|---|
+| `flags` against the build before the change | 40 draft and outlier pairs (8 drafts × 5 outliers: five fixtures, a 10-bit clip, and both real reels): `flags` identical in all, and `comparison` present after it |
+| Milk clip (draft) against the NEET explainer (outlier) | `flags` as before (two dead-air, one static window, the missing payoff cue). `comparison.flags`: one `rhythm_gap` for 5,000–10,000 ms (the outlier's cut at 8,466 ms). No `pause_density` (8 against 28 per minute) |
+| NEET explainer (draft) against the milk clip (outlier) | `flags` as before. `comparison.flags`: one `pause_density`, 28.1 against 8.0 per minute. Expected and a known limit: the milk clip's few pauses come from near-silent audio |
+| The metrics for the two reels | NEET: 38.5 s, 1 cut, mean shot 19.2 s, longest 30.0 s, 18 pauses over 180 ms (28/min), 28% silent, 144.9 words/min (estimate), −22.4 LUFS. Milk: 15.1 s, 0 cuts, 2 pauses (8/min), 9% silent, 19.9 words/min (estimate), −48.6 LUFS |
+| `draft12` against `outlier12` | `flags`: dead air 2.01–2.51 s, two static windows, missing payoff. `comparison.flags`: `rhythm_gap` 0–5 s and `pause_density` 5.0 against 0.0 per minute |
+| Argument checks | Four `--outlier` files exit with code 2 and a message; none exits with code 2 |
+| `cargo test --workspace` | 131 pass, 2 whisper model tests ignored by default |
+
+The 5 s window, the 1.5 ratio, and the 3 per minute were chosen on these two slow reels and are untested on a fast-cut outlier. The NEET reel's one "cut" is a caption box appearing under a still face (score 0.303 against 0.30), so a cut count inherits the detector's limits; naming such events is `visual-motion`. A final window can be a sliver: the 15.1 s clip has one from 15.0 to 15.1 s. Real reel titles are long, so the text report cuts names to 20 characters; the first version let them push the columns together, found on the real files and fixed with a test.
+
 ## Quiet audio, 2026-10-26
 
 Apple M3 MacBook Air, merged into `main` 2026-10-26; release build of `feature/quiet-audio` against the build before it, on the same 17 clips ([spec](specs/quiet-audio.md), [ADR-013](decisions/ADR-013-the-silence-floor-follows-a-quiet-recording.md)). The Reels file is a 15 s Instagram download kept outside the repo.
@@ -176,7 +192,7 @@ Already listed in [AGENTS.md](../AGENTS.md) as P0 gaps:
 
 Not yet listed in AGENTS.md:
 
-- **`diff` barely uses the outlier.** Dead air and static windows are properties of the draft alone; the outlier only feeds the payoff check. `diff` takes one outlier, where planer.md asks for one to three and a second-by-second pacing comparison. This is the main gap against the P0 success metric.
+- **`diff` compares with one to three outliers** (since `feature/comparative-diff`), in 5 s windows and per-reel metrics. Dead air and static windows are still properties of the draft alone, and the comparison is only as good as the cut detector: it counts a caption box as a cut and does not name events (`visual-motion`).
 - **Static windows count only cuts.** planer.md defines a static window as more than 2.5 s without B-roll, zoom, or a graphic callout. Nothing detects zooms or graphics yet, so a punch-in without a cut is still flagged.
 - **The 500 ms target fails on real footage.** Only one real recording has been run so far ([First real footage](#first-real-footage-2026-10-20)). The tests still use only synthetic clips ([ADR-006](decisions/ADR-006-synthetic-offline-fixtures.md)).
 - **Silence on noisy recordings** (closed 2026-10-25, merged into `main`). The fixed −40 dBFS threshold found no pause of 0.3 s or more on the real recording; the per-recording threshold finds 24. Its constants were tuned on that one recording, so music beds and loud backgrounds are unmeasured. Very quiet recordings are handled since 2026-10-26 ([ADR-013](decisions/ADR-013-the-silence-floor-follows-a-quiet-recording.md)), tested on one downloaded reel.
@@ -207,5 +223,5 @@ Then, to finish P0 against its own success metric before starting P1. The [P0 ca
 1. Find a decode strategy that meets 500 ms on real footage, or revise the target.
 2. Read 10-bit video, such as iPhone HDR recordings. Done, merged 2026-10-26 ([spec](specs/decode-inputs.md)): 10-bit 4:2:0 is read, audio is resampled as one stream, and the real recording decompiles.
 3. Detect silence relative to each recording's noise floor instead of at a fixed −40 dBFS. Done ([spec](specs/relative-silence.md)), merged 2026-10-25.
-4. Make `diff` comparative: accept one to three outliers and compare cut rhythm second by second.
+4. Make `diff` comparative: accept one to three outliers and compare cut rhythm second by second. Done on `feature/comparative-diff` ([spec](specs/comparative-diff.md)); thresholds untested on a fast-cut outlier.
 5. Link TransNetV2. It needs ONNX weights, a download that needs an explicit go-ahead.

@@ -296,9 +296,37 @@ fn short_seconds(ms: u64) -> String {
     }
 }
 
-/// One row of a table: a label, then one cell per column.
+/// The longest a reel name is shown in the text report.
+const NAME_WIDTH: usize = 20;
+
+/// The label column: wide enough for a shown name and a space.
+const LABEL_WIDTH: usize = NAME_WIDTH + 1;
+
+/// Names as the text report shows them: cut to `NAME_WIDTH` characters with an
+/// ellipsis, and numbered if two cut names would be the same.
+fn display_names(names: &[&str]) -> Vec<String> {
+    let mut shown: Vec<String> = Vec::with_capacity(names.len());
+    for name in names {
+        let mut cut = if name.chars().count() > NAME_WIDTH {
+            let head: String = name.chars().take(NAME_WIDTH - 1).collect();
+            format!("{head}\u{2026}")
+        } else {
+            name.to_string()
+        };
+        let mut copy = 1;
+        while shown.contains(&cut) {
+            copy += 1;
+            let head: String = name.chars().take(NAME_WIDTH - 3).collect();
+            cut = format!("{head}\u{2026}{copy}");
+        }
+        shown.push(cut);
+    }
+    shown
+}
+
+/// One row of a table: a label of `LABEL_WIDTH`, then one cell per column.
 fn row(label: &str, width: usize, cells: &[String]) -> String {
-    let mut line = format!("{label:<20}");
+    let mut line = format!("{label:<LABEL_WIDTH$}");
     for cell in cells {
         line.push_str(&format!("{cell:<width$}"));
     }
@@ -408,14 +436,14 @@ pub fn render_text(report: &Report) -> String {
     let reels: Vec<&ReelMetrics> = std::iter::once(&comparison.draft)
         .chain(comparison.outliers.iter())
         .collect();
-    let width = reels
+    let names = display_names(&reels.iter().map(|m| m.name.as_str()).collect::<Vec<_>>());
+    let width = names
         .iter()
-        .map(|m| m.name.chars().count())
+        .map(|name| name.chars().count())
         .max()
         .unwrap_or(0)
         .max(14)
         + 2;
-    let names: Vec<String> = reels.iter().map(|m| m.name.clone()).collect();
 
     let mut lines = vec![row("", width, &names)];
     lines.extend(metric_rows(&reels, width));
@@ -436,16 +464,12 @@ pub fn render_text(report: &Report) -> String {
             .map(|w| pick(w).map_or("-".to_string(), |n| n.to_string()))
             .collect()
     };
-    lines.push(row(
-        &comparison.draft.name,
-        cell,
-        &counts(&|w| Some(w.draft_cuts)),
-    ));
-    for (index, outlier) in comparison.outliers.iter().enumerate() {
+    lines.push(row(&names[0], cell, &counts(&|w| Some(w.draft_cuts))));
+    for (index, name) in names.iter().enumerate().skip(1) {
         lines.push(row(
-            &outlier.name,
+            name,
             cell,
-            &counts(&|w| w.outlier_cuts.get(index).copied().flatten()),
+            &counts(&|w| w.outlier_cuts.get(index - 1).copied().flatten()),
         ));
     }
 
@@ -832,6 +856,62 @@ mod tests {
         // The older flags are listed too.
         assert!(text.contains("DEAD AIR 0.00-0.99 s (990 ms)"), "{text}");
         assert!(text.contains("NO PAYOFF 8-10 s"), "{text}");
+    }
+
+    #[test]
+    fn long_reel_names_are_shortened_and_the_table_stays_aligned() {
+        let draft = reel(15_092, &[]);
+        let outlier = reel(38_498, &[8_466]);
+        let long_draft = "He shamelessly steals his kids milk and a very long title";
+        let long_outlier = "Don't Miss This NEET Question ICSI vs GIFT #neet #medicalstudent";
+        let report = compare_many(
+            NamedReel {
+                name: long_draft,
+                dna: &draft,
+            },
+            &[NamedReel {
+                name: long_outlier,
+                dna: &outlier,
+            }],
+        );
+        let text = render_text(&report);
+        for line in text.lines() {
+            assert!(
+                line.chars().count() <= 80,
+                "{} chars: {line}",
+                line.chars().count()
+            );
+        }
+        // A shortened name ends in an ellipsis and a space before the first count.
+        let window_rows: Vec<&str> = text
+            .lines()
+            .filter(|line| line.starts_with("He shamelessly") || line.starts_with("Don't Miss"))
+            .collect();
+        assert_eq!(window_rows.len(), 2, "{text}");
+        for row in &window_rows {
+            assert!(row.contains("\u{2026} "), "{row}");
+        }
+        // The JSON keeps the full names.
+        assert_eq!(report.comparison.draft.name, long_draft);
+    }
+
+    #[test]
+    fn two_names_that_shorten_alike_stay_distinct() {
+        let dna = reel(10_000, &[]);
+        let a = "The same long title for the first reel";
+        let b = "The same long title for the second reel";
+        let report = compare_many(
+            NamedReel { name: a, dna: &dna },
+            &[NamedReel { name: b, dna: &dna }],
+        );
+        let header = render_text(&report)
+            .lines()
+            .next()
+            .expect("header")
+            .to_string();
+        let shortened: Vec<&str> = header.split_whitespace().collect();
+        assert!(shortened.len() >= 2, "{header}");
+        assert_ne!(shortened.first(), shortened.last(), "{header}");
     }
 
     #[test]

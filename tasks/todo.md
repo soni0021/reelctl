@@ -57,13 +57,14 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/comparative-diff.md](../docs/s
 **Description:** Run the two real reels in both directions and record the output; write the decision and the docs; switch the helper script to the text report.
 
 **Acceptance criteria:**
-- [ ] Both real-reel directions match the expected output in the spec's Evidence (including the known-limit `pause_density`), recorded in `docs/status.md` with date and machine; the reels themselves are not committed
-- [ ] ADR-014; `docs/cli.md` (`--outlier` repeated, `--format`, the `comparison` object, an updated example); README; CHANGELOG; the capability map row; this spec's status
-- [ ] `Reels/compare.sh` uses `--format text` (it is git-ignored, so it is updated in place and not committed)
-- [ ] The thresholds are listed in `status.md` as untested on a fast-cut outlier
+- [x] Both real-reel directions match the expected output in the spec's Evidence (including the known-limit `pause_density`), recorded in `docs/status.md` with date and machine; the reels themselves are not committed
+- [x] ADR-014; `docs/cli.md` (`--outlier` repeated, `--format`, the `comparison` object, an updated example); README; CHANGELOG; the capability map row; this spec's status
+- [x] `Reels/compare.sh` uses `--format text` (it is git-ignored, so it is updated in place and not committed)
+- [x] The thresholds are listed in `status.md` as untested on a fast-cut outlier
 
 **Verification:**
-- [ ] Links checked; `cargo test` unchanged; the `audit` subagent run on the final commit
+- [x] Links checked; `cargo test` unchanged
+- [ ] The `audit` subagent run on the final commit
 
 **Dependencies:** Task 2
 
