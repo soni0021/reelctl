@@ -61,7 +61,7 @@ The real clip was re-cut from the original recording on 2026-10-25 with its audi
 
 ## Fast decode, 2026-10-26
 
-Same machine, release builds, branch `feature/fast-decode` ([spec](specs/fast-decode.md), [ADR-012](decisions/ADR-012-decode-hevc-in-hardware-and-every-frame-exactly.md)). The direction for this module was quality over time, so nothing skips frames.
+Same machine, release builds, `feature/fast-decode`, merged into `main` 2026-10-26 ([spec](specs/fast-decode.md), [ADR-012](decisions/ADR-012-decode-hevc-in-hardware-and-every-frame-exactly.md)). The direction for this module was quality over time, so nothing skips frames.
 
 | Check | Result |
 |---|---|

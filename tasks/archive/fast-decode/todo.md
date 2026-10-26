@@ -1,6 +1,6 @@
 # Tasks: fast decode
 
-Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/fast-decode.md](../docs/specs/fast-decode.md). Tick each box in the commit that completes it.
+Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/fast-decode.md](../../../docs/specs/fast-decode.md). Tick each box in the commit that completes it.
 
 ## Task 1: Baselines, the `textured_cuts12` fixture, and the corpus tooling
 
@@ -72,7 +72,7 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/fast-decode.md](../docs/specs/
 
 ## Task 4: Loop filter off for all frames, if cuts stay identical
 
-**Outcome (done inside Task 3):** the experiment ran the other way. Today's skip on non-reference frames already moved HEVC scene scores by up to 0.022 against the hardware decoder, so software now filters every frame; nothing is skipped. Evidence in [status.md](../docs/status.md#fast-decode-2026-10-26).
+**Outcome (done inside Task 3):** the experiment ran the other way. Today's skip on non-reference frames already moved HEVC scene scores by up to 0.022 against the hardware decoder, so software now filters every frame; nothing is skipped. Evidence in [status.md](../../../docs/status.md#fast-decode-2026-10-26).
 
 **Description:** Measure software decoding with the loop filter skipped on every frame against today's setting, on the corpus, the fixtures, and the iPhone file's 8-bit conversion. Adopt it only if every cut and scene score (within 0.005) is unchanged.
 
@@ -109,7 +109,7 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/fast-decode.md](../docs/specs/
 
 ## Checkpoint B: Done
 
-- [ ] All six spec success criteria verified
-- [ ] `cargo test` passes
-- [ ] The `audit` subagent has run on the final commit
-- [ ] Reviewed with the user, then `feature/fast-decode` merged into `main`, and this plan moved to `tasks/archive/fast-decode/`
+- [x] All spec success criteria verified (evidence in status.md)
+- [x] `cargo test` passes
+- [x] The `audit` subagent has run: twice. The first found two inputs where hardware and software differed and a false SAFETY comment; the second found no code defects. All findings fixed before merge
+- [x] Reviewed with the user, then `feature/fast-decode` merged into `main` (2026-10-26), and this plan moved to `tasks/archive/fast-decode/`

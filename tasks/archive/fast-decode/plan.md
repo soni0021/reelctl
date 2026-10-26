@@ -1,6 +1,6 @@
 # Implementation Plan: fast decode
 
-Spec: [docs/specs/fast-decode.md](../docs/specs/fast-decode.md), approved 2026-10-26. Branch: `feature/fast-decode`. Checklist: [tasks/todo.md](todo.md). Earlier plans are in [tasks/archive/](archive/decode-inputs/plan.md).
+Spec: [docs/specs/fast-decode.md](../../../docs/specs/fast-decode.md), approved 2026-10-26. Branch: `feature/fast-decode`. Checklist: [tasks/archive/fast-decode/todo.md](todo.md). Earlier plans are in [tasks/archive/](../decode-inputs/plan.md). Merged into `main` 2026-10-26.
 
 ## Overview
 
