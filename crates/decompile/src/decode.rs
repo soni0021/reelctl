@@ -7,6 +7,13 @@
 //! deblock on non-reference frames. Scene score, histograms, and filmstrip
 //! thumbs are sampled from the decoded luma/chroma planes. There is no ffmpeg
 //! process spawn on this path.
+//!
+//! The planes are 8-bit 4:2:0 (`yuv420p`, `yuvj420p`, `nv12`) or 10-bit 4:2:0
+//! (`yuv420p10le`, what FFmpeg's software decoders give for iPhone HEVC Main
+//! 10). Both are read one sampled point at a time through [`Plane`], and a
+//! 10-bit sample is read as its top 8 bits, so limited-range 64-940 becomes the
+//! 16-235 that 8-bit uses. No frame is converted as a whole, and HDR is not
+//! tone-mapped (ADR-011).
 
 use std::path::Path;
 use std::sync::OnceLock;
@@ -16,6 +23,7 @@ use ffmpeg_next::decoder::Video as VideoDecoder;
 use ffmpeg_next::frame::Audio as AudioFrame;
 use ffmpeg_next::frame::Video as VideoFrame;
 use ffmpeg_next::media::Type as MediaType;
+use ffmpeg_next::util::color::{Range, TransferCharacteristic};
 use ffmpeg_next::util::format::sample::Type as SampleType;
 use ffmpeg_next::util::format::Pixel;
 use ffmpeg_next::util::format::Sample;
@@ -23,9 +31,10 @@ use ffmpeg_next::{self as ffmpeg, Discard, Rational};
 
 use crate::error::DecompileError;
 use crate::histogram::{yuv601_to_rgb, FrameColor};
+use crate::linear_resample::LinearResampler;
 use crate::scene::{ffmpeg_scene_score, ScoredFrame, SCENE_SCORE_THRESHOLD};
 
-const SAMPLE_RATE: u32 = 48_000;
+pub(crate) const SAMPLE_RATE: u32 = 48_000;
 const SAD_TARGET_W: u32 = 160;
 const SAD_TARGET_H: u32 = 90;
 pub(crate) const THUMB_W: u32 = 64;
@@ -35,18 +44,73 @@ const AFTER_FRAMES: usize = 4;
 const HIST_TARGET_W: u32 = 32;
 const HIST_TARGET_H: u32 = 18;
 
-pub(crate) const DECODE_NOTE: &str = "\
+const DECODE_NOTE: &str = "\
 libavcodec frame-threaded software decode (thread_count auto, \
 skip_loop_filter=nonref). VideoToolbox hwaccel was slower on the 60s 1080p \
 fixture (3.8s vs 0.38s) and ffmpeg-next does not expose a hwdevice wrapper. \
 Scene score and color are sampled from decoded planes; the hot path does not \
 shell out to ffmpeg.";
 
+/// What the first decoded video frame says about its samples, for `decode_note`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct VideoFormat {
+    pub ten_bit: bool,
+    pub hdr: Option<Hdr>,
+}
+
+/// An HDR transfer function, from the frame's color metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Hdr {
+    /// Hybrid log-gamma (`arib-std-b67`), what iPhones record.
+    Hlg,
+    /// Perceptual quantizer (`smpte2084`), used by HDR10 and Dolby Vision.
+    Pq,
+}
+
+impl VideoFormat {
+    fn of(frame: &VideoFrame) -> Self {
+        let hdr = match frame.color_transfer_characteristic() {
+            TransferCharacteristic::ARIB_STD_B67 => Some(Hdr::Hlg),
+            TransferCharacteristic::SMPTE2084 => Some(Hdr::Pq),
+            _ => None,
+        };
+        Self {
+            ten_bit: frame.format() == Pixel::YUV420P10LE,
+            hdr,
+        }
+    }
+}
+
+/// `decode_note` for one file: how it was decoded, then what was read from a
+/// 10-bit or HDR input and what was not done to it.
+pub(crate) fn decode_note(format: VideoFormat) -> String {
+    let mut note = DECODE_NOTE.to_string();
+    if format.ten_bit {
+        note.push_str(
+            " The video is 10-bit 4:2:0; scene score, color, and thumbnails read the \
+             top 8 bits of each sample.",
+        );
+    }
+    if let Some(hdr) = format.hdr {
+        let name = match hdr {
+            Hdr::Hlg => "HLG (arib-std-b67)",
+            Hdr::Pq => "PQ (smpte2084)",
+        };
+        note.push_str(&format!(
+            " Its transfer is {name}, which is HDR; colors and thumbnails were not \
+             tone-mapped, so they are flatter and less saturated than the picture a \
+             viewer sees."
+        ));
+    }
+    note
+}
+
 pub(crate) struct DecodedReel {
     pub duration_ms: u64,
     pub fps: f64,
     pub width: u32,
     pub height: u32,
+    pub format: VideoFormat,
     pub frames: Vec<ScoredFrame>,
     pub colors: Vec<FrameColor>,
     pub pcm: Vec<f32>,
@@ -115,7 +179,7 @@ pub(crate) fn decode_file(path: &Path) -> Result<DecodedReel, DecompileError> {
     let expected_frames = expected_frame_count(container_ms, fps_rational);
     let mut scores = Vec::with_capacity(expected_frames);
     let mut colors = Vec::with_capacity(expected_frames);
-    let mut pcm = Vec::with_capacity(expected_pcm(container_ms));
+    let mut pcm = Pcm::with_capacity(expected_pcm(container_ms));
     let mut sad = SadState::new();
     let thumb_bytes = (THUMB_W * THUMB_H * 3) as usize;
     let mut ring = ThumbRing::new(BEFORE_FRAMES, thumb_bytes);
@@ -123,8 +187,11 @@ pub(crate) fn decode_file(path: &Path) -> Result<DecodedReel, DecompileError> {
     let mut boundaries = Vec::new();
     let mut video_frame = VideoFrame::empty();
     let mut audio_frame = AudioFrame::empty();
-    let mut width = video.width();
-    let mut height = video.height();
+    let mut picture = Picture {
+        width: video.width(),
+        height: video.height(),
+        format: VideoFormat::default(),
+    };
     let mut last_time_ms = 0u64;
 
     for (stream, packet) in input.packets() {
@@ -139,8 +206,7 @@ pub(crate) fn decode_file(path: &Path) -> Result<DecodedReel, DecompileError> {
                 &mut boundaries,
                 &mut scores,
                 &mut colors,
-                &mut width,
-                &mut height,
+                &mut picture,
                 &mut last_time_ms,
                 time_base,
                 start_time,
@@ -164,8 +230,7 @@ pub(crate) fn decode_file(path: &Path) -> Result<DecodedReel, DecompileError> {
         &mut boundaries,
         &mut scores,
         &mut colors,
-        &mut width,
-        &mut height,
+        &mut picture,
         &mut last_time_ms,
         time_base,
         start_time,
@@ -176,6 +241,7 @@ pub(crate) fn decode_file(path: &Path) -> Result<DecodedReel, DecompileError> {
         finish_audio(decoder, &mut audio_frame, &mut pcm)
             .map_err(|err| stage("flush audio decoder", err))?;
     }
+    let pcm = pcm.finish();
     if let Some(open) = pending.take() {
         boundaries.push(open.into_raw());
     }
@@ -189,8 +255,9 @@ pub(crate) fn decode_file(path: &Path) -> Result<DecodedReel, DecompileError> {
     Ok(DecodedReel {
         duration_ms,
         fps: rational_to_f64(fps_rational),
-        width,
-        height,
+        width: picture.width,
+        height: picture.height,
+        format: picture.format,
         frames: scores,
         colors,
         sample_rate: if pcm.is_empty() { 0 } else { SAMPLE_RATE },
@@ -265,8 +332,7 @@ fn drain_video(
     boundaries: &mut Vec<RawBoundary>,
     scores: &mut Vec<ScoredFrame>,
     colors: &mut Vec<FrameColor>,
-    width: &mut u32,
-    height: &mut u32,
+    picture: &mut Picture,
     last_time_ms: &mut u64,
     time_base: Rational,
     start_time: i64,
@@ -283,8 +349,7 @@ fn drain_video(
                     boundaries,
                     scores,
                     colors,
-                    width,
-                    height,
+                    picture,
                     last_time_ms,
                     time_base,
                     start_time,
@@ -307,8 +372,7 @@ fn finish_video(
     boundaries: &mut Vec<RawBoundary>,
     scores: &mut Vec<ScoredFrame>,
     colors: &mut Vec<FrameColor>,
-    width: &mut u32,
-    height: &mut u32,
+    picture: &mut Picture,
     last_time_ms: &mut u64,
     time_base: Rational,
     start_time: i64,
@@ -328,8 +392,7 @@ fn finish_video(
         boundaries,
         scores,
         colors,
-        width,
-        height,
+        picture,
         last_time_ms,
         time_base,
         start_time,
@@ -340,7 +403,7 @@ fn finish_video(
 fn finish_audio(
     audio: &mut AudioDecoder,
     frame: &mut AudioFrame,
-    pcm: &mut Vec<f32>,
+    pcm: &mut Pcm,
 ) -> Result<(), DecompileError> {
     match audio.send_eof() {
         Ok(()) => {}
@@ -353,7 +416,7 @@ fn finish_audio(
 fn drain_audio(
     audio: &mut AudioDecoder,
     frame: &mut AudioFrame,
-    pcm: &mut Vec<f32>,
+    pcm: &mut Pcm,
 ) -> Result<(), DecompileError> {
     loop {
         match audio.receive_frame(frame) {
@@ -365,6 +428,13 @@ fn drain_audio(
     Ok(())
 }
 
+/// The decoded picture: its size from the latest frame, its format from the first.
+struct Picture {
+    width: u32,
+    height: u32,
+    format: VideoFormat,
+}
+
 fn observe_frame(
     frame: &VideoFrame,
     sad: &mut SadState,
@@ -373,17 +443,19 @@ fn observe_frame(
     boundaries: &mut Vec<RawBoundary>,
     scores: &mut Vec<ScoredFrame>,
     colors: &mut Vec<FrameColor>,
-    width: &mut u32,
-    height: &mut u32,
+    picture: &mut Picture,
     last_time_ms: &mut u64,
     time_base: Rational,
     start_time: i64,
     fps: Rational,
 ) -> Result<(), DecompileError> {
     let view = yuv_view(frame)?;
-    *width = view.width;
-    *height = view.height;
+    picture.width = view.width;
+    picture.height = view.height;
     let index = scores.len() as u64;
+    if index == 0 {
+        picture.format = VideoFormat::of(frame);
+    }
     let time_ms = frame_time_ms(frame, index, time_base, start_time, fps);
     *last_time_ms = time_ms;
     let scene_score = sad.push(&view)?;
@@ -529,7 +601,6 @@ impl SadState {
             self.configure(view.width, view.height);
             sample_luma(
                 view.y,
-                view.y_stride,
                 self.step_x,
                 self.step_y,
                 self.cols,
@@ -541,7 +612,6 @@ impl SadState {
         }
         sample_luma(
             view.y,
-            view.y_stride,
             self.step_x,
             self.step_y,
             self.cols,
@@ -572,8 +642,7 @@ impl SadState {
 }
 
 fn sample_luma(
-    plane: &[u8],
-    stride: usize,
+    plane: Plane<'_>,
     step_x: u32,
     step_y: u32,
     cols: u32,
@@ -586,49 +655,84 @@ fn sample_luma(
             "luma sample buffer is short".into(),
         ));
     }
+    let last_row = (rows.saturating_sub(1) * step_y) as usize;
+    let last_col = (cols.saturating_sub(1) * step_x) as usize;
+    if !plane.covers(last_row, last_col) {
+        return Err(DecompileError::Message(
+            "luma sample walked past the plane".into(),
+        ));
+    }
     for row in 0..rows {
         let y = (row * step_y) as usize;
-        let off = y * stride;
-        if off >= plane.len() {
-            return Err(DecompileError::Message(
-                "luma sample walked past the plane".into(),
-            ));
-        }
         for col in 0..cols {
             let x = (col * step_x) as usize;
-            let index = off + x;
-            if index >= plane.len() {
-                return Err(DecompileError::Message(
-                    "luma sample x walked past the row".into(),
-                ));
-            }
-            out[(row * cols + col) as usize] = plane[index];
+            out[(row * cols + col) as usize] = plane.at(y, x);
         }
     }
     Ok(())
 }
 
+/// One plane of a decoded frame, read one sample at a time as 8 bits.
+#[derive(Clone, Copy)]
+enum Plane<'a> {
+    Eight {
+        data: &'a [u8],
+        stride: usize,
+    },
+    /// Little-endian 16-bit samples holding 10-bit values.
+    Ten {
+        data: &'a [u8],
+        stride: usize,
+    },
+}
+
+impl Plane<'_> {
+    /// The sample at `row`, `col`: the byte itself, or the top 8 of 10 bits.
+    /// Strides are in bytes, as FFmpeg reports them. Panics outside the data;
+    /// `plane` checks a frame's planes against its size, and `covers` checks
+    /// one point.
+    fn at(&self, row: usize, col: usize) -> u8 {
+        match *self {
+            Plane::Eight { data, stride } => data[row * stride + col],
+            Plane::Ten { data, stride } => {
+                let index = row * stride + col * 2;
+                let sample = u16::from_le_bytes([data[index], data[index + 1]]);
+                (sample >> 2).min(255) as u8
+            }
+        }
+    }
+
+    /// Whether the sample at `row`, `col` lies inside the plane's data.
+    fn covers(&self, row: usize, col: usize) -> bool {
+        match *self {
+            Plane::Eight { data, stride } => row * stride + col < data.len(),
+            Plane::Ten { data, stride } => row * stride + col * 2 + 1 < data.len(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Depth {
+    Eight,
+    Ten,
+}
+
 struct YuvView<'a> {
-    y: &'a [u8],
-    y_stride: usize,
+    y: Plane<'a>,
     width: u32,
     height: u32,
     chroma: ChromaPlanes<'a>,
 }
 
+#[derive(Clone, Copy)]
 enum ChromaPlanes<'a> {
     Planar {
-        u: &'a [u8],
-        v: &'a [u8],
-        u_stride: usize,
-        v_stride: usize,
+        u: Plane<'a>,
+        v: Plane<'a>,
         full: bool,
     },
-    Nv12 {
-        uv: &'a [u8],
-        stride: usize,
-        full: bool,
-    },
+    /// U and V bytes interleaved in one plane.
+    Nv12 { uv: Plane<'a>, full: bool },
 }
 
 fn yuv_view(frame: &VideoFrame) -> Result<YuvView<'_>, DecompileError> {
@@ -639,119 +743,110 @@ fn yuv_view(frame: &VideoFrame) -> Result<YuvView<'_>, DecompileError> {
     }
     let width = frame.width();
     let height = frame.height();
-    let y_stride = frame.stride(0);
-    if y_stride < width as usize {
-        return Err(DecompileError::Message(format!(
-            "luma stride {y_stride} is narrower than width {width}"
-        )));
-    }
-    let y = frame.data(0);
-    let y_needed = y_stride.saturating_mul(height as usize);
-    if y.len() < y_needed {
-        return Err(DecompileError::Message(
-            "luma plane is shorter than stride * height".into(),
-        ));
-    }
     let pixel = frame.format();
-    let chroma = chroma_planes(frame, pixel, width, height)?;
+    let depth = match pixel {
+        Pixel::YUV420P | Pixel::YUVJ420P | Pixel::NV12 => Depth::Eight,
+        Pixel::YUV420P10LE => Depth::Ten,
+        other => return Err(unsupported(other)),
+    };
+    let y = plane(frame, 0, depth, width as usize, height as usize, "luma")?;
+    let chroma = chroma_planes(frame, pixel, depth, width, height)?;
     Ok(YuvView {
-        y: &y[..y_needed],
-        y_stride,
+        y,
         width,
         height,
         chroma,
     })
 }
 
+fn unsupported(pixel: Pixel) -> DecompileError {
+    let name = pixel
+        .descriptor()
+        .map_or("unknown", |descriptor| descriptor.name());
+    DecompileError::Message(format!(
+        "unsupported pixel format {name}; decompile reads 4:2:0 video as yuv420p, \
+         yuvj420p, nv12, or yuv420p10le"
+    ))
+}
+
+/// Plane `index` of `frame`, checked to hold `rows` rows of `samples` samples.
+fn plane<'a>(
+    frame: &'a VideoFrame,
+    index: usize,
+    depth: Depth,
+    samples: usize,
+    rows: usize,
+    name: &str,
+) -> Result<Plane<'a>, DecompileError> {
+    let stride = frame.stride(index);
+    let bytes = match depth {
+        Depth::Eight => samples,
+        Depth::Ten => samples * 2,
+    };
+    if stride < bytes {
+        return Err(DecompileError::Message(format!(
+            "{name} stride {stride} is narrower than {samples} samples"
+        )));
+    }
+    let data = frame.data(index);
+    let needed = stride.saturating_mul(rows);
+    if data.len() < needed {
+        return Err(DecompileError::Message(format!(
+            "{name} plane is shorter than stride * height"
+        )));
+    }
+    let data = &data[..needed];
+    Ok(match depth {
+        Depth::Eight => Plane::Eight { data, stride },
+        Depth::Ten => Plane::Ten { data, stride },
+    })
+}
+
 fn chroma_planes<'a>(
     frame: &'a VideoFrame,
     pixel: Pixel,
+    depth: Depth,
     width: u32,
     height: u32,
 ) -> Result<ChromaPlanes<'a>, DecompileError> {
     let chroma_w = width.div_ceil(2) as usize;
     let chroma_h = height.div_ceil(2) as usize;
-    if pixel == Pixel::YUV420P || pixel == Pixel::YUVJ420P {
-        if frame.planes() < 3 {
-            return Err(DecompileError::Message(
-                "yuv420 frame is missing chroma planes".into(),
-            ));
-        }
-        let u_stride = frame.stride(1);
-        let v_stride = frame.stride(2);
-        if u_stride < chroma_w || v_stride < chroma_w {
-            return Err(DecompileError::Message(
-                "chroma stride is narrower than the frame".into(),
-            ));
-        }
-        let u = frame.data(1);
-        let v = frame.data(2);
-        if u.len() < u_stride * chroma_h || v.len() < v_stride * chroma_h {
-            return Err(DecompileError::Message("chroma plane is short".into()));
-        }
-        return Ok(ChromaPlanes::Planar {
-            u,
-            v,
-            u_stride,
-            v_stride,
-            full: pixel == Pixel::YUVJ420P,
-        });
-    }
     if pixel == Pixel::NV12 {
         if frame.planes() < 2 {
             return Err(DecompileError::Message(
                 "nv12 frame is missing the chroma plane".into(),
             ));
         }
-        let stride = frame.stride(1);
-        if stride < chroma_w * 2 {
-            return Err(DecompileError::Message(
-                "nv12 chroma stride is short".into(),
-            ));
-        }
-        let uv = frame.data(1);
-        if uv.len() < stride * chroma_h {
-            return Err(DecompileError::Message("nv12 chroma plane is short".into()));
-        }
         return Ok(ChromaPlanes::Nv12 {
-            uv,
-            stride,
+            uv: plane(frame, 1, depth, chroma_w * 2, chroma_h, "nv12 chroma")?,
             full: false,
         });
     }
-    Err(DecompileError::Message(
-        "unsupported pixel format; the fast path reads yuv420p or nv12".into(),
-    ))
+    if frame.planes() < 3 {
+        return Err(DecompileError::Message(
+            "yuv420 frame is missing chroma planes".into(),
+        ));
+    }
+    // 8-bit full range has its own pixel format, yuvj420p. 10-bit has none,
+    // so its range comes from the frame's metadata.
+    let full = match depth {
+        Depth::Eight => pixel == Pixel::YUVJ420P,
+        Depth::Ten => frame.color_range() == Range::JPEG,
+    };
+    Ok(ChromaPlanes::Planar {
+        u: plane(frame, 1, depth, chroma_w, chroma_h, "u chroma")?,
+        v: plane(frame, 2, depth, chroma_w, chroma_h, "v chroma")?,
+        full,
+    })
 }
 
 fn pixel_rgb(view: &YuvView<'_>, x: u32, y: u32) -> [u8; 3] {
-    let luma = view.y[y as usize * view.y_stride + x as usize];
-    let (u, v, full) = match &view.chroma {
-        ChromaPlanes::Planar {
-            u,
-            v,
-            u_stride,
-            v_stride,
-            full,
-        } => {
-            let cx = (x / 2) as usize;
-            let cy = (y / 2) as usize;
-            (u[cy * *u_stride + cx], v[cy * *v_stride + cx], *full)
-        }
-        ChromaPlanes::Nv12 { uv, stride, full } => {
-            let cx = (x / 2) as usize;
-            let cy = (y / 2) as usize;
-            let base = cy * *stride + cx * 2;
-            (uv[base], uv[base + 1], *full)
-        }
-        other => {
-            let _never: std::convert::Infallible = match other {
-                ChromaPlanes::Planar { .. } | ChromaPlanes::Nv12 { .. } => {
-                    unreachable!("chroma plane kind is handled above")
-                }
-            };
-            match _never {}
-        }
+    let (x, y) = (x as usize, y as usize);
+    let luma = view.y.at(y, x);
+    let (cx, cy) = (x / 2, y / 2);
+    let (u, v, full) = match view.chroma {
+        ChromaPlanes::Planar { u, v, full } => (u.at(cy, cx), v.at(cy, cx), full),
+        ChromaPlanes::Nv12 { uv, full } => (uv.at(cy, cx * 2), uv.at(cy, cx * 2 + 1), full),
     };
     yuv601_to_rgb(luma, u, v, full)
 }
@@ -896,7 +991,7 @@ fn note_boundary(
     }
 }
 
-fn push_audio(frame: &AudioFrame, pcm: &mut Vec<f32>) -> Result<(), DecompileError> {
+fn push_audio(frame: &AudioFrame, pcm: &mut Pcm) -> Result<(), DecompileError> {
     let channels = usize::from(frame.channels());
     let samples = frame.samples();
     let rate = frame.rate();
@@ -950,30 +1045,241 @@ fn push_audio(frame: &AudioFrame, pcm: &mut Vec<f32>) -> Result<(), DecompileErr
             "unsupported audio format {format:?} at {rate} Hz"
         )));
     }
-    if rate == SAMPLE_RATE {
-        pcm.extend(mono);
-    } else {
-        resample_linear(&mono, rate, pcm);
-    }
+    pcm.push(&mono, rate);
     Ok(())
 }
 
-fn resample_linear(input: &[f32], in_rate: u32, output: &mut Vec<f32>) {
-    if input.is_empty() || in_rate == 0 {
-        return;
+/// The decoded audio as mono 48 kHz. Audio at another rate goes through one
+/// [`LinearResampler`] for the whole stream.
+struct Pcm {
+    samples: Vec<f32>,
+    resampler: Option<LinearResampler>,
+}
+
+impl Pcm {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            samples: Vec::with_capacity(capacity),
+            resampler: None,
+        }
     }
-    let out_len = (input.len() as u64 * u64::from(SAMPLE_RATE) / u64::from(in_rate)) as usize;
-    if out_len == 0 {
-        return;
+
+    fn push(&mut self, mono: &[f32], rate: u32) {
+        if rate == SAMPLE_RATE && self.resampler.is_none() {
+            self.samples.extend_from_slice(mono);
+            return;
+        }
+        // A new rate mid-stream ends the old resampler's stream.
+        if self.resampler.as_ref().is_some_and(|r| r.in_rate() != rate) {
+            self.finish_resampler();
+        }
+        if rate == SAMPLE_RATE {
+            self.samples.extend_from_slice(mono);
+            return;
+        }
+        self.resampler
+            .get_or_insert_with(|| LinearResampler::new(rate))
+            .push(mono, &mut self.samples);
     }
-    output.reserve(out_len);
-    let last = input.len() - 1;
-    for index in 0..out_len {
-        let src = index as f64 * f64::from(in_rate) / f64::from(SAMPLE_RATE);
-        let base = src.floor() as usize;
-        let frac = (src - base as f64) as f32;
-        let left = input[base.min(last)];
-        let right = input[(base + 1).min(last)];
-        output.push(left + (right - left) * frac);
+
+    fn finish_resampler(&mut self) {
+        if let Some(mut resampler) = self.resampler.take() {
+            resampler.finish(&mut self.samples);
+        }
+    }
+
+    fn finish(mut self) -> Vec<f32> {
+        self.finish_resampler();
+        self.samples
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Little-endian 16-bit rows, each padded with zeros to `stride` bytes.
+    fn ten_bit_rows(rows: &[&[u16]], stride: usize) -> Vec<u8> {
+        let mut data = Vec::new();
+        for row in rows {
+            let start = data.len();
+            for sample in *row {
+                data.extend_from_slice(&sample.to_le_bytes());
+            }
+            data.resize(start + stride, 0);
+        }
+        data
+    }
+
+    #[test]
+    fn an_eight_bit_plane_reads_the_byte() {
+        let data = [10, 11, 12, 0, 0, 20, 21, 22, 0, 0];
+        let plane = Plane::Eight {
+            data: &data,
+            stride: 5,
+        };
+        assert_eq!(plane.at(0, 0), 10);
+        assert_eq!(plane.at(0, 2), 12);
+        assert_eq!(plane.at(1, 0), 20);
+        assert_eq!(plane.at(1, 2), 22);
+        assert!(plane.covers(1, 4));
+        assert!(!plane.covers(2, 0));
+    }
+
+    #[test]
+    fn a_ten_bit_plane_reads_the_top_eight_bits() {
+        // Limited-range black, mid grey, and white, then the extremes and a
+        // value whose low two bits are dropped.
+        let data = ten_bit_rows(&[&[64, 512, 940], &[1023, 3, 7]], 8);
+        let plane = Plane::Ten {
+            data: &data,
+            stride: 8,
+        };
+        assert_eq!(plane.at(0, 0), 16);
+        assert_eq!(plane.at(0, 1), 128);
+        assert_eq!(plane.at(0, 2), 235);
+        assert_eq!(plane.at(1, 0), 255);
+        assert_eq!(plane.at(1, 1), 0);
+        assert_eq!(plane.at(1, 2), 1);
+        assert!(plane.covers(1, 3));
+        assert!(!plane.covers(1, 4));
+        assert!(!plane.covers(2, 0));
+    }
+
+    #[test]
+    fn luma_sampling_reads_ten_bit_planes_on_the_same_grid() {
+        let eight = [16, 1, 235, 1, 2, 2, 2, 2, 81, 1, 128, 1];
+        let ten = ten_bit_rows(&[&[64, 4, 940, 4], &[8, 8, 8, 8], &[324, 4, 512, 4]], 10);
+        let mut from_eight = vec![0; 4];
+        let mut from_ten = vec![0; 4];
+        let eight = Plane::Eight {
+            data: &eight,
+            stride: 4,
+        };
+        let ten = Plane::Ten {
+            data: &ten,
+            stride: 10,
+        };
+        sample_luma(eight, 2, 2, 2, 2, &mut from_eight).expect("8-bit grid");
+        sample_luma(ten, 2, 2, 2, 2, &mut from_ten).expect("10-bit grid");
+        assert_eq!(from_eight, [16, 235, 81, 128]);
+        assert_eq!(from_ten, from_eight);
+    }
+
+    #[test]
+    fn luma_sampling_stops_at_the_end_of_the_plane() {
+        let data = [0u8; 6];
+        let plane = Plane::Eight {
+            data: &data,
+            stride: 3,
+        };
+        let mut out = vec![0; 9];
+        assert!(sample_luma(plane, 1, 1, 3, 3, &mut out).is_err());
+    }
+
+    #[test]
+    fn ten_bit_pixels_convert_like_their_top_eight_bits() {
+        // draft12's red: Y 81, U 90, V 240, and the same as 10-bit samples.
+        let (y8, u8_, v8) = ([81u8; 4], [90u8], [240u8]);
+        let y10 = ten_bit_rows(&[&[324, 324], &[324, 324]], 4);
+        let (u10, v10) = (ten_bit_rows(&[&[360]], 2), ten_bit_rows(&[&[960]], 2));
+        let view = |y, u, v| YuvView {
+            y,
+            width: 2,
+            height: 2,
+            chroma: ChromaPlanes::Planar { u, v, full: false },
+        };
+        let eight = |data, stride| Plane::Eight { data, stride };
+        let ten = |data, stride| Plane::Ten { data, stride };
+        let from_eight = view(eight(&y8, 2), eight(&u8_, 1), eight(&v8, 1));
+        let from_ten = view(ten(&y10, 4), ten(&u10, 2), ten(&v10, 2));
+        assert_eq!(
+            pixel_rgb(&from_eight, 1, 1),
+            yuv601_to_rgb(81, 90, 240, false)
+        );
+        assert_eq!(pixel_rgb(&from_ten, 1, 1), pixel_rgb(&from_eight, 1, 1));
+    }
+
+    #[test]
+    fn an_unsupported_format_is_named_in_the_error() {
+        ensure_ffmpeg().expect("ffmpeg");
+        let message = unsupported(Pixel::YUV422P).to_string();
+        assert!(message.contains("yuv422p"), "{message}");
+        assert!(message.contains("yuv420p10le"), "{message}");
+    }
+
+    #[test]
+    fn eight_bit_sdr_keeps_the_decode_note() {
+        assert_eq!(decode_note(VideoFormat::default()), DECODE_NOTE);
+    }
+
+    #[test]
+    fn the_decode_note_says_ten_bit_and_hdr() {
+        let hlg = decode_note(VideoFormat {
+            ten_bit: true,
+            hdr: Some(Hdr::Hlg),
+        });
+        assert!(hlg.starts_with(DECODE_NOTE), "{hlg}");
+        assert!(hlg.contains("10-bit"), "{hlg}");
+        assert!(hlg.contains("HLG"), "{hlg}");
+        assert!(hlg.contains("not tone-mapped"), "{hlg}");
+        let pq = decode_note(VideoFormat {
+            ten_bit: true,
+            hdr: Some(Hdr::Pq),
+        });
+        assert!(pq.contains("PQ"), "{pq}");
+        let ten_sdr = decode_note(VideoFormat {
+            ten_bit: true,
+            hdr: None,
+        });
+        assert!(
+            ten_sdr.contains("10-bit") && !ten_sdr.contains("tone"),
+            "{ten_sdr}"
+        );
+    }
+
+    #[test]
+    fn audio_at_48_khz_passes_through_unchanged() {
+        let input: Vec<f32> = (0..1_000).map(|i| (i as f32 * 0.01).sin()).collect();
+        let mut pcm = Pcm::with_capacity(0);
+        pcm.push(&input[..400], SAMPLE_RATE);
+        pcm.push(&input[400..], SAMPLE_RATE);
+        assert_eq!(pcm.finish(), input);
+    }
+
+    #[test]
+    fn a_new_audio_rate_ends_the_old_stream() {
+        let mut pcm = Pcm::with_capacity(0);
+        pcm.push(&vec![0.5; 44_100], 44_100);
+        pcm.push(&vec![0.5; 24_000], 24_000);
+        let samples = pcm.finish();
+        // One second of each, at 48 kHz.
+        assert!(samples.len().abs_diff(96_000) <= 2, "{}", samples.len());
+    }
+
+    /// A 4x4 `yuv420p10le` frame of mid-grey (Y 512, U 512, V 512), with the
+    /// given range in its metadata.
+    fn grey_ten_bit_frame(range: Range) -> VideoFrame {
+        ensure_ffmpeg().expect("ffmpeg");
+        let mut frame = VideoFrame::new(Pixel::YUV420P10LE, 4, 4);
+        frame.set_color_range(range);
+        for index in 0..3 {
+            for pair in frame.data_mut(index).chunks_exact_mut(2) {
+                pair.copy_from_slice(&512u16.to_le_bytes());
+            }
+        }
+        frame
+    }
+
+    #[test]
+    fn a_ten_bit_frame_is_full_range_when_its_metadata_says_so() {
+        let limited = grey_ten_bit_frame(Range::MPEG);
+        let full = grey_ten_bit_frame(Range::JPEG);
+        let limited_rgb = pixel_rgb(&yuv_view(&limited).expect("limited view"), 1, 1);
+        let full_rgb = pixel_rgb(&yuv_view(&full).expect("full view"), 1, 1);
+        // Grey 128 in full range stays 128; in limited range it is stretched.
+        assert_eq!(full_rgb, [128, 128, 128]);
+        assert_eq!(limited_rgb, yuv601_to_rgb(128, 128, 128, false));
+        assert_ne!(limited_rgb, full_rgb);
     }
 }

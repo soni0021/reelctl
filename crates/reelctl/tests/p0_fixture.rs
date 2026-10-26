@@ -270,3 +270,105 @@ fn a_pause_under_room_noise_is_a_gap_and_dead_air() {
 
     let _ = fs::remove_dir_all(&root);
 }
+
+#[test]
+fn ten_bit_hlg_video_reads_like_the_eight_bit_draft() {
+    let root = std::env::temp_dir().join(format!("reelctl-10bit-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("temp dir");
+    let decompile = |kind: &str| -> EditDna {
+        let mp4 = root.join(format!("{kind}.mp4"));
+        let json = root.join(format!("{kind}.edit_dna.json"));
+        generate(kind, &mp4);
+        let output = reelctl()
+            .args(["decompile", "--input"])
+            .arg(&mp4)
+            .arg("--out")
+            .arg(&json)
+            .arg("--filmstrip-dir")
+            .arg(root.join(format!("{kind}_timeline")))
+            .output()
+            .expect("spawn reelctl");
+        assert!(
+            output.status.success(),
+            "decompile {kind} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&fs::read(&json).expect("json")).expect("dna")
+    };
+    let eight = decompile("draft12");
+    let ten = decompile("draft12_10bit");
+
+    assert_eq!(ten.cuts.len(), eight.cuts.len(), "cuts {:?}", ten.cuts);
+    for (a, b) in ten.cuts.iter().zip(&eight.cuts) {
+        assert!(a.frame_index.abs_diff(b.frame_index) <= 1, "{a:?} vs {b:?}");
+    }
+    assert_eq!(ten.silence_gaps, eight.silence_gaps);
+    assert_eq!(ten.payoff_window.has_cue, eight.payoff_window.has_cue);
+    assert_eq!(ten.shot_histograms.len(), eight.shot_histograms.len());
+    for (a, b) in ten.shot_histograms.iter().zip(&eight.shot_histograms) {
+        for (x, y) in [
+            (a.mean_r, b.mean_r),
+            (a.mean_g, b.mean_g),
+            (a.mean_b, b.mean_b),
+        ] {
+            assert!(
+                (x - y).abs() <= 3.0,
+                "shot {}: {a:?} vs {b:?}",
+                a.shot_index
+            );
+        }
+    }
+    assert!(ten.decode_note.contains("10-bit"), "{}", ten.decode_note);
+    assert!(ten.decode_note.contains("HLG"), "{}", ten.decode_note);
+    assert!(
+        !eight.decode_note.contains("10-bit"),
+        "{}",
+        eight.decode_note
+    );
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_pause_at_50_seconds_in_44k_audio_is_found_on_time() {
+    let root = std::env::temp_dir().join(format!("reelctl-44k-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("temp dir");
+    let mp4 = root.join("draft_44k.mp4");
+    let json = root.join("draft_44k.edit_dna.json");
+    generate("draft12_44k", &mp4);
+
+    let output = reelctl()
+        .args(["decompile", "--input"])
+        .arg(&mp4)
+        .arg("--out")
+        .arg(&json)
+        .arg("--filmstrip-dir")
+        .arg(root.join("timeline"))
+        .output()
+        .expect("spawn reelctl");
+    assert!(
+        output.status.success(),
+        "decompile failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let dna: EditDna = serde_json::from_slice(&fs::read(&json).expect("json")).expect("dna");
+    let long: Vec<(u64, u64)> = dna
+        .silence_gaps
+        .iter()
+        .filter(|gap| gap.duration_ms >= 180)
+        .map(|gap| (gap.start_ms, gap.end_ms))
+        .collect();
+    assert_eq!(long.len(), 1, "gaps of 180 ms or more: {long:?}");
+    let (start, end) = long[0];
+    // ffmpeg's `volume enable=` switches on 1,024-sample frame boundaries, so
+    // the mute is at 50.0159-50.5034 s (checked on the source signal). Per-frame
+    // resampling found 50,000-50,470, 16 and 33 ms early.
+    assert!(
+        start.abs_diff(50_016) <= 10 && end.abs_diff(50_503) <= 10,
+        "pause {long:?}"
+    );
+
+    let _ = fs::remove_dir_all(&root);
+}

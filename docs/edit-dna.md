@@ -13,7 +13,7 @@ Every field is always present. Times are whole milliseconds. Video times count f
 | `fps` | number | The stream's average frame rate, else its base rate, else 30 |
 | `frame_size` | object | `width` and `height` of the decoded frames, in pixels |
 | `frame_count` | integer | Number of frames decoded |
-| `decode_note` | string | How the video was decoded |
+| `decode_note` | string | How the video was decoded. For 10-bit video it adds that the top 8 bits of each sample were read, and for an HLG or PQ transfer that the input was HDR and colors were not tone-mapped |
 
 ## Cuts
 
@@ -32,7 +32,7 @@ The scene-score detector applies the formula behind FFmpeg's `scene` value (from
 
 ## Audio
 
-Audio is mixed to mono and resampled to 48 kHz first.
+Audio is mixed to mono and resampled to 48 kHz first, as one stream, so times do not drift with the input's sample rate.
 
 | Field | Meaning |
 |---|---|

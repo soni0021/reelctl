@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use edit_dna::{BoundaryView, CutDetectorKind, EditDna, SCHEMA_VERSION};
 
 use crate::asr::{self, AsrEstimate};
-use crate::decode::{self, DecodedReel, RawBoundary, DECODE_NOTE, THUMB_H, THUMB_W};
+use crate::decode::{self, DecodedReel, RawBoundary, THUMB_H, THUMB_W};
 use crate::error::DecompileError;
 use crate::histogram::aggregate;
 use crate::loudness::integrated_lufs;
@@ -213,7 +213,7 @@ fn assemble(
     dna.cut_detector_note = detector_note.to_string();
     dna.asr_backend = asr.backend;
     dna.asr_note = asr.note.clone();
-    dna.decode_note = DECODE_NOTE.to_string();
+    dna.decode_note = decode::decode_note(decoded.format);
     dna
 }
 

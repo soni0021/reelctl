@@ -20,7 +20,8 @@ P1–P3 in planer.md (Go watchtower, OpenTimelineIO / Smelter / manimgx, Qwen3-V
 ## Verify
 
 - After a code change: `cargo check` on edit, `cargo test` once at task end. Do not re-run the suite on unchanged code.
-- A green P0 run is the workspace unit tests plus `crates/reelctl/tests/p0_fixture.rs` (synthetic `fixtures/generate.sh` clips: planted cut, silence, a pause under noise, static shot, payoff) and `whisper_fixture.rs`. No network, no scraped Reels.
+- The exception: after a task's commit, the `audit` subagent runs the suite again on a clean checkout of that commit. It catches a file that was never `git add`ed, which a run in the working tree cannot.
+- A green P0 run is the workspace unit tests plus `crates/reelctl/tests/p0_fixture.rs` (synthetic `fixtures/generate.sh` clips: planted cut, silence, a pause under noise, static shot, payoff, 10-bit HLG video) and `whisper_fixture.rs`. No network, no scraped Reels.
 - The whisper model test is `#[ignore]`d. After changing word timing, also run `REELCTL_WHISPER_MODEL=~/models/whisper/ggml-apex-hinglish-q8_0.bin cargo test -p reelctl --test whisper_fixture -- --include-ignored` (macOS only: it needs `say`). Tests that spawn `reelctl` must remove `REELCTL_WHISPER_MODEL` and `REELCTL_TRANSNET_WEIGHTS` from its environment.
 - CLI: `reelctl decompile --input <reel.mp4> --out <edit_dna.json>` and `reelctl diff --draft <draft.mp4> --outlier <edit_dna.json>`.
 - `signal_ms` must be a measured structural duration (decode, cuts, silence, loudness, histograms, JSON write). Do not invent or pad it.
@@ -52,5 +53,6 @@ Update the docs in the same commit as every change, without waiting to be asked;
 ## Learned Workspace Facts
 
 - Project skills live in `.agents/skills/` and are pinned in `skills-lock.json`: `actionbook/rust-skills` (`coding-guidelines`, `domain-cli`, `m10-performance`), `digitalsamba/claude-code-video-toolkit` (`ffmpeg`), `affaan-m/ecc` (`video-editing`), and `addyosmani/agent-skills`. Leave text-to-video, Remotion, Manim, Seedance, Hyperframes, and fal.ai skills out. `edenfunf/reelmimic` is an allowed optional 2D restyle worker for informational reels (see planer.md); do not vendor it or add HyperFrames as a skill.
+- Claude Code setup: subagents `search`, `grep`, and `audit`, plus an `Explore` that replaces the built-in one, are in `.claude/agents/`, all on Haiku 5.5 at effort `high`; the delegation rule is in `.claude/rules/delegation.md`, and `.claude/settings.json` sets `worktree.baseRef` to `head` so `audit` sees the current branch. Do not add a `CLAUDE.md` or `CLAUDE.local.md`: Claude Code then stops reading this file.
 - Structural decompile uses `ffmpeg-next` with no ffmpeg shell-out. Synthetic clips come from `fixtures/generate.sh`.
 - `reelctl diff` flags dead air longer than 180ms, a visual window longer than 2.5s with no cut, and a missing payoff cue in the 8–10s window when the outlier has one. Silence detection uses a per-recording threshold, `max(−40, min(p10 + 6, p90 − 12))` dB over 10 ms window levels, and is separate from the 180ms dead-air flag ([ADR-008](docs/decisions/ADR-008-silence-relative-to-the-noise-floor.md)).
