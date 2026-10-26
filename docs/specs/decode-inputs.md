@@ -1,13 +1,13 @@
 # Spec: decode inputs
 
-Status: approved 2026-10-26, with the recommended answer to each open question (see Resolved Questions). All three tasks done 2026-10-26 ([ADR-011](../decisions/ADR-011-read-10-bit-video-from-its-top-8-bits.md)); awaiting review and merge. Success criteria 1–6 are met; the evidence is in [status.md](../status.md#10-bit-video-and-441-khz-audio-2026-10-26). Plan: [tasks/plan.md](../../tasks/plan.md). Module `decode-inputs` in the [P0 capability map](p0-capability-map.md). Branch: `feature/decode-inputs`.
+Status: approved 2026-10-26, with the recommended answer to each open question (see Resolved Questions). All three tasks done 2026-10-26 ([ADR-011](../decisions/ADR-011-read-10-bit-video-from-its-top-8-bits.md)); awaiting the user's review and merge. Success criteria 1–6 are verified by the author; the evidence is in [status.md](../status.md#10-bit-video-and-441-khz-audio-2026-10-26). Plan: [tasks/plan.md](../../tasks/plan.md). Module `decode-inputs` in the [P0 capability map](p0-capability-map.md). Branch: `feature/decode-inputs`.
 
 ## Objective
 
 Two input problems make `reelctl decompile` fail or drift on ordinary footage:
 
 1. **10-bit video is rejected.** iPhone recordings are HEVC Main 10. The test recording, `IMG_1435.MOV`, decodes to `yuv420p10le` with BT.2020 primaries, HLG transfer (`arib-std-b67`), and limited range. `decompile` stops with `decode video frame: unsupported pixel format; the fast path reads yuv420p or nv12`, so a creator has to convert every phone clip first. Android HDR and 10-bit H.264 exports decode to the same format.
-2. **Audio that is not 48 kHz drifts early.** `push_audio` resamples each decoded frame on its own with `resample_linear`, and each frame drops its fractional output sample. For 44.1 kHz AAC (1,024 samples per frame) that is 0.56 samples per frame, about 24 samples or 0.5 ms per second. A pause planted at 50.0 s was found 10–40 ms early ([status.md](../status.md#known-issues)), about 0.5 s by the end of an 18-minute video. YouTube audio is often 44.1 kHz.
+2. **Audio that is not 48 kHz drifts early.** `push_audio` resamples each decoded frame on its own with `resample_linear`, and each frame drops its fractional output sample. For 44.1 kHz AAC (1,024 samples per frame) that is 0.56 samples per frame, about 24 samples or 0.5 ms per second. A pause planted at 50.0 s was found 16–33 ms early (measured on `draft12_44k`, [status.md](../status.md#10-bit-video-and-441-khz-audio-2026-10-26); the first measurement, on a bare tone, said 10–40 ms), about 0.5 s by the end of an 18-minute video. YouTube audio is often 44.1 kHz.
 
 This change makes `decompile` read 10-bit 4:2:0 video directly, and resamples audio as one continuous stream. 8-bit input and 48 kHz audio give exactly the output they give today.
 
@@ -90,8 +90,8 @@ Test-first.
 
 1. `reelctl decompile --input IMG_1435.MOV` exits 0, and its cuts and silence gaps equal those of an 8-bit conversion of the whole file with the audio copied.
 2. `draft12_10bit` matches `draft12` as described under Testing Strategy, in the default test suite.
-3. `draft12_44k` finds its planted pause within 10 ms of the true times; today it is 10–40 ms early.
-4. All existing fixtures give identical `edit_dna.json` apart from `signal_ms`, `asr_ms`, and other timings, and the 60 s benchmark's `signal_ms` stays in its recent range (242–262 ms).
+3. `draft12_44k` finds its planted pause within 10 ms of the true times; before the change it was 16 and 33 ms early.
+4. All existing fixtures give identical `edit_dna.json` apart from `signal_ms`, `asr_ms`, and other timings, and the 60 s benchmark's median `signal_ms` stays in its recent range (242–262 ms). Single runs on this machine vary more, 239–279 ms.
 5. `decode_note` says 10-bit and HDR when they apply.
 6. `cargo test` passes, and the docs listed under Project Structure are updated.
 

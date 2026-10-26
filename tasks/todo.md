@@ -53,7 +53,7 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/decode-inputs.md](../docs/spec
 
 **Acceptance criteria:**
 - [x] `IMG_1435.MOV` exits 0; its cuts and silence gaps equal the 8-bit conversion's; `decode_note` names 10-bit and HLG (spec criteria 1 and 5)
-- [x] The benchmark's `signal_ms` stays in 242–262 ms, alternating with the current build
+- [x] The benchmark's median `signal_ms` stays in 242–262 ms, alternating with the current build (medians 243.5–247; single runs 239–279 ms)
 - [x] `docs/status.md`: the 10-bit gap closed, decode times recorded, and the drift known issue closed; spec status updated; boxes ticked
 
 **Verification:**

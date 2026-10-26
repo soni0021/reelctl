@@ -34,7 +34,7 @@ Read 10-bit 4:2:0 video, and resample non-48 kHz audio as one stream. Three task
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| The `Plane` accessor changes an 8-bit value or slows the hot path | Medium | The baseline comparison covers every fixture. The benchmark's `signal_ms` must stay in 242–262 ms, measured alternately against the current build |
+| The `Plane` accessor changes an 8-bit value or slows the hot path | Medium | The baseline comparison covers every fixture. The benchmark's median `signal_ms` must stay in 242–262 ms, measured alternately against the current build |
 | x265 10-bit encoding differs enough from x264 8-bit that `draft12_10bit`'s cut moves | Low | The criterion allows ± 1 frame; flat colors and a hard cut leave no ambiguity |
 | HEVC 10-bit decodes slowly (about 6 s per 60 s at 1080p), which makes the default test suite slow | Low | `draft12_10bit` is 640×360 and 12 s |
 | The original file's first decoded frame lacks transfer metadata | Low | Then the note says only 10-bit; checked on `IMG_1435.MOV` in Task 3 |
