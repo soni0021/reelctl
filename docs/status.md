@@ -61,7 +61,7 @@ The real clip was re-cut from the original recording on 2026-10-25 with its audi
 
 ## Quiet audio, 2026-10-26
 
-Apple M3 MacBook Air, release build of `feature/quiet-audio` against the build before it, on the same 17 clips ([spec](specs/quiet-audio.md), [ADR-013](decisions/ADR-013-the-silence-floor-follows-a-quiet-recording.md)). The Reels file is a 15 s Instagram download kept outside the repo.
+Apple M3 MacBook Air, merged into `main` 2026-10-26; release build of `feature/quiet-audio` against the build before it, on the same 17 clips ([spec](specs/quiet-audio.md), [ADR-013](decisions/ADR-013-the-silence-floor-follows-a-quiet-recording.md)). The Reels file is a 15 s Instagram download kept outside the repo.
 
 | Check | Result |
 |---|---|

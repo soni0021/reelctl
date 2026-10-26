@@ -1,6 +1,6 @@
 # Tasks: quiet audio
 
-Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/quiet-audio.md](../docs/specs/quiet-audio.md). Tick each box in the commit that completes it.
+Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/quiet-audio.md](../../../docs/specs/quiet-audio.md). Tick each box in the commit that completes it.
 
 ## Task 1: Baselines, `quiet12`, and the failing tests
 

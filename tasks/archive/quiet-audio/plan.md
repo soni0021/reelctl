@@ -1,6 +1,6 @@
 # Implementation Plan: quiet audio
 
-Spec: [docs/specs/quiet-audio.md](../docs/specs/quiet-audio.md), approved 2026-10-26 with the recommended answers (no new JSON field; keep the 12 dB distance). Branch: `feature/quiet-audio`, started from the unmerged `chore/remove-unreachable-arms`. Checklist: [tasks/todo.md](todo.md). Earlier plans are in [tasks/archive/](archive/fast-decode/plan.md).
+Spec: [docs/specs/quiet-audio.md](../../../docs/specs/quiet-audio.md), approved 2026-10-26 with the recommended answers (no new JSON field; keep the 12 dB distance). Branch: `feature/quiet-audio`, started from the unmerged `chore/remove-unreachable-arms`. Checklist: [tasks/archive/quiet-audio/todo.md](todo.md). Earlier plans are in [tasks/archive/](../fast-decode/plan.md). Merged into `main` 2026-10-26.
 
 ## Overview
 
