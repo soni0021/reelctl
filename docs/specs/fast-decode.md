@@ -1,6 +1,6 @@
 # Spec: fast decode
 
-Status: **draft, awaiting approval** (2026-10-26); question 1 answered (A), questions 2 and 3 open. Module `fast-decode` in the [P0 capability map](p0-capability-map.md). Branch: `feature/fast-decode`. The user's direction for this module: quality is the goal, time is not.
+Status: approved 2026-10-26, with the recommended answer to each open question (see Resolved Questions). Plan: [tasks/plan.md](../../tasks/plan.md). Module `fast-decode` in the [P0 capability map](p0-capability-map.md). Branch: `feature/fast-decode`. The user's direction for this module: quality is the goal, time is not.
 
 ## Objective
 
@@ -63,7 +63,7 @@ Not measured: the corpus uses synthetic and one real source, and no scraped Reel
 
 ## Tech Stack
 
-`ffmpeg-next` 9 with FFmpeg 8.1, as now. Hardware decoding needs raw FFmpeg calls that `ffmpeg-next` does not wrap (`av_hwdevice_ctx_create`, a `get_format` callback, `av_hwframe_transfer_data`), through `ffmpeg-sys-next`, which `ffmpeg-next` already depends on. This is the first `unsafe` code in the repo. It lives in one module, `hwdecode.rs`, each block with a safety comment. No other new dependency.
+`ffmpeg-next` 9 with FFmpeg 8.1, as now. Hardware decoding needs raw FFmpeg calls that `ffmpeg-next` does not wrap (`av_hwdevice_ctx_create`, a `get_format` callback, `av_hwframe_transfer_data`), through `ffmpeg_next::ffi` (the `ffmpeg-sys-next` bindings that `ffmpeg-next` re-exports). This is the first `unsafe` code in the repo. It lives in one module, `hwdecode.rs`, each block with a safety comment. No other new dependency.
 
 ## Commands
 
@@ -81,6 +81,7 @@ bash fixtures/generate.sh textured_cuts12 /tmp/textured_cuts12.mp4
 | Path | Change |
 |---|---|
 | `crates/decompile/src/hwdecode.rs` | New: VideoToolbox device, `get_format` callback, frame transfer, the only `unsafe` |
+| `crates/reelctl/src/main.rs`, `docs/cli.md` | A `--decoder <auto\|software>` option on `decompile`, so the software path can be forced for comparison and as an escape hatch (added in planning; `auto` is the default) |
 | `crates/decompile/src/decode.rs` | Choose hardware or software per codec; `p010` plane support; `decode_note` says which ran |
 | `fixtures/generate.sh` | `textured_cuts12`: 12 s, 640×360, hard cuts between textured sources, B-frames, scene-cut detection off. A small stand-in for the corpus |
 | `crates/reelctl/tests/p0_fixture.rs` | End-to-end tests |
@@ -137,4 +138,6 @@ Test-first.
 
 ## Resolved Questions
 
-1. **The 500 ms metric (answered 2026-10-26): A.** Exactness is the contract. 500 ms is recorded in [status.md](../status.md) as unmet on real footage, with the measured numbers; `planer.md` stays unchanged for the user to revise. Questions 2 and 3 are still open.
+1. **The 500 ms metric (answered 2026-10-26): A.** Exactness is the contract. 500 ms is recorded in [status.md](../status.md) as unmet on real footage, with the measured numbers; `planer.md` stays unchanged for the user to revise. 
+2. **Hardware decoding (answered 2026-10-26): yes**, behind the software fallback and the same-results check.
+3. **Loop filtering (answered 2026-10-26): only if cuts stay identical.** Adopted only if criterion 1 holds with it.
