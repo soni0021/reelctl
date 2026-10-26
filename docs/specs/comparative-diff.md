@@ -1,6 +1,6 @@
 # Spec: Comparative diff against one to three outliers
 
-Status: approved 2026-10-26 with the five recommended answers; built on `feature/comparative-diff` (Tasks 1 and 2 done; real-reel numbers and the audit are in Task 3). Branch: `feature/comparative-diff`. Module `comparative-diff` in the [P0 capability map](p0-capability-map.md). Follows [planer.md](../../planer.md) Pass 2 ("aligns a draft against 1–3 competitor outlier blueprints") and closes the main gap in [status.md](../status.md#gaps).
+Status: approved 2026-10-26, with the five answers recommended at the end of this spec; built on `feature/comparative-diff` (Tasks 1 and 2 done; real-reel numbers and the audit are in Task 3). Branch: `feature/comparative-diff`. Module `comparative-diff` in the [P0 capability map](p0-capability-map.md). Follows [planer.md](../../planer.md) Pass 2 ("aligns a draft against 1–3 competitor outlier blueprints") and closes the main gap in [status.md](../status.md#gaps).
 
 ## Objective
 
@@ -67,7 +67,7 @@ Rust workspace as today. No new dependencies. The comparison is pure code over `
 
 **Statements the output does not make.** It does not rate a reel as good or bad, and `words_per_minute` from silence bursts is an estimate; its `words_source` says so. No flag is raised for speaking rate or loudness: they are listed, not judged, because one pair of reels says nothing about what is "too fast" or "too quiet".
 
-**Text format.** `--format text` prints the comparison as a table (one column per reel), the rhythm windows as a row of counts, and the flags as lines like `NO CUT 5.0-10.0 s: 1 of 1 outliers cut here, the draft does not`. JSON stays the default, so scripts and tests keep working.
+**Text format.** `--format text` prints the comparison as a table (one column per reel; names cut to 8–20 characters and rows wrapped so no line passes 80 characters), the rhythm windows as a row of counts, and the flags as lines like `NO CUT 5.0-10.0 s: 1 of 1 outliers cut here, the draft does not`. JSON stays the default, so scripts and tests keep working.
 
 **Compatibility.** `flags` is exactly what `diff` prints today, for one outlier and for several (apart from the payoff rule with several); `comparison` is a new key after it. The existing fixture tests, the `cli.md` example, and `Reels/compare.sh` (which prints any unknown kind in `flags` as a payoff warning) keep working. Once `--format text` exists, `Reels/compare.sh` switches to it.
 
@@ -106,7 +106,7 @@ Test-first.
 5. On the two real reels, in both directions, the output matches the expected output listed in Evidence, recorded in `status.md`.
 6. ADR-014 records the decision, and the docs match the code.
 
-## Resolved Questions (recommended answers; please confirm)
+## Resolved Questions (the recommended answers, approved 2026-10-26)
 
 1. **Which thresholds?** 5 s windows, the 1.5× and 3-per-minute rule for pause density, and "more than half" for payoff are choices made here, from one pair of slow reels. Recommended: accept them as named constants, say so in `status.md`, and retune on the first fast-cut outlier you download.
 2. **Should the dead-air limit change for talking video?** Recommended: no, not in this module. It is "ask first" and the absolute flags keep working; `pause_density` already says whether the draft's pauses are unusual compared with the outlier's. Revisit with real whisper word timing.

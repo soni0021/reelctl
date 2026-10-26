@@ -807,22 +807,25 @@ fn diff_with_two_outliers_compares_each_and_votes() {
 }
 
 #[test]
-fn diff_with_four_outliers_is_an_argument_error() {
+fn diff_with_four_outliers_is_an_argument_error_before_any_decoding() {
     let root = scratch("cmp4");
-    let one = &["outlier12"];
-    let output = diff_fixtures(&root, one, &[]);
+    let output = diff_fixtures(&root, &["outlier12"], &[]);
     assert!(output.status.success());
-    let draft = root.join("draft.mp4");
     let json = root.join("outlier12.edit_dna.json");
+    // The draft does not exist: if the count were checked after decoding it,
+    // the error would be about the draft and the exit code 1.
     let mut command = reelctl();
-    command.args(["diff", "--draft"]).arg(&draft);
+    command
+        .args(["diff", "--draft"])
+        .arg(root.join("no-such-draft.mp4"));
     for _ in 0..4 {
         command.arg("--outlier").arg(&json);
     }
     let output = command.output().expect("spawn diff");
     assert_eq!(output.status.code(), Some(2), "exit code");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("three"), "{stderr}");
+    assert!(stderr.contains("at most three"), "{stderr}");
+    assert!(stderr.contains("--draft"), "the usage is diff's: {stderr}");
     let _ = fs::remove_dir_all(&root);
 }
 

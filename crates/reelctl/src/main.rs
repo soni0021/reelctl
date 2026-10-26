@@ -234,16 +234,18 @@ fn reel_name(path: &std::path::Path) -> String {
 
 fn diff(args: DiffArgs) -> Result<()> {
     if args.outlier.len() > MAX_OUTLIERS {
-        // An argument error, so it exits with code 2 like clap's own.
-        Cli::command()
-            .error(
-                ErrorKind::TooManyValues,
-                format!(
-                    "at most three --outlier files are allowed, got {}",
-                    args.outlier.len()
-                ),
-            )
-            .exit();
+        // An argument error, so it exits with code 2 like clap's own, and shows
+        // `diff`'s usage.
+        let message = format!(
+            "at most three --outlier files are allowed, got {}",
+            args.outlier.len()
+        );
+        let mut command = Cli::command();
+        let error = match command.find_subcommand_mut("diff") {
+            Some(diff) => diff.error(ErrorKind::TooManyValues, message),
+            None => Cli::command().error(ErrorKind::TooManyValues, message),
+        };
+        error.exit();
     }
     let draft_name = reel_name(&args.draft);
     let request = DecompileRequest {
@@ -309,4 +311,21 @@ fn filmstrip_dir(out: &std::path::Path, explicit: Option<PathBuf>) -> PathBuf {
     let mut dir = out.to_path_buf();
     dir.set_file_name(format!("{stem}_timeline"));
     dir
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::reel_name;
+
+    #[test]
+    fn a_reel_is_named_by_its_file_without_directory_or_suffix() {
+        assert_eq!(reel_name(Path::new("out/reel.edit_dna.json")), "reel");
+        assert_eq!(reel_name(Path::new("dir/x.mp4")), "x");
+        // Dots inside the name stay.
+        assert_eq!(reel_name(Path::new("a.v1.edit_dna.json")), "a.v1");
+        assert_eq!(reel_name(Path::new("my.video.mp4")), "my.video");
+        assert_eq!(reel_name(Path::new("plain")), "plain");
+    }
 }

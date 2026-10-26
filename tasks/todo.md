@@ -64,7 +64,7 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/comparative-diff.md](../docs/s
 
 **Verification:**
 - [x] Links checked; `cargo test` unchanged
-- [ ] The `audit` subagent run on the final commit
+- [x] The `audit` subagent run on the final commit: no code bug; its doc errors, eight surviving mutants, the 80-column requirement, and the usage text fixed in the next commit
 
 **Dependencies:** Task 2
 
@@ -73,4 +73,4 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/comparative-diff.md](../docs/s
 **Estimated scope:** Small
 
 ### Checkpoint C
-- [ ] All six spec success criteria verified; audit run; reviewed with the user, merged into `main`, and this plan moved to `tasks/archive/comparative-diff/`
+- [x] All six spec success criteria verified; audit run; reviewed with the user, merged into `main`, and this plan moved to `tasks/archive/comparative-diff/`

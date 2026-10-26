@@ -121,14 +121,17 @@ pub fn reel_metrics(reel: NamedReel<'_>) -> ReelMetrics {
         .iter()
         .filter(|gap| gap.duration_ms > DEAD_AIR_LIMIT_MS)
         .count();
-    let silent_ms: u64 = dna.silence_gaps.iter().map(|gap| gap.duration_ms).sum();
+    let silent_ms = dna
+        .silence_gaps
+        .iter()
+        .fold(0u64, |total, gap| total.saturating_add(gap.duration_ms));
     let (dead_air_per_minute, silent_share) = if dna.duration_ms == 0 {
         (0.0, 0.0)
     } else {
         let duration = dna.duration_ms as f64;
         (
             dead_air_count as f64 * 60_000.0 / duration,
-            silent_ms as f64 / duration,
+            (silent_ms as f64 / duration).min(1.0),
         )
     };
     ReelMetrics {
@@ -299,16 +302,32 @@ fn short_seconds(ms: u64) -> String {
 /// The longest a reel name is shown in the text report.
 const NAME_WIDTH: usize = 20;
 
+/// The shortest a name is cut to when many reels share the line.
+const MIN_NAME_WIDTH: usize = 8;
+
 /// The label column: wide enough for a shown name and a space.
 const LABEL_WIDTH: usize = NAME_WIDTH + 1;
 
-/// Names as the text report shows them: cut to `NAME_WIDTH` characters with an
+/// The text report's lines stay within this many characters.
+const TEXT_WIDTH: usize = 80;
+
+/// One column of cut counts per window.
+const WINDOW_CELL: usize = 9;
+
+/// How many characters of a name fit when `reels` reels share a line.
+fn name_limit(reels: usize) -> usize {
+    (TEXT_WIDTH.saturating_sub(LABEL_WIDTH) / reels.max(1))
+        .saturating_sub(2)
+        .clamp(MIN_NAME_WIDTH, NAME_WIDTH)
+}
+
+/// Names as the text report shows them: cut to `limit` characters with an
 /// ellipsis, and numbered if two cut names would be the same.
-fn display_names(names: &[&str]) -> Vec<String> {
+fn display_names(names: &[&str], limit: usize) -> Vec<String> {
     let mut shown: Vec<String> = Vec::with_capacity(names.len());
     for name in names {
-        let mut cut = if name.chars().count() > NAME_WIDTH {
-            let head: String = name.chars().take(NAME_WIDTH - 1).collect();
+        let mut cut = if name.chars().count() > limit {
+            let head: String = name.chars().take(limit - 1).collect();
             format!("{head}\u{2026}")
         } else {
             name.to_string()
@@ -316,7 +335,7 @@ fn display_names(names: &[&str]) -> Vec<String> {
         let mut copy = 1;
         while shown.contains(&cut) {
             copy += 1;
-            let head: String = name.chars().take(NAME_WIDTH - 3).collect();
+            let head: String = name.chars().take(limit - 3).collect();
             cut = format!("{head}\u{2026}{copy}");
         }
         shown.push(cut);
@@ -436,13 +455,16 @@ pub fn render_text(report: &Report) -> String {
     let reels: Vec<&ReelMetrics> = std::iter::once(&comparison.draft)
         .chain(comparison.outliers.iter())
         .collect();
-    let names = display_names(&reels.iter().map(|m| m.name.as_str()).collect::<Vec<_>>());
+    let names = display_names(
+        &reels.iter().map(|m| m.name.as_str()).collect::<Vec<_>>(),
+        name_limit(reels.len()),
+    );
     let width = names
         .iter()
         .map(|name| name.chars().count())
         .max()
         .unwrap_or(0)
-        .max(14)
+        .max(10)
         + 2;
 
     let mut lines = vec![row("", width, &names)];
@@ -455,8 +477,6 @@ pub fn render_text(report: &Report) -> String {
         .iter()
         .map(|w| format!("{}-{}", short_seconds(w.start_ms), short_seconds(w.end_ms)))
         .collect();
-    let cell = 9;
-    lines.push(row("", cell, &labels));
     let counts = |pick: &dyn Fn(&RhythmWindow) -> Option<usize>| -> Vec<String> {
         comparison
             .windows
@@ -464,13 +484,18 @@ pub fn render_text(report: &Report) -> String {
             .map(|w| pick(w).map_or("-".to_string(), |n| n.to_string()))
             .collect()
     };
-    lines.push(row(&names[0], cell, &counts(&|w| Some(w.draft_cuts))));
-    for (index, name) in names.iter().enumerate().skip(1) {
-        lines.push(row(
-            name,
-            cell,
-            &counts(&|w| w.outlier_cuts.get(index - 1).copied().flatten()),
-        ));
+    let mut table = vec![counts(&|w| Some(w.draft_cuts))];
+    for index in 0..comparison.outliers.len() {
+        table.push(counts(&|w| w.outlier_cuts.get(index).copied().flatten()));
+    }
+    // Windows that do not fit one line continue on the next group of rows.
+    let per_line = (TEXT_WIDTH.saturating_sub(LABEL_WIDTH) / WINDOW_CELL).max(1);
+    for (group, chunk) in labels.chunks(per_line).enumerate() {
+        let from = group * per_line;
+        lines.push(row("", WINDOW_CELL, chunk));
+        for (name, cells) in names.iter().zip(&table) {
+            lines.push(row(name, WINDOW_CELL, &cells[from..from + chunk.len()]));
+        }
     }
 
     lines.push(String::new());
@@ -801,7 +826,7 @@ mod tests {
         }
         draft.words_per_minute = 19.88;
         draft.integrated_lufs = -48.59;
-        let mut outlier = with_cue(with_gaps(reel(38_498, &[8_466]), &[560, 590, 540, 520]));
+        let mut outlier = with_cue(with_gaps(reel(38_498, &[8_466]), &[600; 18]));
         outlier.words_per_minute = 144.94;
         outlier.integrated_lufs = -22.44;
         compare_many(
@@ -834,9 +859,9 @@ mod tests {
         assert!(line("cuts ").contains('0') && line("cuts ").contains('1'));
         assert!(line("mean shot").contains("15.1 s") && line("mean shot").contains("19.2 s"));
         assert!(line("longest shot").contains("15.1 s") && line("longest shot").contains("30.0 s"));
-        // Gaps over 180 ms: 2 of 15.1 s is 8 per minute, 4 of 38.5 s is 6.
-        assert!(line("pauses").contains("2 (8/min)") && line("pauses").contains("4 (6/min)"));
-        assert!(line("silent").contains("9 %") && line("silent").contains("6 %"));
+        // Gaps over 180 ms: 2 in 15.1 s is 8 per minute, 18 in 38.5 s is 28.
+        assert!(line("pauses").contains("2 (8/min)") && line("pauses").contains("18 (28/min)"));
+        assert!(line("silent").contains("9 %") && line("silent").contains("28 %"));
         assert!(line("loudness").contains("-48.6 LUFS") && line("loudness").contains("-22.4 LUFS"));
         assert!(line("words").contains("19.9") && line("words").contains("144.9"));
     }
@@ -912,6 +937,208 @@ mod tests {
         let shortened: Vec<&str> = header.split_whitespace().collect();
         assert!(shortened.len() >= 2, "{header}");
         assert_ne!(shortened.first(), shortened.last(), "{header}");
+    }
+
+    #[test]
+    fn the_real_pair_the_other_way_round_has_dense_pauses() {
+        // The explainer as the draft, the near-silent clip as the outlier:
+        // 28.1 pauses a minute against 8.0, as recorded in status.md.
+        let draft = with_gaps(reel(38_498, &[8_466]), &[600; 18]);
+        let mut outlier = reel(15_092, &[]);
+        for (start_ms, end_ms) in [(0, 990), (1_370, 1_640), (1_760, 1_850)] {
+            outlier.silence_gaps.push(SilenceGap {
+                start_ms,
+                end_ms,
+                duration_ms: end_ms - start_ms,
+            });
+        }
+        let report = run(&draft, &[&outlier]);
+        assert_eq!(pause_density(&report).len(), 1);
+        assert!(rhythm_gaps(&report).is_empty());
+        let text = render_text(&report);
+        assert!(
+            text.contains("PAUSES 28.1 per minute against 8.0 in the outliers"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn the_ratio_alone_can_keep_a_flag_back() {
+        // 12 against 9 is 3 more, but only 1.33 times as many.
+        assert!(pause_density(&run(&paused(12), &[&paused(9)])).is_empty());
+    }
+
+    #[test]
+    fn a_gap_ends_when_the_draft_cuts_between_two_windows_the_outliers_cut_in() {
+        // Outlier cuts at 1 s and 11 s; the draft cuts at 6 s: two separate gaps.
+        let draft = reel(15_000, &[6_000]);
+        let outlier = reel(15_000, &[1_000, 11_000]);
+        let report = run(&draft, &[&outlier]);
+        assert_eq!(
+            rhythm_gaps(&report),
+            [(0, 5_000, 1, 1), (10_000, 15_000, 1, 1)]
+        );
+    }
+
+    #[test]
+    fn an_outlier_that_ends_exactly_where_a_window_starts_does_not_vote() {
+        let draft = reel(15_000, &[]);
+        let ends_at_ten = reel(10_000, &[1_000, 6_000]);
+        let runs_on = reel(15_000, &[1_000, 12_000]);
+        let report = run(&draft, &[&ends_at_ten, &runs_on]);
+        let last = &report.comparison.windows[2];
+        assert_eq!((last.start_ms, last.end_ms), (10_000, 15_000));
+        assert_eq!(last.outlier_cuts, [None, Some(1)]);
+    }
+
+    #[test]
+    fn a_tie_between_windows_keeps_the_first_ones_counts() {
+        // Window 0: 2 of 3 cut. Window 1: 2 of 2 cut (the third outlier has ended).
+        let draft = reel(10_000, &[]);
+        let both = reel(10_000, &[1_000, 6_000]);
+        let ends_early = reel(5_000, &[]);
+        let report = run(&draft, &[&both, &both, &ends_early]);
+        assert_eq!(rhythm_gaps(&report), [(0, 10_000, 2, 3)]);
+    }
+
+    #[test]
+    fn a_cut_on_a_window_edge_belongs_to_the_later_window() {
+        let draft = reel(10_000, &[5_000]);
+        let report = run(&draft, &[&reel(10_000, &[])]);
+        let counts: Vec<usize> = report
+            .comparison
+            .windows
+            .iter()
+            .map(|w| w.draft_cuts)
+            .collect();
+        assert_eq!(counts, [0, 1]);
+    }
+
+    #[test]
+    fn a_pause_of_exactly_180_ms_is_not_dead_air() {
+        let m = metrics(&with_gaps(reel(60_000, &[]), &[180, 181]));
+        assert_eq!(m.dead_air_count, 1);
+    }
+
+    #[test]
+    fn repeated_and_out_of_range_cuts_do_not_make_empty_shots() {
+        // Two cuts at 3 s are one boundary; a cut past the end is no boundary.
+        let m = metrics(&reel(12_000, &[3_000, 3_000, 20_000]));
+        assert_eq!(m.mean_shot_ms, 6_000);
+        assert_eq!(m.longest_shot_ms, 9_000);
+    }
+
+    #[test]
+    fn overlapping_gaps_cannot_make_a_silent_share_over_one() {
+        let mut dna = reel(1_000, &[]);
+        for _ in 0..3 {
+            dna.silence_gaps.push(SilenceGap {
+                start_ms: 0,
+                end_ms: 1_000,
+                duration_ms: 1_000,
+            });
+        }
+        assert_eq!(metrics(&dna).silent_share, 1.0);
+        dna.silence_gaps.push(SilenceGap {
+            start_ms: 0,
+            end_ms: 1,
+            duration_ms: u64::MAX,
+        });
+        assert_eq!(metrics(&dna).silent_share, 1.0, "no overflow");
+    }
+
+    #[test]
+    fn a_name_of_20_characters_is_kept_and_one_of_21_is_cut() {
+        let dna = reel(10_000, &[]);
+        let twenty = "abcdefghijklmnopqrst";
+        let twenty_one = "abcdefghijklmnopqrstu";
+        let header = |name: &str| {
+            let report = compare_many(
+                NamedReel { name, dna: &dna },
+                &[NamedReel {
+                    name: "o",
+                    dna: &dna,
+                }],
+            );
+            render_text(&report)
+                .lines()
+                .next()
+                .expect("header")
+                .to_string()
+        };
+        assert!(header(twenty).contains(twenty));
+        let cut = header(twenty_one);
+        assert!(cut.contains("abcdefghijklmnopqrs\u{2026}"), "{cut}");
+        assert!(!cut.contains(twenty_one));
+    }
+
+    fn many_reels_report() -> Report {
+        // A 60 s draft against three outliers with long names.
+        let draft = reel(60_000, &[10_000]);
+        let outlier = reel(60_000, &[2_000, 20_000, 40_000]);
+        let names = [
+            "A long draft title that goes on and on",
+            "First outlier with an equally long title",
+            "Second outlier with an equally long title",
+            "Third outlier with an equally long title",
+        ];
+        compare_many(
+            NamedReel {
+                name: names[0],
+                dna: &draft,
+            },
+            &[
+                NamedReel {
+                    name: names[1],
+                    dna: &outlier,
+                },
+                NamedReel {
+                    name: names[2],
+                    dna: &outlier,
+                },
+                NamedReel {
+                    name: names[3],
+                    dna: &outlier,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn four_reels_and_twelve_windows_fit_in_80_columns() {
+        let text = render_text(&many_reels_report());
+        for line in text.lines() {
+            assert!(
+                line.chars().count() <= 80,
+                "{} chars: {line}",
+                line.chars().count()
+            );
+        }
+    }
+
+    #[test]
+    fn windows_that_do_not_fit_a_line_continue_on_the_next_one() {
+        let text = render_text(&many_reels_report());
+        // 12 windows from 0-5 to 55-60: every label appears, and the draft's
+        // row is repeated for each group of windows.
+        for label in ["0-5", "25-30", "55-60"] {
+            assert!(
+                text.split_whitespace().any(|word| word == label),
+                "{label} in\n{text}"
+            );
+        }
+        let draft_rows = text
+            .lines()
+            .filter(|l| l.starts_with("A long draf"))
+            .count();
+        assert!(draft_rows >= 2, "{draft_rows} rows\n{text}");
+        // The same counts, whichever group they are in: the draft cuts once, in 10-15.
+        let ones: usize = text
+            .lines()
+            .filter(|l| l.starts_with("A long draf"))
+            .map(|l| l.split_whitespace().filter(|w| *w == "1").count())
+            .sum();
+        assert_eq!(ones, 1);
     }
 
     #[test]

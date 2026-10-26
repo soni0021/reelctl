@@ -98,7 +98,7 @@ reelctl diff --draft <draft.mp4> --outlier <outlier.edit_dna.json> [--outlier <b
 | `--format <json\|text>` | `json` (default) or a readable report. See [the comparison](#comparing-with-outliers) |
 | `--cut-detector`, `--transnet-weights`, `--whisper-model` | As for `decompile`, applied to the draft |
 
-The report is JSON on stdout. This is the actual output for the `draft12` and `outlier12` fixtures:
+The report is JSON on stdout: `flags`, then `comparison` (below). This is the actual `flags` for the `draft12` and `outlier12` fixtures; `comparison` follows it in the output:
 
 ```json
 {
@@ -155,23 +155,23 @@ Flags come in that order: all dead air, then all static windows, then the payoff
 
 The 1.5, the 3, and the 5 s window were chosen on two slow reels; they have not been tried against a fast-cut outlier. Speaking rate and loudness are listed, not judged. For `draft12` against `outlier12`, `comparison.flags` is a `rhythm_gap` for 0–5 s (the outlier cuts at 3 s; the draft first cuts at 6 s) and a `pause_density` of 5.0 against 0.0 per minute.
 
-`--format text` prints the same report as a table, with reel names cut to 20 characters (and numbered if two cut names would match; the JSON keeps the full names), then one line per flag (the older flags first, then the relative ones). This is the actual output for `draft12` against `outlier12`:
+`--format text` prints the same report as a table, with reel names cut to between 8 and 20 characters so that lines stay within 80 (fewer characters when more reels share a line, and numbered if two cut names would match; the JSON keeps the full names), and the windows continuing on further rows when they do not fit one line, then one line per flag (the older flags first, then the relative ones). This is the actual output for `draft12` against `outlier12`:
 
 ```
-                    draft12         outlier12
-length              12.0 s          12.0 s
-cuts                1               2
-mean shot           6.0 s           4.0 s
-longest shot        6.0 s           6.0 s
-pauses over 180 ms  1 (5/min)       0 (0/min)
-silent time         4 %             0 %
-words/min (est.)    10.0 est.       5.0 est.
-loudness            -21.9 LUFS      -21.8 LUFS
+                     draft12     outlier12
+length               12.0 s      12.0 s
+cuts                 1           2
+mean shot            6.0 s       4.0 s
+longest shot         6.0 s       6.0 s
+pauses over 180 ms   1 (5/min)   0 (0/min)
+silent time          4 %         0 %
+words/min (est.)     10.0 est.   5.0 est.
+loudness             -21.9 LUFS  -21.8 LUFS
 
 cuts per 5 s window
-                    0-5      5-10     10-12
-draft12             0        1        0
-outlier12           1        1        0
+                     0-5      5-10     10-12
+draft12              0        1        0
+outlier12            1        1        0
 
 DEAD AIR 2.01-2.51 s (500 ms)
 NO CUT 0.0-6.0 s (6.0 s)

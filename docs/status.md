@@ -70,10 +70,10 @@ Apple M3 MacBook Air, release build of `feature/comparative-diff` ([spec](specs/
 | NEET explainer (draft) against the milk clip (outlier) | `flags` as before. `comparison.flags`: one `pause_density`, 28.1 against 8.0 per minute. Expected and a known limit: the milk clip's few pauses come from near-silent audio |
 | The metrics for the two reels | NEET: 38.5 s, 1 cut, mean shot 19.2 s, longest 30.0 s, 18 pauses over 180 ms (28/min), 28% silent, 144.9 words/min (estimate), −22.4 LUFS. Milk: 15.1 s, 0 cuts, 2 pauses (8/min), 9% silent, 19.9 words/min (estimate), −48.6 LUFS |
 | `draft12` against `outlier12` | `flags`: dead air 2.01–2.51 s, two static windows, missing payoff. `comparison.flags`: `rhythm_gap` 0–5 s and `pause_density` 5.0 against 0.0 per minute |
-| Argument checks | Four `--outlier` files exit with code 2 and a message; none exits with code 2 |
-| `cargo test --workspace` | 131 pass, 2 whisper model tests ignored by default |
+| Argument checks | One to three `--outlier` files run; four exit with code 2 and a message before the draft is decoded; none exits with code 2 |
+| `cargo test --workspace` | 144 pass, 2 whisper model tests ignored by default |
 
-The 5 s window, the 1.5 ratio, and the 3 per minute were chosen on these two slow reels and are untested on a fast-cut outlier. The NEET reel's one "cut" is a caption box appearing under a still face (score 0.303 against 0.30), so a cut count inherits the detector's limits; naming such events is `visual-motion`. A final window can be a sliver: the 15.1 s clip has one from 15.0 to 15.1 s. Real reel titles are long, so the text report cuts names to 20 characters; the first version let them push the columns together, found on the real files and fixed with a test.
+The 5 s window, the 1.5 ratio, and the 3 per minute were chosen on these two slow reels and are untested on a fast-cut outlier. The NEET reel's one "cut" is a caption box appearing under a still face (score 0.303 against 0.30), so a cut count inherits the detector's limits; naming such events is `visual-motion`. A final window can be a sliver: the 15.1 s clip has one from 15.0 to 15.1 s. Real reel titles are long, so the text report cuts names to between 8 and 20 characters and wraps the window rows so that no line passes 80 characters (checked with four reels and a 60 s draft); the first version let long titles push the columns together, found on the real files and fixed with tests.
 
 ## Quiet audio, 2026-10-26
 
