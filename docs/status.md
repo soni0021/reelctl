@@ -4,7 +4,7 @@ Last updated 2026-10-25. Update this page in the same commit as any change that 
 
 ## Summary
 
-P0, the Rust decompiler and reel-diff CLI, is built and its tests pass. It meets the 500 ms target on the synthetic 60-second benchmark clip but misses it on real footage: 60 s of an iPhone recording, converted to 8-bit H.264, took 2.1–2.8 s ([First real footage](#first-real-footage-2026-10-20)). Given a whisper model, `decompile` now produces real words timed with DTW, including Hinglish (merged into `main` on 2026-10-21). Silence is now detected relative to each recording's noise floor, so `diff` finds dead air under room noise (merged into `main` on 2026-10-25). Stretches whisper skips are transcribed again, and whisper runs in a child process so a whisper.cpp abort cannot end `reelctl` (branch `feature/whisper-coverage`, awaiting review). `diff` does not yet compare pacing against the outlier. P1–P3 in [planer.md](../planer.md) have not started.
+P0, the Rust decompiler and reel-diff CLI, is built and its tests pass. It meets the 500 ms target on the synthetic 60-second benchmark clip but misses it on real footage: 60 s of an iPhone recording, converted to 8-bit H.264, took 2.1–2.8 s ([First real footage](#first-real-footage-2026-10-20)). Given a whisper model, `decompile` now produces real words timed with DTW, including Hinglish (merged into `main` on 2026-10-21). Silence is now detected relative to each recording's noise floor, so `diff` finds dead air under room noise (merged into `main` on 2026-10-25). Stretches whisper skips are transcribed again, and whisper runs in a child process so a whisper.cpp abort cannot end `reelctl` (merged into `main` on 2026-10-26). `diff` does not yet compare pacing against the outlier. P1–P3 in [planer.md](../planer.md) have not started.
 
 ## Verified 2026-10-20
 
@@ -13,7 +13,7 @@ Apple M3 (8 cores, 16 GB), macOS 26.5, rustc 1.98.1, FFmpeg 8.1.
 | Check | Result |
 |---|---|
 | `cargo check --workspace --all-targets` | Passes with 23 warnings (see Known issues) |
-| `cargo test --workspace` | 2026-10-21, on `main`: 31 of 31 pass, plus the whisper model test, which is ignored by default and passes with both models. 2026-10-25, on `main` after the merge: 43 of 43, and the model test passes with both models |
+| `cargo test --workspace` | 2026-10-21, on `main`: 31 of 31 pass, plus the whisper model test, which is ignored by default and passes with both models. 2026-10-26, on `main` after the whisper-coverage merge: 57 of 57, and the 2 whisper model tests pass with both models |
 | 60 s benchmark, release build | `signal_ms` 310, 316, 284 over three runs; the target is under 500 |
 | 12 s fixtures (640×360), release build | `signal_ms` 11–21 |
 
@@ -61,7 +61,7 @@ The real clip was re-cut from the original recording on 2026-10-25 with its audi
 
 ## Whisper coverage, 2026-10-25
 
-Same machine, release build of `feature/whisper-coverage`, Apex model unless noted ([spec](specs/whisper-coverage.md), [ADR-009](decisions/ADR-009-transcribe-skipped-stretches-again.md), [ADR-010](decisions/ADR-010-run-whisper-in-a-child-process.md)). The load average stayed between 4 and 6 throughout, so single `asr_ms` values vary by tens of percent between runs.
+Same machine, release build of `feature/whisper-coverage` (merged 2026-10-26), Apex model unless noted ([spec](specs/whisper-coverage.md), [ADR-009](decisions/ADR-009-transcribe-skipped-stretches-again.md), [ADR-010](decisions/ADR-010-run-whisper-in-a-child-process.md)). The load average stayed between 4 and 6 throughout, so single `asr_ms` values vary by tens of percent between runs.
 
 | Check | Result |
 |---|---|
@@ -137,7 +137,7 @@ Not yet listed in AGENTS.md:
 - In a `timeline_view` PNG, the thumbnails and the waveform use different time scales. The 8 thumbnails cover about 0.27 s at 30 fps; the waveform and word ticks cover 1.5 s either side of the cut, across the same width.
 - The JSON value for TransNetV2 is `"trans_net_v2"`, but `CutDetectorKind::as_str()` returns `"transnet_v2"`. Nothing emits either until TransNetV2 is linked.
 - Colors are converted from YUV with BT.601 coefficients, while most HD video uses BT.709, so absolute RGB values are slightly off.
-- whisper can silently drop up to a 30 s window of speech. On `feature/whisper-coverage` such stretches are found and transcribed again, which recovered every measured loss ([Whisper coverage](#whisper-coverage-2026-10-25)). A stretch can still stay empty, and `asr_note` then lists it. Which of whisper.cpp's two skip rules fired in each case is not known.
+- whisper can silently drop up to a 30 s window of speech. Since 2026-10-26 such stretches are found and transcribed again, which recovered every measured loss ([Whisper coverage](#whisper-coverage-2026-10-25)). A stretch can still stay empty, and `asr_note` then lists it. Which of whisper.cpp's two skip rules fired in each case is not known.
 - With the Apex model, 29 s of digital silence before English speech (`say`) produced 6 invented words at 0.1 s and a garbled first sentence. `base.en` did not do this. Found 2026-10-25; not addressed.
 - Audio that is not 48 kHz drifts early, because the decoder resamples each frame on its own and drops the fractional sample. At 44.1 kHz a pause planted at 50.0 s is found 10–40 ms early; over 18 minutes the drift is about 0.5 s. Module `decode-inputs`.
 - Thresholds read from FFmpeg tools are not comparable with `reelctl`'s: FFmpeg's `-ac 1` downmix reads about 3 dB louder than `reelctl`'s channel average, and `silencedetect` compares sample peaks rather than 10 ms mean-square levels.

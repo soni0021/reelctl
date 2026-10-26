@@ -1,6 +1,6 @@
 # Tasks: whisper coverage
 
-Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/whisper-coverage.md](../docs/specs/whisper-coverage.md). Tick each box in the commit that completes it.
+Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/whisper-coverage.md](../../../docs/specs/whisper-coverage.md). Tick each box in the commit that completes it.
 
 ## Task 1: Holes and merging
 

@@ -1,6 +1,6 @@
 # Implementation Plan: whisper coverage
 
-Spec: [docs/specs/whisper-coverage.md](../docs/specs/whisper-coverage.md), approved 2026-10-25. Branch: `feature/whisper-coverage`. Checklist: [tasks/todo.md](todo.md). Earlier plans are in [tasks/archive/](archive/relative-silence/plan.md).
+Spec: [docs/specs/whisper-coverage.md](../../../docs/specs/whisper-coverage.md), approved 2026-10-25. Branch: `feature/whisper-coverage`. Checklist: [tasks/todo.md](todo.md). Earlier plans are in [tasks/archive/](../relative-silence/plan.md).
 
 ## Overview
 
