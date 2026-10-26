@@ -567,38 +567,45 @@ fn hevc_on_the_media_engine_gives_the_same_results_as_software() {
 
 /// A stream that changes size is one the media engine's frame copy can get
 /// wrong without an error: the copy reuses its buffers, which are the old size.
-/// The software decoder reads the larger frames, so the media engine must too.
+/// The software decoder reads the new frames, so the media engine must too.
 #[test]
-fn a_hevc_stream_that_grows_decodes_the_same_on_both_decoders() {
-    let root = std::env::temp_dir().join(format!("reelctl-grow-{}", std::process::id()));
+fn a_hevc_stream_that_changes_size_decodes_the_same_on_both_decoders() {
+    let root = std::env::temp_dir().join(format!("reelctl-size-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).expect("temp dir");
-    let hevc = root.join("resize12_hevc.hevc");
-    generate("resize12_hevc", &hevc);
 
-    let (auto, auto_views) = decompile_with(&root, &hevc, "auto", "auto");
-    let (soft, soft_views) = decompile_with(&root, &hevc, "soft", "software");
+    for (kind, last_width) in [("resize12_hevc", 640), ("shrink12_hevc", 320)] {
+        let hevc = root.join(format!("{kind}.hevc"));
+        generate(kind, &hevc);
 
-    if cfg!(target_os = "macos") {
-        assert!(
-            auto.decode_note.contains("Apple media engine"),
-            "the hardware path did not run: {}",
-            auto.decode_note
+        let (auto, auto_views) = decompile_with(&root, &hevc, &format!("{kind}_auto"), "auto");
+        let (soft, soft_views) = decompile_with(&root, &hevc, &format!("{kind}_soft"), "software");
+
+        if cfg!(target_os = "macos") {
+            assert!(
+                auto.decode_note.contains("Apple media engine"),
+                "{kind}: the hardware path did not run: {}",
+                auto.decode_note
+            );
+        }
+        assert_eq!(soft.frame_size, auto.frame_size, "{kind}");
+        assert_eq!(auto.frame_size.width, last_width, "{kind}");
+        assert_eq!(auto.frame_count, soft.frame_count, "{kind}");
+        assert_eq!(auto.cuts.len(), soft.cuts.len(), "{kind}: {:?}", auto.cuts);
+        for (a, s) in auto.cuts.iter().zip(&soft.cuts) {
+            assert_eq!(a.frame_index, s.frame_index, "{kind}");
+            assert!(
+                (a.scene_score - s.scene_score).abs() <= 0.0001,
+                "{kind}: {a:?} vs {s:?}"
+            );
+        }
+        assert_eq!(auto.shot_histograms, soft.shot_histograms, "{kind}");
+        assert_eq!(
+            pngs(&auto_views),
+            pngs(&soft_views),
+            "{kind}: thumbnails differ"
         );
     }
-    assert_eq!(soft.frame_size, auto.frame_size);
-    assert_eq!(auto.frame_size.width, 640);
-    assert_eq!(auto.frame_count, soft.frame_count);
-    assert_eq!(auto.cuts.len(), soft.cuts.len(), "{:?}", auto.cuts);
-    for (a, s) in auto.cuts.iter().zip(&soft.cuts) {
-        assert_eq!(a.frame_index, s.frame_index);
-        assert!(
-            (a.scene_score - s.scene_score).abs() <= 0.0001,
-            "{a:?} vs {s:?}"
-        );
-    }
-    assert_eq!(auto.shot_histograms, soft.shot_histograms);
-    assert_eq!(pngs(&auto_views), pngs(&soft_views), "thumbnails differ");
 
     let _ = fs::remove_dir_all(&root);
 }

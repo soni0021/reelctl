@@ -739,6 +739,9 @@ fn index_to_ms(index: u64, fps: Rational) -> u64 {
 }
 
 struct SadState {
+    /// The frame size the grid was set from (the first frame's).
+    width: u32,
+    height: u32,
     step_x: u32,
     step_y: u32,
     cols: u32,
@@ -752,6 +755,8 @@ struct SadState {
 impl SadState {
     fn new() -> Self {
         Self {
+            width: 1,
+            height: 1,
             step_x: 1,
             step_y: 1,
             cols: 1,
@@ -766,25 +771,11 @@ impl SadState {
     fn push(&mut self, view: &YuvView<'_>) -> Result<f64, DecompileError> {
         if !self.primed {
             self.configure(view.width, view.height);
-            sample_luma(
-                view.y,
-                self.step_x,
-                self.step_y,
-                self.cols,
-                self.rows,
-                &mut self.prev,
-            )?;
+            sample_luma(view, self.grid(), &mut self.prev)?;
             self.primed = true;
             return Ok(0.0);
         }
-        sample_luma(
-            view.y,
-            self.step_x,
-            self.step_y,
-            self.cols,
-            self.rows,
-            &mut self.curr,
-        )?;
+        sample_luma(view, self.grid(), &mut self.curr)?;
         let mut sad = 0u64;
         for (left, right) in self.prev.iter().zip(self.curr.iter()) {
             sad += u64::from(left.abs_diff(*right));
@@ -797,7 +788,20 @@ impl SadState {
         Ok(score)
     }
 
+    fn grid(&self) -> Grid {
+        Grid {
+            width: self.width,
+            height: self.height,
+            step_x: self.step_x,
+            step_y: self.step_y,
+            cols: self.cols,
+            rows: self.rows,
+        }
+    }
+
     fn configure(&mut self, width: u32, height: u32) {
+        self.width = width;
+        self.height = height;
         self.step_x = (width / SAD_TARGET_W).max(1);
         self.step_y = (height / SAD_TARGET_H).max(1);
         self.cols = (width / self.step_x).max(1);
@@ -808,32 +812,63 @@ impl SadState {
     }
 }
 
-fn sample_luma(
-    plane: Plane<'_>,
+/// The points the scene score reads: `cols` x `rows` of them, `step_x` and
+/// `step_y` apart in a frame of `width` x `height` (the first frame's size).
+#[derive(Clone, Copy)]
+struct Grid {
+    width: u32,
+    height: u32,
     step_x: u32,
     step_y: u32,
     cols: u32,
     rows: u32,
-    out: &mut [u8],
-) -> Result<(), DecompileError> {
-    let needed = (cols * rows) as usize;
+}
+
+impl Grid {
+    /// Where grid column or row `index` falls in a frame whose side is `side`
+    /// long, when the grid was set from a side of `base`. In a frame of the
+    /// grid's own size that is `index * step`; in any other size it is the same
+    /// place in the picture, so a stream that changes size is compared by
+    /// position and the grid always spans the whole frame.
+    fn place(index: u32, step: u32, base: u32, side: u32) -> usize {
+        let at = u64::from(index) * u64::from(step);
+        if side == base {
+            at as usize
+        } else {
+            (at * u64::from(side) / u64::from(base.max(1))) as usize
+        }
+    }
+}
+
+fn sample_luma(view: &YuvView<'_>, grid: Grid, out: &mut [u8]) -> Result<(), DecompileError> {
+    let needed = (grid.cols * grid.rows) as usize;
     if out.len() < needed {
         return Err(DecompileError::Message(
             "luma sample buffer is short".into(),
         ));
     }
-    let last_row = (rows.saturating_sub(1) * step_y) as usize;
-    let last_col = (cols.saturating_sub(1) * step_x) as usize;
-    if !plane.covers(last_row, last_col) {
+    let last_row = Grid::place(
+        grid.rows.saturating_sub(1),
+        grid.step_y,
+        grid.height,
+        view.height,
+    );
+    let last_col = Grid::place(
+        grid.cols.saturating_sub(1),
+        grid.step_x,
+        grid.width,
+        view.width,
+    );
+    if !view.y.covers(last_row, last_col) {
         return Err(DecompileError::Message(
             "luma sample walked past the plane".into(),
         ));
     }
-    for row in 0..rows {
-        let y = (row * step_y) as usize;
-        for col in 0..cols {
-            let x = (col * step_x) as usize;
-            out[(row * cols + col) as usize] = plane.at(y, x);
+    for row in 0..grid.rows {
+        let y = Grid::place(row, grid.step_y, grid.height, view.height);
+        for col in 0..grid.cols {
+            let x = Grid::place(col, grid.step_x, grid.width, view.width);
+            out[(row * grid.cols + col) as usize] = view.y.at(y, x);
         }
     }
     Ok(())
@@ -1336,8 +1371,16 @@ mod tests {
             data: &ten,
             stride: 10,
         };
-        sample_luma(eight, 2, 2, 2, 2, &mut from_eight).expect("8-bit grid");
-        sample_luma(ten, 2, 2, 2, 2, &mut from_ten).expect("10-bit grid");
+        let grid = Grid {
+            width: 4,
+            height: 3,
+            step_x: 2,
+            step_y: 2,
+            cols: 2,
+            rows: 2,
+        };
+        sample_luma(&luma_view(eight, 4, 3, &[128]), grid, &mut from_eight).expect("8-bit grid");
+        sample_luma(&luma_view(ten, 4, 3, &[128]), grid, &mut from_ten).expect("10-bit grid");
         assert_eq!(from_eight, [16, 235, 81, 128]);
         assert_eq!(from_ten, from_eight);
     }
@@ -1350,7 +1393,15 @@ mod tests {
             stride: 3,
         };
         let mut out = vec![0; 9];
-        assert!(sample_luma(plane, 1, 1, 3, 3, &mut out).is_err());
+        let grid = Grid {
+            width: 3,
+            height: 3,
+            step_x: 1,
+            step_y: 1,
+            cols: 3,
+            rows: 3,
+        };
+        assert!(sample_luma(&luma_view(plane, 3, 3, &[128]), grid, &mut out).is_err());
     }
 
     #[test]
@@ -1558,6 +1609,64 @@ mod tests {
             yuv601_to_rgb(128, 128, 128, false)
         );
         assert!(VideoFormat::of(&limited).ten_bit);
+    }
+
+    /// A luma-only picture of `width` x `height`: dark left half, bright right
+    /// half, with the right half dark instead when `right_dark` is set.
+    fn halves(width: usize, height: usize, right_dark: bool) -> Vec<u8> {
+        let mut data = vec![0u8; width * height];
+        for row in data.chunks_exact_mut(width) {
+            for (x, sample) in row.iter_mut().enumerate() {
+                *sample = if x < width / 2 || right_dark { 50 } else { 200 };
+            }
+        }
+        data
+    }
+
+    /// A view with this luma and a flat chroma plane, for reading luma only.
+    fn luma_view<'a>(y: Plane<'a>, width: u32, height: u32, chroma: &'a [u8; 1]) -> YuvView<'a> {
+        let flat = Plane::Eight {
+            data: chroma,
+            stride: 1,
+        };
+        YuvView {
+            y,
+            width,
+            height,
+            chroma: ChromaPlanes::Planar {
+                u: flat,
+                v: flat,
+                full: false,
+            },
+        }
+    }
+
+    fn score_of(sad: &mut SadState, data: &[u8], width: usize, height: usize) -> f64 {
+        let y = Plane::Eight {
+            data,
+            stride: width,
+        };
+        let view = luma_view(y, width as u32, height as u32, &[128]);
+        sad.push(&view).expect("score")
+    }
+
+    /// The same picture at another size is the same picture, and a change in
+    /// the part of a larger frame the first frame's size would not reach counts.
+    #[test]
+    fn the_scene_score_compares_frames_of_different_sizes_by_position() {
+        let mut sad = SadState::new();
+        score_of(&mut sad, &halves(320, 180, false), 320, 180);
+        let grown = score_of(&mut sad, &halves(640, 360, false), 640, 360);
+        assert!(grown < 0.01, "same picture, larger: {grown}");
+        let changed = score_of(&mut sad, &halves(640, 360, true), 640, 360);
+        assert!(changed > 0.1, "right half changed: {changed}");
+
+        let mut sad = SadState::new();
+        score_of(&mut sad, &halves(640, 360, false), 640, 360);
+        let shrunk = score_of(&mut sad, &halves(320, 180, false), 320, 180);
+        assert!(shrunk < 0.01, "same picture, smaller: {shrunk}");
+        let changed = score_of(&mut sad, &halves(320, 180, true), 320, 180);
+        assert!(changed > 0.1, "right half changed: {changed}");
     }
 
     /// A 4x4 `nv12` frame of mid-grey, with the given range in its metadata.

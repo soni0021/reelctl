@@ -83,7 +83,7 @@ bash fixtures/generate.sh textured_cuts12 /tmp/textured_cuts12.mp4
 | `crates/decompile/src/hwdecode.rs` | New: VideoToolbox device, `get_format` callback, frame transfer, the only `unsafe` |
 | `crates/reelctl/src/main.rs`, `docs/cli.md` | A `--decoder <auto\|software>` option on `decompile`, so the software path can be forced for comparison and as an escape hatch (added in planning; `auto` is the default) |
 | `crates/decompile/src/decode.rs` | Choose hardware or software per codec; `p010` plane support; `decode_note` says which ran |
-| `fixtures/generate.sh` | `textured_cuts12`: 12 s, 640×360, hard cuts between smoothly changing textured sources, B-frames, a keyframe every 25 frames, scene-cut detection off. A small stand-in for the corpus. `textured_cuts12_hevc` (Main 10) and `textured_cuts12_hevc8` (Main) are the same shots as HEVC, for the media engine. `textured_cuts12_hevc_full` is the 8-bit version flagged full range, `resize12_hevc` is raw HEVC that grows from 320×180 to 640×360, and `depth12_hevc` changes from 8-bit to 10-bit; all added after the audit found the media engine path wrong or unchecked on them |
+| `fixtures/generate.sh` | `textured_cuts12`: 12 s, 640×360, hard cuts between smoothly changing textured sources, B-frames, a keyframe every 25 frames, scene-cut detection off. A small stand-in for the corpus. `textured_cuts12_hevc` (Main 10) and `textured_cuts12_hevc8` (Main) are the same shots as HEVC, for the media engine. `textured_cuts12_hevc_full` is the 8-bit version flagged full range, `resize12_hevc` is raw HEVC that grows from 320×180 to 640×360, `shrink12_hevc` goes the other way, and `depth12_hevc` changes from 8-bit to 10-bit; all added after the audit found the media engine path wrong or unchecked on them |
 | `crates/reelctl/tests/p0_fixture.rs` | End-to-end tests |
 | Docs | `docs/status.md` (measurements, the revised statement of the target), `docs/cli.md`, `docs/edit-dna.md` (`decode_note`), ADR-012, ADR-001 superseded in part, README, CHANGELOG, the capability map |
 
@@ -110,7 +110,7 @@ Test-first.
 - **End-to-end, default suite:**
   - `textured_cuts12` gives the planted cuts, from both decoders where hardware is available. The hardware test asserts on macOS that `decode_note` says the media engine ran (a silent fallback would make the two equal by construction); elsewhere it asserts that it did not.
   - `draft12_10bit` is HEVC, so it takes the hardware path: its `edit_dna.json` equals the software result.
-  - `textured_cuts12_hevc_full` (full-range 8-bit, which the media engine returns as `nv12`) `resize12_hevc` (a stream that changes size), and `depth12_hevc` (a change of bit depth, which falls back to software) give the same results from both decoders; an HDR10 clip checks that side data does not pile up on the reused frame.
+  - `textured_cuts12_hevc_full` (full-range 8-bit, which the media engine returns as `nv12`) `resize12_hevc` and `shrink12_hevc` (streams that change size), and `depth12_hevc` (a change of bit depth, which falls back to software) give the same results from both decoders; an HDR10 clip checks that side data does not pile up on the reused frame.
   - The existing fixtures are unchanged apart from timings.
 - **Manual, outside the repo:** the known-cut corpus in all four encodings. The new path's `edit_dna.json` equals the software path's: same cuts, scores within 0.005, shot colors and thumbnails equal. Then the real iPhone file, three alternating runs against software.
 
