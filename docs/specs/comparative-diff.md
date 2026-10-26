@@ -8,13 +8,13 @@ Status: draft, awaiting approval. Branch: `feature/comparative-diff`. Module `co
 
 This module makes `diff` compare. It accepts one to three outliers and reports, side by side with the draft:
 
-- **Cut rhythm, second by second.** Cuts in each 5 s window of the draft and of every outlier, over the draft's length. Where the outliers change the picture and the draft does not, a flag says so.
+- **Cut rhythm, second by second.** Cuts in each 5 s window of the draft and of every outlier, over the draft's length. Where most of the outliers change the picture and the draft does not, a finding says so.
 - **Pause density.** Dead-air gaps per minute and the share of time that is silent, for the draft and each outlier.
 - **Speaking rate and loudness.** Words per minute and integrated LUFS, side by side.
 - **Shot length.** Mean and longest shot, side by side.
-- **The existing flags**, unchanged: dead air over 180 ms, static windows over 2.5 s, and the missing payoff cue, which with several outliers is raised when more than half of them have a cue and the draft does not (with one outlier this is today's rule).
+- **The existing `flags`**, byte-for-byte as today: dead air over 180 ms, static windows over 2.5 s, and the missing payoff cue, which with several outliers is raised when more than half of them have a cue and the draft does not (with one outlier this is today's rule).
 
-Output stays JSON on stdout, now with a `comparison` object next to `flags`, and gains `--format text` for a readable report. Nothing is decoded again for outliers: they are `edit_dna.json` files from earlier `decompile` runs.
+Output stays JSON on stdout, now with a `comparison` object next to `flags` (the relative findings live in `comparison.flags`, so `flags` and every script that reads it do not change), and gains `--format text` for a readable report. Nothing is decoded again for outliers: they are `edit_dna.json` files from earlier `decompile` runs.
 
 ## Evidence
 
@@ -28,7 +28,10 @@ Measured 2026-10-26 with the merged build on two real reels kept outside the rep
 | Words per minute (silence bursts, no whisper model) | 144.9 | 19.9 |
 | Integrated loudness | −22.4 LUFS | −48.6 LUFS |
 
-- Run with the NEET reel as outlier, the milk clip gets one new piece of information: it has no cut where the outlier's single cut is (8.5 s). Run the other way, the 18 dead-air lines are the same ones the draft alone would give. With two slow reels there is little to compare, which is why the first test pair is only a smoke test; a fast-cut outlier is the real case.
+- **Expected output on this pair** (what success criterion 5 checks):
+  - *Milk clip as draft, NEET as outlier.* `flags` is what `diff` prints today (two dead-air, one static window, and the missing payoff cue). `comparison.flags` has one `rhythm_gap` for 5,000–10,000 ms: the outlier's cut at 8,466 ms falls there and the draft has none. No `pause_density`: the draft's 8 pauses per minute are under the outlier's 28.
+  - *NEET as draft, milk clip as outlier.* `flags` is today's 18 dead-air lines and 2 static windows. `comparison.flags` has no `rhythm_gap` (the outlier has no cuts, and after 15.1 s it has ended and does not vote) and one `pause_density`: 28.1 per minute against 8.0 passes both the 1.5× and the 3-per-minute tests. That flag is expected and is a known limit, not a finding about the reel: the milk clip's few pauses come from near-silent audio. No further threshold is added to suppress it.
+- With two slow reels there is little to compare, so this pair is a smoke test; a fast-cut outlier is the real case.
 - The NEET reel's "cut" at 8.47 s is a text box appearing under a still face (scene score 0.303 against the 0.30 threshold). A cut-count comparison inherits that detector's limits; `visual-motion` is the module that names such events.
 - The pauses flagged on the talking reel are mostly natural speech pauses of 0.2–0.6 s. The absolute 180 ms limit is strict for talking video, which is why pause density is compared with the outlier's instead of judged alone (see Resolved Questions).
 
@@ -54,19 +57,19 @@ Rust workspace as today. No new dependencies. The comparison is pure code over `
 
 **Metrics per reel** (draft and each outlier): `duration_ms`, `cut_count`, `mean_shot_ms`, `longest_shot_ms`, `dead_air_count` and `dead_air_per_minute` (gaps over 180 ms), `silent_share` (silence gap time divided by duration), `words_per_minute` with `words_source` (`whisper_cpp` or `silence_bursts`, from `asr_backend`), and `integrated_lufs`.
 
-**Cut rhythm.** Windows of 5,000 ms from 0 to the draft's duration (the last one shorter). For each window: the draft's cut count, each outlier's cut count, and the median of the outliers' counts. A cut belongs to the window containing its `time_ms`. The window list is part of `comparison`.
+**Cut rhythm.** Windows of 5,000 ms from 0 to the draft's duration (the last one shorter). For each window: the draft's cut count and each outlier's cut count. A cut belongs to the window containing its `time_ms`. An outlier that has ended before a window starts has no count there (`null`), and does not vote on it. The window list is part of `comparison`.
 
-**New flags** (added after the existing ones, in this order):
-- `rhythm_gap { window_start_ms, window_end_ms, draft_cuts, outlier_cuts }`: a window where the draft has no cut and the median outlier count is at least 1. Adjacent flagged windows are reported as one span.
-- `pause_density { draft_per_minute, outlier_per_minute }`: raised once when the draft's dead-air gaps per minute exceed the median outlier's by more than 50% and by at least 3 per minute. The 3 per minute stops 1 against 0.6 from counting.
+**Relative findings**, in `comparison.flags` (never in `flags`), in this order:
+- `rhythm_gap { window_start_ms, window_end_ms, outliers_with_cut, outliers_counted }`: a window where the draft has no cut and more than half of the outliers still running have at least one. This is the same "more than half" rule as the payoff cue. Adjacent flagged windows are reported as one span.
+- `pause_density { draft_per_minute, outlier_per_minute }`: raised once when the draft's dead-air gaps per minute exceed the median outlier's by more than 50% and by at least 3 per minute. The 3 per minute stops 1 against 0.6 from counting. With two outliers the median is their mean.
 
 **Payoff.** With one outlier, unchanged. With two or three, the flag is raised when more than half of the outliers have a cue in 8–10 s and the draft has none.
 
 **Statements the output does not make.** It does not rate a reel as good or bad, and `words_per_minute` from silence bursts is an estimate; its `words_source` says so. No flag is raised for speaking rate or loudness: they are listed, not judged, because one pair of reels says nothing about what is "too fast" or "too quiet".
 
-**Text format.** `--format text` prints the comparison as a table (one column per reel), the rhythm windows as a row of counts, and the flags as lines like `NO CUT 5.0-10.0 s: 1 of the outliers' median cuts here, the draft has none`. JSON stays the default, so scripts and tests keep working.
+**Text format.** `--format text` prints the comparison as a table (one column per reel), the rhythm windows as a row of counts, and the flags as lines like `NO CUT 5.0-10.0 s: 1 of 1 outliers cut here, the draft does not`. JSON stays the default, so scripts and tests keep working.
 
-**Compatibility.** `flags` stays first and its existing entries keep their shape and order; `comparison` is a new key. The existing fixture test on `flags` passes unchanged.
+**Compatibility.** `flags` is exactly what `diff` prints today, for one outlier and for several (apart from the payoff rule with several); `comparison` is a new key after it. The existing fixture tests, the `cli.md` example, and `Reels/compare.sh` (which prints any unknown kind in `flags` as a payoff warning) keep working. Once `--format text` exists, `Reels/compare.sh` switches to it.
 
 Out of scope: aligning by content or by words (that needs transcripts), judging speech or loudness, per-second micro-timing of pauses, naming what kind of event a cut is (`visual-motion`), reading `.otio` drafts, comparing an outlier against another outlier, and any change to `decompile` or `edit_dna.json`.
 
@@ -80,12 +83,12 @@ Test-first.
 
 - **Unit tests in `crates/diff`** with hand-built `EditDna` values:
   - Metrics: mean and longest shot with and without cuts; dead-air density; silent share; zero-length and one-frame reels never divide by zero.
-  - Rhythm windows: counts per window for the draft and for each outlier; the median with one, two, and three outliers (two outliers: the mean of the two, rounded down); the last short window.
-  - `rhythm_gap`: a draft with no cut where the median outlier has one is flagged; adjacent windows merge; a draft that cuts as often as the outliers raises none.
+  - Rhythm windows: counts per window for the draft and for each outlier; an outlier that has ended gives `null` and does not vote; the last short window.
+  - `rhythm_gap`: a draft with no cut where more than half of the running outliers have one is flagged (2 of 3 yes, 1 of 2 no, 1 of 1 yes); adjacent windows merge; a draft that cuts as often as the outliers raises none; a window after every outlier has ended raises none.
   - `pause_density` thresholds: below 1.5× or under 3 extra per minute raises nothing; above both raises one flag.
   - Payoff with one, two (needs both), and three outliers (needs two).
   - The existing diff tests pass unchanged.
-- **End-to-end** (`p0_fixture.rs`, fixtures only, no network): `draft12` against `outlier12` still gives its four flags in the same order, then the new ones; `draft12` against `outlier12` and `textured_cuts12` gives per-outlier metrics, the median window row, and a `rhythm_gap` where both outliers cut and the draft does not; four outliers exit with code 2; `--format text` contains the table header and the flags; `--format json` parses.
+- **End-to-end** (`p0_fixture.rs`, fixtures only, no network): `draft12` against `outlier12` gives exactly its four `flags` as today, plus `comparison` (its cut at 6 s against the outlier's at 3 s and 9 s gives a `rhythm_gap` for 0–5 s); `draft12` against `outlier12` and `textured_cuts12` gives per-outlier metrics, the window rows, and `rhythm_gap` only where both outliers cut and the draft does not; four outliers exit with code 2; `--format text` contains the table header and the flags; `--format json` parses.
 - **Manual, not committed:** the two real reels in both directions, recorded in `docs/status.md`.
 
 ## Boundaries
@@ -97,10 +100,10 @@ Test-first.
 ## Success Criteria
 
 1. `diff` accepts one to three `--outlier` files; four exits with code 2.
-2. With one outlier, `flags` is identical to today's for every existing fixture pair.
+2. `flags` is identical to today's for every existing fixture pair and for the two real reels; the relative findings are only in `comparison.flags`.
 3. The output has per-reel metrics and the cut-rhythm windows for the draft and each outlier, in JSON and in `--format text`.
 4. `rhythm_gap` and `pause_density` fire on the fixture pairs built to trigger them, and not on pairs built not to; the payoff rule follows the "more than half" rule.
-5. On the two real reels, in both directions, the output matches the table in Evidence, recorded in `status.md`.
+5. On the two real reels, in both directions, the output matches the expected output listed in Evidence, recorded in `status.md`.
 6. ADR-014 records the decision, and the docs match the code.
 
 ## Resolved Questions (recommended answers; please confirm)
