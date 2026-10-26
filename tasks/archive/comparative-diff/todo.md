@@ -1,6 +1,6 @@
 # Tasks: comparative diff
 
-Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/comparative-diff.md](../docs/specs/comparative-diff.md). Tick each box in the commit that completes it.
+Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/comparative-diff.md](../../../docs/specs/comparative-diff.md). Tick each box in the commit that completes it.
 
 ## Task 1: Metrics, rhythm windows, relative findings, and multi-outlier payoff
 

@@ -61,7 +61,7 @@ The real clip was re-cut from the original recording on 2026-10-25 with its audi
 
 ## Comparative diff, 2026-10-26
 
-Apple M3 MacBook Air, release build of `feature/comparative-diff` ([spec](specs/comparative-diff.md), [ADR-014](decisions/ADR-014-compare-a-draft-with-several-outliers-in-a-separate-key.md)). The two real reels are downloads kept outside the repo.
+Apple M3 MacBook Air, merged into `main` 2026-10-26; release build of `feature/comparative-diff` ([spec](specs/comparative-diff.md), [ADR-014](decisions/ADR-014-compare-a-draft-with-several-outliers-in-a-separate-key.md)). The two real reels are downloads kept outside the repo.
 
 | Check | Result |
 |---|---|
@@ -192,7 +192,7 @@ Already listed in [AGENTS.md](../AGENTS.md) as P0 gaps:
 
 Not yet listed in AGENTS.md:
 
-- **`diff` compares with one to three outliers** (since `feature/comparative-diff`), in 5 s windows and per-reel metrics. Dead air and static windows are still properties of the draft alone, and the comparison is only as good as the cut detector: it counts a caption box as a cut and does not name events (`visual-motion`).
+- **`diff` compares with one to three outliers** (since the comparative-diff merge, 2026-10-26), in 5 s windows and per-reel metrics. Dead air and static windows are still properties of the draft alone, and the comparison is only as good as the cut detector: it counts a caption box as a cut and does not name events (`visual-motion`).
 - **Static windows count only cuts.** planer.md defines a static window as more than 2.5 s without B-roll, zoom, or a graphic callout. Nothing detects zooms or graphics yet, so a punch-in without a cut is still flagged.
 - **The 500 ms target fails on real footage.** Only one real recording has been run so far ([First real footage](#first-real-footage-2026-10-20)). The tests still use only synthetic clips ([ADR-006](decisions/ADR-006-synthetic-offline-fixtures.md)).
 - **Silence on noisy recordings** (closed 2026-10-25, merged into `main`). The fixed −40 dBFS threshold found no pause of 0.3 s or more on the real recording; the per-recording threshold finds 24. Its constants were tuned on that one recording, so music beds and loud backgrounds are unmeasured. Very quiet recordings are handled since 2026-10-26 ([ADR-013](decisions/ADR-013-the-silence-floor-follows-a-quiet-recording.md)), tested on one downloaded reel.
@@ -223,5 +223,5 @@ Then, to finish P0 against its own success metric before starting P1. The [P0 ca
 1. Find a decode strategy that meets 500 ms on real footage, or revise the target.
 2. Read 10-bit video, such as iPhone HDR recordings. Done, merged 2026-10-26 ([spec](specs/decode-inputs.md)): 10-bit 4:2:0 is read, audio is resampled as one stream, and the real recording decompiles.
 3. Detect silence relative to each recording's noise floor instead of at a fixed −40 dBFS. Done ([spec](specs/relative-silence.md)), merged 2026-10-25.
-4. Make `diff` comparative: accept one to three outliers and compare cut rhythm second by second. Done on `feature/comparative-diff` ([spec](specs/comparative-diff.md)); thresholds untested on a fast-cut outlier.
+4. Make `diff` comparative: accept one to three outliers and compare cut rhythm second by second. Done, merged 2026-10-26 ([spec](specs/comparative-diff.md)); thresholds untested on a fast-cut outlier.
 5. Link TransNetV2. It needs ONNX weights, a download that needs an explicit go-ahead.

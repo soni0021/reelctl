@@ -1,6 +1,6 @@
 # Implementation Plan: comparative diff
 
-Spec: [docs/specs/comparative-diff.md](../docs/specs/comparative-diff.md), approved 2026-10-26 with the five recommended answers. Branch: `feature/comparative-diff`. Checklist: [tasks/todo.md](todo.md). Earlier plans are in [tasks/archive/](archive/quiet-audio/plan.md).
+Spec: [docs/specs/comparative-diff.md](../../../docs/specs/comparative-diff.md), approved 2026-10-26 with the five recommended answers. Branch: `feature/comparative-diff`. Checklist: [tasks/archive/comparative-diff/todo.md](todo.md). Earlier plans are in [tasks/archive/](../quiet-audio/plan.md). Merged into `main` 2026-10-26.
 
 ## Overview
 
