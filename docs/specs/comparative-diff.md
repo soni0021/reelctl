@@ -60,7 +60,7 @@ Rust workspace as today. No new dependencies. The comparison is pure code over `
 **Cut rhythm.** Windows of 5,000 ms from 0 to the draft's duration (the last one shorter). For each window: the draft's cut count and each outlier's cut count. A cut belongs to the window containing its `time_ms`. An outlier that has ended before a window starts has no count there (`null`), and does not vote on it. The window list is part of `comparison`.
 
 **Relative findings**, in `comparison.flags` (never in `flags`), in this order:
-- `rhythm_gap { window_start_ms, window_end_ms, outliers_with_cut, outliers_counted }`: a window where the draft has no cut and more than half of the outliers still running have at least one. This is the same "more than half" rule as the payoff cue. Adjacent flagged windows are reported as one span.
+- `rhythm_gap { window_start_ms, window_end_ms, outliers_with_cut, outliers_counted }`: a window where the draft has no cut and more than half of the outliers still running have at least one. This is the same "more than half" rule as the payoff cue. Adjacent flagged windows are reported as one span, with the counts of the window in it that has the fewest outliers cutting (the first on a tie).
 - `pause_density { draft_per_minute, outlier_per_minute }`: raised once when the draft's dead-air gaps per minute exceed the median outlier's by more than 50% and by at least 3 per minute. The 3 per minute stops 1 against 0.6 from counting. With two outliers the median is their mean.
 
 **Payoff.** With one outlier, unchanged. With two or three, the flag is raised when more than half of the outliers have a cue in 8–10 s and the draft has none.

@@ -6,8 +6,15 @@
 
 #![warn(clippy::all)]
 
+mod comparison;
+
 use edit_dna::{EditDna, PAYOFF_WINDOW_END_MS, PAYOFF_WINDOW_START_MS};
 use serde::{Deserialize, Serialize};
+
+pub use comparison::{
+    compare_many, reel_metrics, Comparison, NamedReel, ReelMetrics, RelativeFlag, Report,
+    RhythmWindow, PAUSE_DENSITY_MIN_EXTRA_PER_MINUTE, PAUSE_DENSITY_RATIO, RHYTHM_WINDOW_MS,
+};
 
 /// Silence longer than this is dead air.
 pub const DEAD_AIR_LIMIT_MS: u64 = 180;

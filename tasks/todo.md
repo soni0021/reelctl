@@ -7,7 +7,7 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/comparative-diff.md](../docs/s
 **Description:** Save the baselines of `reelctl diff` first (every existing fixture pair, and the two real reels in both directions). Then, test-first in `crates/diff`: per-reel metrics, the 5 s rhythm windows with their votes, `rhythm_gap` and `pause_density`, the payoff rule for several outliers, and `compare_many`.
 
 **Acceptance criteria:**
-- [ ] Baselines saved; the failing tests committed before the implementation, in a commit that compiles (public types and signatures with honest stub bodies, so the tests fail on assertions)
+- [x] Baselines saved (40 pairs: 8 drafts × 5 outliers, including both real reels, single outlier); the failing tests committed before the implementation, in a commit that compiles (public types and signatures with honest stub bodies, so the tests fail on assertions)
 - [ ] Metrics: mean and longest shot with and without cuts, dead-air count and per minute, silent share, `words_source`, and no division by zero for a zero-length reel
 - [ ] Rhythm: counts per window for the draft and each outlier; an ended outlier is `None` and does not vote; the last window is short
 - [ ] `rhythm_gap`: 2 of 3 yes, 1 of 2 no, 1 of 1 yes; adjacent windows merge; no flag when the draft cuts as often; none after every outlier has ended
