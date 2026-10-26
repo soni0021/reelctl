@@ -4,4 +4,6 @@
 
 # Local editor and OS state
 /.cursor/hooks/state/
+/.claude/worktrees/
+/.claude/settings.local.json
 .DS_Store
