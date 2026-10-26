@@ -22,31 +22,32 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/fast-decode.md](../docs/specs/
 
 **Estimated scope:** Small
 
-## Task 2: `p010` planes, the decoder choice, and `decode_note`
+## Task 2: `p010` planes
 
-**Description:** `Plane::Ten` takes the bit shift (2 for `yuv420p10le`, 8 for `p010`). `yuv_view` accepts `p010` (and `nv12` hardware frames, already supported). A pure function chooses hardware or software from the codec and the `--decoder` setting. `decode_note` gets the sentence for each case. No FFI yet.
+**Description:** `Plane` gets a `High16` variant that reads the high byte of a 16-bit sample, which is the top 8 bits of a `p010` 10-bit value. `yuv_view` accepts `p010le` (luma plus interleaved chroma, range from the frame's metadata), and the unsupported-format message lists it. The decoder choice and the `decode_note` sentences for hardware, fallback, and forced software moved to Task 3: they have no caller before it, and the project allows no `#[allow(dead_code)]`.
 
 **Acceptance criteria:**
-- [ ] Unit tests: `p010` reads the high byte of each sample, with strides wider than the row; 10-bit `yuv420p10le` is unchanged
-- [ ] Unit tests: HEVC tries hardware under `auto`; H.264 and other codecs use software; `software` forces software
-- [ ] Unit tests: `decode_note` for software by choice, by fallback (each reason), and for hardware
-- [ ] Every fixture matches its baseline apart from timings
+- [x] Unit tests: `p010` reads the high byte of each sample, with strides wider than the row; every 10-bit value reads the same from `yuv420p10le` and `p010`
+- [x] Unit tests: `p010` pixels convert like the same 8-bit values; a real `p010le` frame is read, follows its range metadata, and counts as 10-bit
+- [x] Every fixture matches its baseline apart from timings
+- [x] Docs: `docs/cli.md` input requirements
 
 **Verification:**
-- [ ] `cargo test` (new tests red first)
-- [ ] Baseline comparison with a release build
+- [x] `cargo test` (new tests red first)
+- [x] Baseline comparison with a release build
 
 **Dependencies:** Task 1
 
-**Files likely touched:** `crates/decompile/src/decode.rs`
+**Files likely touched:** `crates/decompile/src/decode.rs`, `docs/cli.md`
 
 **Estimated scope:** Small
 
 ## Task 3: VideoToolbox decode with fallback and `--decoder`
 
-**Description:** `hwdecode.rs` creates the VideoToolbox device, sets the decoder's `get_format` callback, and transfers each frame to a software frame. `decode_file` uses it for HEVC under `auto`, and falls back to software on a missing device, an open error, or an error on the first frame. `decompile --decoder <auto|software>` is added and documented.
+**Description:** A pure function chooses hardware or software from the codec and the `--decoder` setting, and `decode_note` gets a sentence for hardware, for each fallback reason, and for forced software (moved here from Task 2). `hwdecode.rs` creates the VideoToolbox device, sets the decoder's `get_format` callback, and transfers each frame to a software frame. `decode_file` uses it for HEVC under `auto`, and falls back to software on a missing device, an open error, or an error on the first frame. `decompile --decoder <auto|software>` is added and documented.
 
 **Acceptance criteria:**
+- [ ] Unit tests: HEVC tries hardware under `auto`; H.264 and other codecs use software; `software` forces software; `decode_note` text for each case, and unchanged for 8-bit software
 - [ ] `draft12_10bit` and `textured_cuts12` (as HEVC) give the same `edit_dna.json` with hardware and with `--decoder software`, apart from timings and `decode_note`; the test skips itself, printing why, when there is no VideoToolbox
 - [ ] With hardware failing (forced in a test), the output equals software's and `decode_note` gives the reason
 - [ ] Decoding the 12 s HEVC fixture 50 times in one process does not grow memory beyond a stated bound

@@ -10,7 +10,7 @@
 //!
 //! The planes are 8-bit 4:2:0 (`yuv420p`, `yuvj420p`, `nv12`) or 10-bit 4:2:0
 //! (`yuv420p10le`, what FFmpeg's software decoders give for iPhone HEVC Main
-//! 10). Both are read one sampled point at a time through [`Plane`], and a
+//! 10, or `p010` from the hardware decoder). Both are read one sampled point at a time through [`Plane`], and a
 //! 10-bit sample is read as its top 8 bits, so limited-range 64-940 becomes the
 //! 16-235 that 8-bit uses. No frame is converted as a whole, and HDR is not
 //! tone-mapped (ADR-011).
@@ -75,7 +75,7 @@ impl VideoFormat {
             _ => None,
         };
         Self {
-            ten_bit: frame.format() == Pixel::YUV420P10LE,
+            ten_bit: matches!(frame.format(), Pixel::YUV420P10LE | Pixel::P010LE),
             hdr,
         }
     }
@@ -679,8 +679,14 @@ enum Plane<'a> {
         data: &'a [u8],
         stride: usize,
     },
-    /// Little-endian 16-bit samples holding 10-bit values.
+    /// Little-endian 16-bit samples holding 10-bit values (`yuv420p10le`).
     Ten {
+        data: &'a [u8],
+        stride: usize,
+    },
+    /// Little-endian 16-bit samples holding a 10-bit value in the top bits
+    /// (`p010`, value << 6), so the top 8 bits of the value are the high byte.
+    High16 {
         data: &'a [u8],
         stride: usize,
     },
@@ -688,6 +694,7 @@ enum Plane<'a> {
 
 impl Plane<'_> {
     /// The sample at `row`, `col`: the byte itself, or the top 8 of 10 bits.
+    /// `col` counts samples, not bytes.
     /// Strides are in bytes, as FFmpeg reports them. Panics outside the data;
     /// `plane` checks a frame's planes against its size, and `covers` checks
     /// one point.
@@ -699,6 +706,7 @@ impl Plane<'_> {
                 let sample = u16::from_le_bytes([data[index], data[index + 1]]);
                 (sample >> 2).min(255) as u8
             }
+            Plane::High16 { data, stride } => data[row * stride + col * 2 + 1],
         }
     }
 
@@ -706,7 +714,9 @@ impl Plane<'_> {
     fn covers(&self, row: usize, col: usize) -> bool {
         match *self {
             Plane::Eight { data, stride } => row * stride + col < data.len(),
-            Plane::Ten { data, stride } => row * stride + col * 2 + 1 < data.len(),
+            Plane::Ten { data, stride } | Plane::High16 { data, stride } => {
+                row * stride + col * 2 + 1 < data.len()
+            }
         }
     }
 }
@@ -715,6 +725,8 @@ impl Plane<'_> {
 enum Depth {
     Eight,
     Ten,
+    /// `p010`: 16-bit samples, 10-bit value in the top bits.
+    P010,
 }
 
 struct YuvView<'a> {
@@ -747,6 +759,7 @@ fn yuv_view(frame: &VideoFrame) -> Result<YuvView<'_>, DecompileError> {
     let depth = match pixel {
         Pixel::YUV420P | Pixel::YUVJ420P | Pixel::NV12 => Depth::Eight,
         Pixel::YUV420P10LE => Depth::Ten,
+        Pixel::P010LE => Depth::P010,
         other => return Err(unsupported(other)),
     };
     let y = plane(frame, 0, depth, width as usize, height as usize, "luma")?;
@@ -765,7 +778,7 @@ fn unsupported(pixel: Pixel) -> DecompileError {
         .map_or("unknown", |descriptor| descriptor.name());
     DecompileError::Message(format!(
         "unsupported pixel format {name}; decompile reads 4:2:0 video as yuv420p, \
-         yuvj420p, nv12, or yuv420p10le"
+         yuvj420p, nv12, yuv420p10le, or p010le"
     ))
 }
 
@@ -781,7 +794,7 @@ fn plane<'a>(
     let stride = frame.stride(index);
     let bytes = match depth {
         Depth::Eight => samples,
-        Depth::Ten => samples * 2,
+        Depth::Ten | Depth::P010 => samples * 2,
     };
     if stride < bytes {
         return Err(DecompileError::Message(format!(
@@ -799,6 +812,7 @@ fn plane<'a>(
     Ok(match depth {
         Depth::Eight => Plane::Eight { data, stride },
         Depth::Ten => Plane::Ten { data, stride },
+        Depth::P010 => Plane::High16 { data, stride },
     })
 }
 
@@ -811,15 +825,15 @@ fn chroma_planes<'a>(
 ) -> Result<ChromaPlanes<'a>, DecompileError> {
     let chroma_w = width.div_ceil(2) as usize;
     let chroma_h = height.div_ceil(2) as usize;
-    if pixel == Pixel::NV12 {
+    if pixel == Pixel::NV12 || pixel == Pixel::P010LE {
         if frame.planes() < 2 {
             return Err(DecompileError::Message(
-                "nv12 frame is missing the chroma plane".into(),
+                "nv12 or p010 frame is missing the chroma plane".into(),
             ));
         }
         return Ok(ChromaPlanes::Nv12 {
             uv: plane(frame, 1, depth, chroma_w * 2, chroma_h, "nv12 chroma")?,
-            full: false,
+            full: depth == Depth::P010 && frame.color_range() == Range::JPEG,
         });
     }
     if frame.planes() < 3 {
@@ -831,7 +845,7 @@ fn chroma_planes<'a>(
     // so its range comes from the frame's metadata.
     let full = match depth {
         Depth::Eight => pixel == Pixel::YUVJ420P,
-        Depth::Ten => frame.color_range() == Range::JPEG,
+        Depth::Ten | Depth::P010 => frame.color_range() == Range::JPEG,
     };
     Ok(ChromaPlanes::Planar {
         u: plane(frame, 1, depth, chroma_w, chroma_h, "u chroma")?,
@@ -1281,5 +1295,94 @@ mod tests {
         assert_eq!(full_rgb, [128, 128, 128]);
         assert_eq!(limited_rgb, yuv601_to_rgb(128, 128, 128, false));
         assert_ne!(limited_rgb, full_rgb);
+    }
+
+    #[test]
+    fn a_p010_plane_reads_the_high_byte_of_each_sample() {
+        // P010 keeps a 10-bit value in the top bits of 16: value << 6.
+        let data = ten_bit_rows(
+            &[&[64 << 6, 512 << 6, 940 << 6], &[1023 << 6, 3 << 6, 0]],
+            8,
+        );
+        let plane = Plane::High16 {
+            data: &data,
+            stride: 8,
+        };
+        assert_eq!(plane.at(0, 0), 16);
+        assert_eq!(plane.at(0, 1), 128);
+        assert_eq!(plane.at(0, 2), 235);
+        assert_eq!(plane.at(1, 0), 255);
+        assert_eq!(plane.at(1, 1), 0);
+        assert!(plane.covers(1, 3));
+        assert!(!plane.covers(1, 4));
+        assert!(!plane.covers(2, 0));
+    }
+
+    #[test]
+    fn p010_and_yuv420p10le_give_the_same_sample_for_the_same_value() {
+        for value in 0u16..1024 {
+            let le = ten_bit_rows(&[&[value]], 2);
+            let p010 = ten_bit_rows(&[&[value << 6]], 2);
+            let from_le = Plane::Ten {
+                data: &le,
+                stride: 2,
+            };
+            let from_p010 = Plane::High16 {
+                data: &p010,
+                stride: 2,
+            };
+            assert_eq!(from_le.at(0, 0), from_p010.at(0, 0), "value {value}");
+        }
+    }
+
+    #[test]
+    fn p010_pixels_convert_like_the_same_eight_bit_values() {
+        // draft12's red again, with P010's interleaved U and V.
+        let y = ten_bit_rows(&[&[324 << 6, 324 << 6], &[324 << 6, 324 << 6]], 4);
+        let uv = ten_bit_rows(&[&[360 << 6, 960 << 6]], 4);
+        let view = YuvView {
+            y: Plane::High16 {
+                data: &y,
+                stride: 4,
+            },
+            width: 2,
+            height: 2,
+            chroma: ChromaPlanes::Nv12 {
+                uv: Plane::High16 {
+                    data: &uv,
+                    stride: 4,
+                },
+                full: false,
+            },
+        };
+        assert_eq!(pixel_rgb(&view, 1, 1), yuv601_to_rgb(81, 90, 240, false));
+    }
+
+    /// A 4x4 `p010le` frame of mid-grey (Y, U, V all 512 << 6), with the given
+    /// range in its metadata.
+    fn grey_p010_frame(range: Range) -> VideoFrame {
+        ensure_ffmpeg().expect("ffmpeg");
+        let mut frame = VideoFrame::new(Pixel::P010LE, 4, 4);
+        frame.set_color_range(range);
+        for index in 0..2 {
+            for pair in frame.data_mut(index).chunks_exact_mut(2) {
+                pair.copy_from_slice(&(512u16 << 6).to_le_bytes());
+            }
+        }
+        frame
+    }
+
+    #[test]
+    fn a_p010_frame_is_read_and_follows_its_range_metadata() {
+        let limited = grey_p010_frame(Range::MPEG);
+        let full = grey_p010_frame(Range::JPEG);
+        let limited_view = yuv_view(&limited).expect("p010 view");
+        let full_view = yuv_view(&full).expect("p010 full view");
+        assert_eq!(pixel_rgb(&full_view, 1, 1), [128, 128, 128]);
+        assert_eq!(
+            pixel_rgb(&limited_view, 1, 1),
+            yuv601_to_rgb(128, 128, 128, false)
+        );
+        assert!(VideoFormat::of(&limited).ten_bit);
     }
 }

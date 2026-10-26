@@ -10,6 +10,7 @@ Make `decompile` faster on HEVC without changing any output: decode HEVC on the 
 
 - **Exactness is checked, not assumed.** Task 1 adds the check before any hardware code: a fixture with planted cuts (`textured_cuts12`), baselines of every fixture, and software outputs for the known-cut corpus (outside the repo). The hardware path must reproduce them.
 - **Hardware frames become ordinary frames before sampling.** `av_hwframe_transfer_data` copies each VideoToolbox frame into a software `nv12` (8-bit) or `p010` (10-bit) frame, and the existing sampling code reads it. `p010` stores the 10-bit value in the top bits of 16, so its top 8 bits are the high byte: `Plane::Ten` gets a shift (2 for `yuv420p10le`, 8 for `p010`). No tone mapping, no new sampling.
+- **Task 2 holds only what is live before the hardware path:** the decoder choice and the new `decode_note` sentences would have no caller until Task 3, and the project allows no `#[allow(dead_code)]`, so they move there.
 - **Choice per codec, by measurement:** HEVC tries hardware (8.9 s → 4.0 s); H.264 and everything else use software (hardware is 11.2 s against 3.0 s). The choice is a small pure function with unit tests.
 - **Fallback covers three points:** no device at creation, an error opening the decoder, and an error on the first frame. After the first frame decodes, an error is an error. Each reason becomes a sentence in `decode_note`.
 - **`--decoder <auto|software>`** on `decompile` (default `auto`) forces the software path. It is needed for the comparison tests and as an escape hatch, and it is documented in `docs/cli.md`.
@@ -22,7 +23,7 @@ Make `decompile` faster on HEVC without changing any output: decode HEVC on the 
 - [x] Task 1: Baselines, the `textured_cuts12` fixture, and the corpus tooling
 
 ### Phase 2: The hardware path
-- [ ] Task 2: `p010` planes, the decoder choice, and `decode_note` (no hardware yet)
+- [x] Task 2: `p010` planes (the decoder choice and `decode_note` moved to Task 3, where they are used)
 - [ ] Task 3: VideoToolbox decode with fallback and `--decoder`
 
 ### Checkpoint A
