@@ -7,15 +7,15 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/decode-inputs.md](../docs/spec
 **Description:** Save the baseline output of every existing fixture. Then replace `YuvView`'s byte slices with a `Plane` accessor that reads 8-bit bytes or the top 8 bits of 10-bit little-endian samples, add `yuv420p10le` to `chroma_planes`, and make `decode_note` mention 10-bit and HDR input. Add the `draft12_10bit` fixture and an end-to-end test.
 
 **Acceptance criteria:**
-- [ ] Unit tests: the accessor returns `v >> 2` for 10-bit and the byte for 8-bit, with strides wider than the row
-- [ ] `draft12_10bit` gives `draft12`'s cut (± 1 frame), silence gaps, and payoff result, per-shot mean RGB within 3, and a `decode_note` that mentions 10-bit
-- [ ] Every existing fixture matches its baseline apart from timings
-- [ ] An unsupported format's error names the format
-- [ ] Docs: `docs/cli.md` input requirements, `docs/edit-dna.md` (`decode_note`), README fixture list, CHANGELOG, ADR-011
+- [x] Unit tests: the accessor returns `v >> 2` for 10-bit and the byte for 8-bit, with strides wider than the row
+- [x] `draft12_10bit` gives `draft12`'s cut (± 1 frame), silence gaps, and payoff result, per-shot mean RGB within 3, and a `decode_note` that mentions 10-bit
+- [x] Every existing fixture matches its baseline apart from timings
+- [x] An unsupported format's error names the format
+- [x] Docs: `docs/cli.md` input requirements, `docs/edit-dna.md` (`decode_note`), README fixture list, CHANGELOG, ADR-011
 
 **Verification:**
-- [ ] `cargo test` (new tests red first)
-- [ ] Baseline comparison with a release build
+- [x] `cargo test` (new tests red first)
+- [x] Baseline comparison with a release build
 
 **Dependencies:** None
 

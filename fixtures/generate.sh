@@ -3,6 +3,9 @@
 # No scraped Reels, no network. speech12 needs macOS `say` and its Samantha voice.
 set -euo pipefail
 
+# Video codec arguments for encode. draft12_10bit replaces them.
+video_codec=(-c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p -bf 0 -g 30)
+
 encode() {
   local out="$1"
   local filter="$2"
@@ -12,7 +15,7 @@ encode() {
     "$@" \
     -filter_complex "$filter" \
     -map "[v]" -map "[a]" \
-    -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p -bf 0 -g 30 \
+    "${video_codec[@]}" \
     -c:a pcm_s16le \
     -movflags +faststart \
     "$out"
@@ -26,6 +29,18 @@ draft12() {
     -f lavfi -i "color=c=red:s=${size}:r=30:d=6" \
     -f lavfi -i "color=c=white:s=${size}:r=30:d=6" \
     -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=12"
+}
+
+# draft12 as 10-bit HEVC (Main 10, yuv420p10le), tagged BT.2020 and HLG like
+# an iPhone recording. The tags are written into the bitstream after encoding:
+# tagging the encoder's output instead makes FFmpeg convert the pixels to the
+# BT.2020 matrix (red becomes Y 73, U 96, V 239 rather than 81, 90, 240), and
+# this clip must decode to draft12's values so its colors can be compared.
+draft12_10bit() {
+  video_codec=(-c:v libx265 -preset ultrafast -pix_fmt yuv420p10le -tag:v hvc1
+    -x265-params "bframes=0:keyint=30:log-level=error"
+    -bsf:v "hevc_metadata=colour_primaries=9:transfer_characteristics=18:matrix_coefficients=9")
+  draft12 "$1"
 }
 
 outlier12() {
@@ -101,6 +116,9 @@ case "$cmd" in
   draft12)
     draft12 "$out"
     ;;
+  draft12_10bit)
+    draft12_10bit "$out"
+    ;;
   outlier12)
     outlier12 "$out"
     ;;
@@ -121,12 +139,13 @@ case "$cmd" in
     dir="${root}/generated"
     mkdir -p "$dir"
     draft12 "${dir}/draft_12s.mp4"
+    draft12_10bit "${dir}/draft_12s_10bit.mp4"
     outlier12 "${dir}/outlier_12s.mp4"
     noisy12 "${dir}/noisy_12s.mp4"
     bench60 "${dir}/bench_60s.mp4"
     ;;
   *)
-    echo "usage: generate.sh draft12|outlier12|noisy12|bench60|speech12|tonespeech|all [out.mp4]" >&2
+    echo "usage: generate.sh draft12|draft12_10bit|outlier12|noisy12|bench60|speech12|tonespeech|all [out.mp4]" >&2
     exit 2
     ;;
 esac

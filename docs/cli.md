@@ -147,6 +147,6 @@ Flags come in that order: all dead air, then all static windows, then the payoff
 ## Input requirements
 
 - The file needs a video stream. If there are several video or audio streams, the one FFmpeg ranks best is used.
-- Video must decode to 8-bit 4:2:0 (`yuv420p`, `yuvj420p`, or `nv12`). Anything else, including 10-bit HDR, stops with `error: decompile: decode video frame: unsupported pixel format; the fast path reads yuv420p or nv12`.
+- Video must decode to 4:2:0: 8-bit (`yuv420p`, `yuvj420p`, or `nv12`) or 10-bit (`yuv420p10le`, as iPhone HEVC Main 10 recordings do). 10-bit samples are read as their top 8 bits, and HDR (HLG or PQ) is not tone-mapped; `decode_note` says when either applies ([ADR-011](decisions/ADR-011-read-10-bit-video-from-its-top-8-bits.md)). Anything else, such as 4:2:2, 4:4:4, or 12-bit, stops with an error that names the format, for example `error: decompile: decode video frame: unsupported pixel format yuv422p; decompile reads 4:2:0 video as yuv420p, yuvj420p, nv12, or yuv420p10le`.
 - Audio must decode to 16-bit integer or 32-bit float samples, as AAC and 16-bit PCM do. It is mixed to mono and resampled to 48 kHz.
 - Without audio, `silence_gaps` and `words` are empty, `integrated_lufs` is −70, and `words_per_minute` is 0.
