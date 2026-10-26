@@ -1,6 +1,6 @@
 # Spec: Quiet recordings are not all silence
 
-Status: draft, awaiting approval (revised after review: levels re-measured with `reelctl`'s own mix, the rule uses p99 so mostly-silent recordings keep −40, and a −70 lower bound keeps near-total silence a gap. Approved 2026-10-26 before the bound was added; the bound is flagged to the user in the plan). Branch: `feature/quiet-audio` (started from `chore/remove-unreachable-arms`, which is not yet merged into `main`). Follows [ADR-008](../decisions/ADR-008-silence-relative-to-the-noise-floor.md) and the [relative-silence spec](relative-silence.md).
+Status: implemented 2026-10-26 on `feature/quiet-audio`; criteria 1–4 verified (evidence in [status.md](../status.md#quiet-audio-2026-10-26)). Approved 2026-10-26, revised after review: levels re-measured with `reelctl`'s own mix, the rule uses p99 so mostly-silent recordings keep −40, and a −70 lower bound keeps near-total silence a gap (added during planning and approved with the plan). Branch: `feature/quiet-audio` (started from `chore/remove-unreachable-arms`, which is not yet merged into `main`). Follows [ADR-008](../decisions/ADR-008-silence-relative-to-the-noise-floor.md) and the [relative-silence spec](relative-silence.md).
 
 ## Objective
 

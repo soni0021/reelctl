@@ -1,7 +1,7 @@
 # ADR-008: Set the silence threshold from each recording's noise floor
 
 ## Status
-Accepted
+Accepted. The −40 floor is partly superseded by [ADR-013](ADR-013-the-silence-floor-follows-a-quiet-recording.md): it comes down for recordings whose sound is quieter than −28 dB.
 
 ## Date
 2026-10-25

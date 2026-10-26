@@ -50,12 +50,13 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/quiet-audio.md](../docs/specs/
 **Description:** Record the decision and the measurements; mark the superseded part of ADR-008.
 
 **Acceptance criteria:**
-- [ ] ADR-013 (quiet recordings: the floor follows the loud part); ADR-008 marked partly superseded
-- [ ] `docs/edit-dna.md` (`silence_threshold_db` and the silence section), `docs/status.md` (measurements with date and machine; the quiet-audio limitation removed or restated), `docs/cli.md` only if its text changes, CHANGELOG, README, this spec's status, the capability map if it lists it
-- [ ] The Reels file is never committed; only its numbers are
+- [x] ADR-013 (quiet recordings: the floor follows the loud part); ADR-008 marked partly superseded
+- [x] `docs/edit-dna.md` (`silence_threshold_db` and the silence section), `docs/status.md` (measurements with date and machine; the quiet-audio limitation removed or restated), `docs/cli.md` only if its text changes, CHANGELOG, README, this spec's status, the capability map if it lists it
+- [x] The Reels file is never committed; only its numbers are
 
 **Verification:**
-- [ ] Links checked; `cargo test` unchanged; the `audit` subagent run on the final commit
+- [x] Links checked; `cargo test` unchanged
+- [ ] The `audit` subagent run on the final commit
 
 **Dependencies:** Task 2
 

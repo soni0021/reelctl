@@ -59,6 +59,21 @@ Same machine, release builds of `main` and `feature/relative-silence` on the sam
 
 The real clip was re-cut from the original recording on 2026-10-25 with its audio copied, not re-encoded, so its word count (125) differs from the 2026-10-21 runs (183); see Known issues.
 
+## Quiet audio, 2026-10-26
+
+Apple M3 MacBook Air, release build of `feature/quiet-audio` against the build before it, on the same 17 clips ([spec](specs/quiet-audio.md), [ADR-013](decisions/ADR-013-the-silence-floor-follows-a-quiet-recording.md)). The Reels file is a 15 s Instagram download kept outside the repo.
+
+| Check | Result |
+|---|---|
+| Reels file (720×1280, AAC, mean −48.2 dB, peak −27.3 dB, `integrated_lufs` −48.59) | Before: threshold −40.0, one gap 0–15,092 ms. After: threshold −53.92, three gaps (0–990, 1,370–1,640, 1,760–1,850 ms). A Python model of `silence.rs` with `reelctl`'s mix predicted exactly these gaps. Burst "words" 1 → 5 |
+| `quiet12` (tone at −46 dB peak, about −49 dB RMS, 0.5 s mute at 5.0–5.5 s) | Before: one gap over the whole 12 s. After: threshold −61.0 and one gap 5,020–5,500 ms; `diff` flags it as dead air |
+| The other 16 clips, including the iPhone recording, every synthetic fixture, and the HEVC resize and depth clips | `edit_dna.json` identical apart from timings and `decode_note`; `timeline_view` PNGs identical |
+| 60 s benchmark, `signal_ms`, 10 runs | 238–250 ms, median 242.5 ms (limit 242–262) |
+| Whisper tests with the Apex model | 3 passed |
+| Unit tests for the rule | The Reels-shaped levels give −54; a −50 tone gives −62; 95 windows at −120 plus 5 at −14 and 92 at −60 plus 8 at −20 stay at −40; 995 at −120 plus 5 at −14 gives −70, with the silence a gap |
+
+The rule changes only recordings whose loudest 1% of windows are quieter than −28 dBFS. Its 12 dB distance was tuned on one recording, so a second quiet recording is the time to retune it.
+
 ## Fast decode, 2026-10-26
 
 Same machine, release builds, `feature/fast-decode`, merged into `main` 2026-10-26 ([spec](specs/fast-decode.md), [ADR-012](decisions/ADR-012-decode-hevc-in-hardware-and-every-frame-exactly.md)). The direction for this module was quality over time, so nothing skips frames.
@@ -164,7 +179,7 @@ Not yet listed in AGENTS.md:
 - **`diff` barely uses the outlier.** Dead air and static windows are properties of the draft alone; the outlier only feeds the payoff check. `diff` takes one outlier, where planer.md asks for one to three and a second-by-second pacing comparison. This is the main gap against the P0 success metric.
 - **Static windows count only cuts.** planer.md defines a static window as more than 2.5 s without B-roll, zoom, or a graphic callout. Nothing detects zooms or graphics yet, so a punch-in without a cut is still flagged.
 - **The 500 ms target fails on real footage.** Only one real recording has been run so far ([First real footage](#first-real-footage-2026-10-20)). The tests still use only synthetic clips ([ADR-006](decisions/ADR-006-synthetic-offline-fixtures.md)).
-- **Silence on noisy recordings** (closed 2026-10-25, merged into `main`). The fixed −40 dBFS threshold found no pause of 0.3 s or more on the real recording; the per-recording threshold finds 24. Its constants were tuned on that one recording, so music beds, loud backgrounds, and very quiet speakers are unmeasured.
+- **Silence on noisy recordings** (closed 2026-10-25, merged into `main`). The fixed −40 dBFS threshold found no pause of 0.3 s or more on the real recording; the per-recording threshold finds 24. Its constants were tuned on that one recording, so music beds and loud backgrounds are unmeasured. Very quiet recordings are handled since 2026-10-26 ([ADR-013](decisions/ADR-013-the-silence-floor-follows-a-quiet-recording.md)), tested on one downloaded reel.
 - **10-bit video** (closed 2026-10-26, merged into `main`). Decoding stopped with `unsupported pixel format` on anything other than 8-bit 4:2:0, which ruled out iPhone HDR recordings until they were converted. 10-bit 4:2:0 is now read from the top 8 bits of each sample ([ADR-011](decisions/ADR-011-read-10-bit-video-from-its-top-8-bits.md)), tested on a synthetic clip and on the real recording (see [10-bit video and 44.1 kHz audio](#10-bit-video-and-441-khz-audio-2026-10-26)); it decodes 2.8 times slower than 8-bit H.264. 4:2:2, 4:4:4, and 12-bit video still stop with an error, which now names the format (only 4:2:2 is covered by a test).
 - **`--draft` takes an MP4.** planer.md specifies a `.otio` timeline; OpenTimelineIO is P2 work.
 
