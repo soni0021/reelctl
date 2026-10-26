@@ -1,6 +1,6 @@
 # Spec: decode inputs
 
-Status: approved 2026-10-26, with the recommended answer to each open question (see Resolved Questions). Task 1, reading 10-bit video, and Task 2, the stream resampler, done 2026-10-26 ([ADR-011](../decisions/ADR-011-read-10-bit-video-from-its-top-8-bits.md)); the real recording is next. Plan: [tasks/plan.md](../../tasks/plan.md). Module `decode-inputs` in the [P0 capability map](p0-capability-map.md). Branch: `feature/decode-inputs`.
+Status: approved 2026-10-26, with the recommended answer to each open question (see Resolved Questions). All three tasks done 2026-10-26 ([ADR-011](../decisions/ADR-011-read-10-bit-video-from-its-top-8-bits.md)); awaiting review and merge. Success criteria 1–6 are met; the evidence is in [status.md](../status.md#10-bit-video-and-441-khz-audio-2026-10-26). Plan: [tasks/plan.md](../../tasks/plan.md). Module `decode-inputs` in the [P0 capability map](p0-capability-map.md). Branch: `feature/decode-inputs`.
 
 ## Objective
 
@@ -48,7 +48,8 @@ target/release/reelctl decompile --input ~/Downloads/IMG_1435.MOV --out /tmp/img
 
 | Path | Change |
 |---|---|
-| `crates/decompile/src/decode.rs` | A sample accessor over 8-bit or 10-bit planes, used by luma sampling, color, and thumbnails; a stateful resampler; the `decode_note` text |
+| `crates/decompile/src/decode.rs` | A sample accessor over 8-bit or 10-bit planes, used by luma sampling, color, and thumbnails; the `decode_note` text; an audio sink that sends non-48 kHz audio through one resampler |
+| `crates/decompile/src/linear_resample.rs` | New: the stateful linear resampler, with its unit tests |
 | `fixtures/generate.sh` | `draft12_10bit` (`draft12` encoded as 10-bit HEVC, with BT.2020 and HLG tags written into the bitstream by FFmpeg's `hevc_metadata` filter; tagging the encoder's output instead makes FFmpeg convert the pixels to the BT.2020 matrix) and `draft12_44k` (`draft12` with 44.1 kHz AAC audio and its mute moved to 50.0 s, 60 s long) |
 | `crates/reelctl/tests/p0_fixture.rs` | End-to-end tests for both clips |
 | Docs | `docs/cli.md` (input requirements), `docs/edit-dna.md` (`decode_note`), `docs/status.md`, CHANGELOG, and ADR-011 for reading 10-bit video from its top 8 bits without tone mapping |
@@ -100,6 +101,6 @@ Answered 2026-10-26 with the recommended options:
 
 1. **Other pixel formats.** 8-bit 4:2:2 and 4:4:4 (some screen recorders and exports) and 10-bit 4:2:2 (ProRes) would need chroma sampling by format rather than a fixed half-size grid. No recording measured so far uses them; they keep a clear error naming the format. Not now.
 2. **How to resample.**
-   - **A (chosen):** keep linear interpolation, but carry the position and last sample across frames. It fixes the drift, leaves the interpolation unchanged, and is a small, unit-testable change.
+   - **A (chosen):** keep linear interpolation, but carry the position and last sample across frames. It fixes the drift, leaves the interpolation unchanged, and is a small, unit-testable change. Linear interpolation has no low-pass filter, so audio at 88.2 or 96 kHz can alias; unmeasured, and the common rates (44.1, 32, 24 kHz) are upsampled.
    - **B:** libswresample through `ffmpeg-next`. Higher quality filtering and well tested, but it changes the samples of every resampled input, and so their silence gaps and levels, by small amounts.
 3. **HDR colors.** Say in `decode_note` that they were not tone-mapped, and leave color correction to a later module together with the BT.601/BT.709 known issue.

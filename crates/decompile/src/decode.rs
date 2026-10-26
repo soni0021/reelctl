@@ -1237,4 +1237,49 @@ mod tests {
             "{ten_sdr}"
         );
     }
+
+    #[test]
+    fn audio_at_48_khz_passes_through_unchanged() {
+        let input: Vec<f32> = (0..1_000).map(|i| (i as f32 * 0.01).sin()).collect();
+        let mut pcm = Pcm::with_capacity(0);
+        pcm.push(&input[..400], SAMPLE_RATE);
+        pcm.push(&input[400..], SAMPLE_RATE);
+        assert_eq!(pcm.finish(), input);
+    }
+
+    #[test]
+    fn a_new_audio_rate_ends_the_old_stream() {
+        let mut pcm = Pcm::with_capacity(0);
+        pcm.push(&vec![0.5; 44_100], 44_100);
+        pcm.push(&vec![0.5; 24_000], 24_000);
+        let samples = pcm.finish();
+        // One second of each, at 48 kHz.
+        assert!(samples.len().abs_diff(96_000) <= 2, "{}", samples.len());
+    }
+
+    /// A 4x4 `yuv420p10le` frame of mid-grey (Y 512, U 512, V 512), with the
+    /// given range in its metadata.
+    fn grey_ten_bit_frame(range: Range) -> VideoFrame {
+        ensure_ffmpeg().expect("ffmpeg");
+        let mut frame = VideoFrame::new(Pixel::YUV420P10LE, 4, 4);
+        frame.set_color_range(range);
+        for index in 0..3 {
+            for pair in frame.data_mut(index).chunks_exact_mut(2) {
+                pair.copy_from_slice(&512u16.to_le_bytes());
+            }
+        }
+        frame
+    }
+
+    #[test]
+    fn a_ten_bit_frame_is_full_range_when_its_metadata_says_so() {
+        let limited = grey_ten_bit_frame(Range::MPEG);
+        let full = grey_ten_bit_frame(Range::JPEG);
+        let limited_rgb = pixel_rgb(&yuv_view(&limited).expect("limited view"), 1, 1);
+        let full_rgb = pixel_rgb(&yuv_view(&full).expect("full view"), 1, 1);
+        // Grey 128 in full range stays 128; in limited range it is stretched.
+        assert_eq!(full_rgb, [128, 128, 128]);
+        assert_eq!(limited_rgb, yuv601_to_rgb(128, 128, 128, false));
+        assert_ne!(limited_rgb, full_rgb);
+    }
 }

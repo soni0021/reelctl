@@ -44,20 +44,20 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/decode-inputs.md](../docs/spec
 
 ## Checkpoint A
 
-- [ ] `cargo test` passes
-- [ ] All existing fixtures unchanged apart from timings
+- [x] `cargo test` passes
+- [x] All existing fixtures unchanged apart from timings
 
 ## Task 3: Real footage, measurements, and docs
 
 **Description:** Decompile the original `IMG_1435.MOV` and an 8-bit conversion of the whole file with the audio copied, and compare. Measure the benchmark and the 10-bit decode time. Record everything.
 
 **Acceptance criteria:**
-- [ ] `IMG_1435.MOV` exits 0; its cuts and silence gaps equal the 8-bit conversion's; `decode_note` names 10-bit and HLG (spec criteria 1 and 5)
-- [ ] The benchmark's `signal_ms` stays in 242–262 ms, alternating with the current build
-- [ ] `docs/status.md`: the 10-bit gap closed, decode times recorded, and the drift known issue closed; spec status updated; boxes ticked
+- [x] `IMG_1435.MOV` exits 0; its cuts and silence gaps equal the 8-bit conversion's; `decode_note` names 10-bit and HLG (spec criteria 1 and 5)
+- [x] The benchmark's `signal_ms` stays in 242–262 ms, alternating with the current build
+- [x] `docs/status.md`: the 10-bit gap closed, decode times recorded, and the drift known issue closed; spec status updated; boxes ticked
 
 **Verification:**
-- [ ] Release-build runs; the docs link check passes
+- [x] Release-build runs; the docs link check passes
 
 **Dependencies:** Tasks 1 and 2
 

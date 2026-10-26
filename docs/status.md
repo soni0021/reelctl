@@ -4,7 +4,7 @@ Last updated 2026-10-26. Update this page in the same commit as any change that 
 
 ## Summary
 
-P0, the Rust decompiler and reel-diff CLI, is built and its tests pass. It meets the 500 ms target on the synthetic 60-second benchmark clip but misses it on real footage: 60 s of an iPhone recording, converted to 8-bit H.264, took 2.1–2.8 s ([First real footage](#first-real-footage-2026-10-20)). Given a whisper model, `decompile` now produces real words timed with DTW, including Hinglish (merged into `main` on 2026-10-21). Silence is now detected relative to each recording's noise floor, so `diff` finds dead air under room noise (merged into `main` on 2026-10-25). Stretches whisper skips are transcribed again, and whisper runs in a child process so a whisper.cpp abort cannot end `reelctl` (merged into `main` on 2026-10-26). On branch `feature/decode-inputs`, not yet merged, `decompile` reads 10-bit 4:2:0 video such as iPhone HEVC HDR recordings without conversion ([10-bit video](#10-bit-video-and-441-khz-audio-2026-10-26)). `diff` does not yet compare pacing against the outlier. P1–P3 in [planer.md](../planer.md) have not started.
+P0, the Rust decompiler and reel-diff CLI, is built and its tests pass. It meets the 500 ms target on the synthetic 60-second benchmark clip but misses it on real footage: 60 s of an iPhone recording, converted to 8-bit H.264, took 2.1–2.8 s ([First real footage](#first-real-footage-2026-10-20)). Given a whisper model, `decompile` now produces real words timed with DTW, including Hinglish (merged into `main` on 2026-10-21). Silence is now detected relative to each recording's noise floor, so `diff` finds dead air under room noise (merged into `main` on 2026-10-25). Stretches whisper skips are transcribed again, and whisper runs in a child process so a whisper.cpp abort cannot end `reelctl` (merged into `main` on 2026-10-26). On branch `feature/decode-inputs`, not yet merged, `decompile` reads 10-bit 4:2:0 video, such as iPhone HEVC HDR recordings (the original 87 s iPhone recording decompiles with the same cut and silence gaps as an 8-bit conversion) ([10-bit video](#10-bit-video-and-441-khz-audio-2026-10-26)). `diff` does not yet compare pacing against the outlier. P1–P3 in [planer.md](../planer.md) have not started.
 
 ## Verified 2026-10-20
 
@@ -13,7 +13,7 @@ Apple M3 (8 cores, 16 GB), macOS 26.5, rustc 1.98.1, FFmpeg 8.1.
 | Check | Result |
 |---|---|
 | `cargo check --workspace --all-targets` | Passes with 23 warnings (see Known issues); 21 on 2026-10-26 on `feature/decode-inputs` |
-| `cargo test --workspace` | 2026-10-21, on `main`: 31 of 31 pass, plus the whisper model test, which is ignored by default and passes with both models. 2026-10-26, on `main` after the whisper-coverage merge: 57 of 57, and the 2 whisper model tests pass with both models. 2026-10-26, on `feature/decode-inputs` after 10-bit reading: 66 of 66; after the stream resampler: 73 of 73 |
+| `cargo test --workspace` | 2026-10-21, on `main`: 31 of 31 pass, plus the whisper model test, which is ignored by default and passes with both models. 2026-10-26, on `main` after the whisper-coverage merge: 57 of 57, and the 2 whisper model tests pass with both models. 2026-10-26, on `feature/decode-inputs` after 10-bit reading: 66 of 66; after the stream resampler and the audit's extra tests: 76 of 76 |
 | 60 s benchmark, release build | `signal_ms` 310, 316, 284 over three runs; the target is under 500 |
 | 12 s fixtures (640×360), release build | `signal_ms` 11–21 |
 
@@ -61,7 +61,7 @@ The real clip was re-cut from the original recording on 2026-10-25 with its audi
 
 ## 10-bit video and 44.1 kHz audio, 2026-10-26
 
-Same machine, release builds of `main` and `feature/decode-inputs` on the same inputs ([spec](specs/decode-inputs.md), [ADR-011](decisions/ADR-011-read-10-bit-video-from-its-top-8-bits.md)). The real iPhone recording has not been run on the branch yet; it is Task 3 of the [plan](../tasks/plan.md).
+Same machine, release builds of `main` and `feature/decode-inputs` on the same inputs ([spec](specs/decode-inputs.md), [ADR-011](decisions/ADR-011-read-10-bit-video-from-its-top-8-bits.md)). The real iPhone recording is the last two rows. It is the 87 s file from [First real footage](#first-real-footage-2026-10-20), kept outside the repo.
 
 | Check | Result |
 |---|---|
@@ -70,6 +70,10 @@ Same machine, release builds of `main` and `feature/decode-inputs` on the same i
 | 60 s benchmark `signal_ms`, ten alternating runs each | `main` 244–263 ms, median 248; branch 246–254 ms, median 248.5 |
 | `draft12_44k` (60 s, 44.1 kHz AAC, mute switched on at 1,024-sample frames: 50.0159–50.5034 s in the source) | Per-frame resampling (`main`): pause at 50,000–50,470 ms, 16 and 33 ms early. One stream: 50,020–50,500 ms. The same clip as 44.1 kHz PCM gives the same gap, so AAC is not the cause of the remaining 4 ms |
 | After the resampler: the six existing fixtures, ten more alternating benchmark runs | `edit_dna.json` and PNGs identical to the 10-bit build; `signal_ms` 245–279 ms, median 247.5, against 246–252 ms, median 247.5 |
+| Final build against the two earlier builds, ten interleaved benchmark runs each, quiet machine (load 2.5) | `signal_ms` medians 244.5 (10-bit build), 243.5 (resampler build), 247.0 (final); ranges 239–264, 239–252, 239–262 |
+| Original `IMG_1435.MOV` (HEVC Main 10, HLG, 1080×1920, 87.3 s, AAC stereo plus a 4-channel spatial track) | `main` stopped with `unsupported pixel format`. Branch: exit 0, 1 cut at frame 1726 (71.5 s), 106 silence gaps, threshold and noise floor as for the reference below. `decode_note` says 10-bit and HLG, not tone-mapped |
+| Same file as an 8-bit H.264 reference (`-noautorotate -vf format=yuv420p -fps_mode passthrough -c:v libx264 -preset fast -crf 20`, audio copied, whole file) | Same cut frame (1726; 7 ms apart in time, from the re-muxed timestamps); silence gaps, threshold, noise floor, loudness, frame count, and frame size equal; per-shot mean RGB within 1.4. The stereo AAC track was used, not the 4-channel one. A first reference made without `-noautorotate -fps_mode passthrough` was rotated and retimed to constant 24 fps, which put the cut 35 ms and 8 frame indexes away; it was not a valid reference |
+| Decode time of that file, three alternating runs | Original: `signal_ms` 8,356, 8,504, 8,606, over 99% of it decoding. 8-bit reference: 3,171, 2,893, 2,960. 10-bit HEVC costs about 2.8 times the 8-bit H.264 decode; both miss the 500 ms target, which is module `fast-decode` |
 
 ## Whisper coverage, 2026-10-25
 
@@ -140,7 +144,7 @@ Not yet listed in AGENTS.md:
 - **Static windows count only cuts.** planer.md defines a static window as more than 2.5 s without B-roll, zoom, or a graphic callout. Nothing detects zooms or graphics yet, so a punch-in without a cut is still flagged.
 - **The 500 ms target fails on real footage.** Only one real recording has been run so far ([First real footage](#first-real-footage-2026-10-20)). The tests still use only synthetic clips ([ADR-006](decisions/ADR-006-synthetic-offline-fixtures.md)).
 - **Silence on noisy recordings** (closed 2026-10-25, merged into `main`). The fixed −40 dBFS threshold found no pause of 0.3 s or more on the real recording; the per-recording threshold finds 24. Its constants were tuned on that one recording, so music beds, loud backgrounds, and very quiet speakers are unmeasured.
-- **10-bit video** (read since 2026-10-26 on `feature/decode-inputs`, not yet merged). Decoding stopped with `unsupported pixel format` on anything other than 8-bit 4:2:0, which ruled out iPhone HDR recordings until they were converted. 10-bit 4:2:0 is now read from the top 8 bits of each sample ([ADR-011](decisions/ADR-011-read-10-bit-video-from-its-top-8-bits.md)), tested on a synthetic clip; the real recording is not measured yet. 4:2:2, 4:4:4, and 12-bit video still stop with an error, which now names the format.
+- **10-bit video** (closed 2026-10-26 on `feature/decode-inputs`, not yet merged). Decoding stopped with `unsupported pixel format` on anything other than 8-bit 4:2:0, which ruled out iPhone HDR recordings until they were converted. 10-bit 4:2:0 is now read from the top 8 bits of each sample ([ADR-011](decisions/ADR-011-read-10-bit-video-from-its-top-8-bits.md)), tested on a synthetic clip and on the real recording (see [10-bit video and 44.1 kHz audio](#10-bit-video-and-441-khz-audio-2026-10-26)); it decodes 2.8 times slower than 8-bit H.264. 4:2:2, 4:4:4, and 12-bit video still stop with an error, which now names the format.
 - **`--draft` takes an MP4.** planer.md specifies a `.otio` timeline; OpenTimelineIO is P2 work.
 
 ## Known issues
@@ -162,7 +166,7 @@ Done: real word timing with whisper.cpp ([spec](specs/whisper-asr.md)), merged 2
 Then, to finish P0 against its own success metric before starting P1. The [P0 capability map](specs/p0-capability-map.md) (approved 2026-10-25) orders these into modules: `whisper-coverage`, `decode-inputs`, `fast-decode`, `comparative-diff`, `visual-motion`. The list below predates it:
 
 1. Find a decode strategy that meets 500 ms on real footage, or revise the target.
-2. Read 10-bit video, such as iPhone HDR recordings. In progress on `feature/decode-inputs` ([spec](specs/decode-inputs.md)): 10-bit 4:2:0 is read and audio is resampled as one stream; the real recording is next.
+2. Read 10-bit video, such as iPhone HDR recordings. Done on `feature/decode-inputs` ([spec](specs/decode-inputs.md)), awaiting merge: 10-bit 4:2:0 is read, audio is resampled as one stream, and the real recording decompiles.
 3. Detect silence relative to each recording's noise floor instead of at a fixed −40 dBFS. Done ([spec](specs/relative-silence.md)), merged 2026-10-25.
 4. Make `diff` comparative: accept one to three outliers and compare cut rhythm second by second.
 5. Link TransNetV2. It needs ONNX weights, a download that needs an explicit go-ahead.

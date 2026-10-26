@@ -2,7 +2,7 @@
 //!
 //! Resampling each decoded frame on its own dropped the fractional output
 //! sample at every frame boundary: 44.1 kHz AAC (1,024 samples per frame) lost
-//! 0.56 samples per frame, so a pause planted at 50.0 s was found 10-40 ms
+//! 0.56 samples per frame, so a pause planted at 50.0 s was found 16-33 ms
 //! early (status.md). Here the read position and the last input sample carry
 //! across frames, so output sample k always reads input position
 //! `k * in_rate / 48,000`, however the input was cut into frames.

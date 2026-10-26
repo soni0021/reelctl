@@ -22,10 +22,10 @@ Read 10-bit 4:2:0 video, and resample non-48 kHz audio as one stream. Three task
 - [x] Task 2: Resample audio as one stream
 
 ### Checkpoint A
-- [ ] `cargo test` passes; all existing fixtures unchanged apart from timings
+- [x] `cargo test` passes; all existing fixtures unchanged apart from timings
 
 ### Phase 2: Real footage and close-out
-- [ ] Task 3: Real footage, measurements, and docs
+- [x] Task 3: Real footage, measurements, and docs
 
 ### Checkpoint B
 - [ ] All six spec success criteria verified, reviewed with the user, merged into `main`
