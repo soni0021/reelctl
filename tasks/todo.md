@@ -1,0 +1,67 @@
+# Tasks: quiet audio
+
+Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/quiet-audio.md](../docs/specs/quiet-audio.md). Tick each box in the commit that completes it.
+
+## Task 1: Baselines, `quiet12`, and the failing tests
+
+**Description:** Save every existing fixture's `edit_dna.json` and the real iPhone recording's silence figures from the current release build, outside the repo. Add the `quiet12` fixture. Write the unit and end-to-end tests that the spec lists, and watch them fail.
+
+**Acceptance criteria:**
+- [ ] Baselines saved for all fixtures and for `IMG_1435.MOV`; the Reels file's current result noted (one gap, threshold −40.0)
+- [ ] `quiet12` in `fixtures/generate.sh` (`quiet12` kind and in `all`), byte-reproducible, and its levels checked with ffmpeg
+- [ ] Unit tests in `silence.rs`, failing for the right reason: the Reels-shaped levels, the quiet tone with a pause, the two mostly-silent shapes (must stay −40; they pass today and must keep passing), and a silent recording never giving `−inf` or NaN
+- [ ] End-to-end test in `p0_fixture.rs`: `quiet12`'s gaps of 180 ms or more are the planted pause (±20 ms) and `diff` flags it; failing today
+- [ ] The existing tests still pass
+
+**Verification:**
+- [ ] `cargo test` shows exactly the new quiet-recording tests failing
+
+**Dependencies:** None
+
+**Files likely touched:** `crates/decompile/src/silence.rs` (tests), `fixtures/generate.sh`, `crates/reelctl/tests/p0_fixture.rs`, README fixture row
+
+**Estimated scope:** Small
+
+## Task 2: The new threshold
+
+**Description:** Change `threshold_db` to `max(min(−40, p99 − 12), min(p10 + 6, p90 − 12))` with a named `LOUD_PERCENTILE`, and update its comments.
+
+**Acceptance criteria:**
+- [ ] All Task 1 tests pass; the existing silence tests pass unchanged
+- [ ] Every fixture and the real iPhone recording match their baselines apart from timings (`silence_gaps`, `silence_threshold_db`, `noise_floor_db`, `words`)
+- [ ] The Reels file, run with the real binary: no whole-clip gap, threshold below −40; the numbers recorded
+- [ ] The 60 s benchmark's median `signal_ms` stays within 242–262 ms (one extra rank lookup)
+- [ ] The ignored whisper test passes with the Apex model
+
+**Verification:**
+- [ ] `cargo test` once; baseline comparison with a release build; `cargo fmt` clean; no warnings
+
+**Dependencies:** Task 1
+
+**Files likely touched:** `crates/decompile/src/silence.rs`
+
+**Estimated scope:** Small
+
+### Checkpoint A
+- [ ] `cargo test` passes; baselines match; Reels file fixed
+
+## Task 3: Docs, ADR-013, and the real-file numbers
+
+**Description:** Record the decision and the measurements; mark the superseded part of ADR-008.
+
+**Acceptance criteria:**
+- [ ] ADR-013 (quiet recordings: the floor follows the loud part); ADR-008 marked partly superseded
+- [ ] `docs/edit-dna.md` (`silence_threshold_db` and the silence section), `docs/status.md` (measurements with date and machine; the quiet-audio limitation removed or restated), `docs/cli.md` only if its text changes, CHANGELOG, README, this spec's status, the capability map if it lists it
+- [ ] The Reels file is never committed; only its numbers are
+
+**Verification:**
+- [ ] Links checked; `cargo test` unchanged; the `audit` subagent run on the final commit
+
+**Dependencies:** Task 2
+
+**Files likely touched:** the docs above
+
+**Estimated scope:** Small
+
+### Checkpoint B
+- [ ] All five spec success criteria verified; audit run; reviewed with the user, merged into `main`, and this plan moved to `tasks/archive/quiet-audio/`
