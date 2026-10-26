@@ -1,6 +1,6 @@
 # Spec: decode inputs
 
-Status: approved 2026-10-26, with the recommended answer to each open question (see Resolved Questions). All three tasks done 2026-10-26 ([ADR-011](../decisions/ADR-011-read-10-bit-video-from-its-top-8-bits.md)); awaiting the user's review and merge. Success criteria 1–6 are verified by the author; the evidence is in [status.md](../status.md#10-bit-video-and-441-khz-audio-2026-10-26). Plan: [tasks/plan.md](../../tasks/plan.md). Module `decode-inputs` in the [P0 capability map](p0-capability-map.md). Branch: `feature/decode-inputs`.
+Status: approved 2026-10-26, with the recommended answer to each open question (see Resolved Questions). All three tasks done 2026-10-26 ([ADR-011](../decisions/ADR-011-read-10-bit-video-from-its-top-8-bits.md)); reviewed and merged into `main` 2026-10-26. Success criteria 1–6 are verified; the evidence is in [status.md](../status.md#10-bit-video-and-441-khz-audio-2026-10-26). Plan: [tasks/archive/decode-inputs/plan.md](../../tasks/archive/decode-inputs/plan.md). Module `decode-inputs` in the [P0 capability map](p0-capability-map.md). Branch: `feature/decode-inputs`.
 
 ## Objective
 

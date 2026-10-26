@@ -1,6 +1,6 @@
 # Implementation Plan: decode inputs
 
-Spec: [docs/specs/decode-inputs.md](../docs/specs/decode-inputs.md), approved 2026-10-26. Plan approved 2026-10-26. Branch: `feature/decode-inputs`. Checklist: [tasks/todo.md](todo.md). Earlier plans are in [tasks/archive/](archive/whisper-coverage/plan.md).
+Spec: [docs/specs/decode-inputs.md](../../../docs/specs/decode-inputs.md), approved 2026-10-26. Plan approved 2026-10-26. Branch: `feature/decode-inputs`. Checklist: [tasks/todo.md](todo.md). Earlier plans are in [tasks/archive/](../whisper-coverage/plan.md).
 
 ## Overview
 
@@ -28,7 +28,7 @@ Read 10-bit 4:2:0 video, and resample non-48 kHz audio as one stream. Three task
 - [x] Task 3: Real footage, measurements, and docs
 
 ### Checkpoint B
-- [ ] All six spec success criteria verified, reviewed with the user, merged into `main`
+- [x] All six spec success criteria verified, reviewed with the user, merged into `main`
 
 ## Risks and Mitigations
 

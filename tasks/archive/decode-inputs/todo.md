@@ -1,6 +1,6 @@
 # Tasks: decode inputs
 
-Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/decode-inputs.md](../docs/specs/decode-inputs.md). Tick each box in the commit that completes it.
+Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/decode-inputs.md](../../../docs/specs/decode-inputs.md). Tick each box in the commit that completes it.
 
 ## Task 1: Read 10-bit 4:2:0 video
 
@@ -67,6 +67,6 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/decode-inputs.md](../docs/spec
 
 ## Checkpoint B: Done
 
-- [ ] All six spec success criteria verified
-- [ ] `cargo test` passes
-- [ ] Reviewed with the user, then `feature/decode-inputs` merged into `main`, and this plan moved to `tasks/archive/decode-inputs/`
+- [x] All six spec success criteria verified
+- [x] `cargo test` passes
+- [x] Reviewed with the user, then `feature/decode-inputs` merged into `main`, and this plan moved to `tasks/archive/decode-inputs/`
