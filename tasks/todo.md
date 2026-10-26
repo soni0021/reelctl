@@ -27,14 +27,14 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/quiet-audio.md](../docs/specs/
 **Description:** Change `threshold_db` to `max(max(min(−40, p99 − 12), −70), min(p10 + 6, p90 − 12))` with named `LOUD_PERCENTILE` and `FLOOR_LIMIT_DB`, and update its comments.
 
 **Acceptance criteria:**
-- [ ] All Task 1 tests pass; the existing silence tests pass unchanged
-- [ ] Every fixture and the real iPhone recording match their baselines apart from timings (`silence_gaps`, `silence_threshold_db`, `noise_floor_db`, `words`)
-- [ ] The Reels file, run with the real binary: no whole-clip gap, threshold below −40; the numbers recorded
-- [ ] The 60 s benchmark's median `signal_ms` stays within 242–262 ms (one extra rank lookup)
-- [ ] The ignored whisper test passes with the Apex model
+- [x] All Task 1 tests pass; the existing silence tests pass unchanged
+- [x] Every fixture and the real iPhone recording match their baselines apart from timings (`silence_gaps`, `silence_threshold_db`, `noise_floor_db`, `words`)
+- [x] The Reels file, run with the real binary: no whole-clip gap, threshold below −40; the numbers recorded
+- [x] The 60 s benchmark's median `signal_ms` stays within 242–262 ms (one extra rank lookup)
+- [x] The ignored whisper test passes with the Apex model
 
 **Verification:**
-- [ ] `cargo test` once; baseline comparison with a release build; `cargo fmt` clean; no warnings
+- [x] `cargo test` once; baseline comparison with a release build; `cargo fmt` clean; no warnings
 
 **Dependencies:** Task 1
 
@@ -43,7 +43,7 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/quiet-audio.md](../docs/specs/
 **Estimated scope:** Small
 
 ### Checkpoint A
-- [ ] `cargo test` passes; baselines match; Reels file fixed
+- [x] `cargo test` passes; baselines match; Reels file fixed
 
 ## Task 3: Docs, ADR-013, and the real-file numbers
 

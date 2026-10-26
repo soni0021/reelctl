@@ -20,6 +20,10 @@ const MIN_SOUND_WINDOWS: usize = 3;
 const FLOOR_DB: f64 = -40.0;
 const NOISE_MARGIN_DB: f64 = 6.0;
 const HEADROOM_DB: f64 = 12.0;
+const LOUD_PERCENTILE: usize = 99;
+/// The lowest the floor may fall: well above digital silence (-120) and 16-bit
+/// dither (about -96), and below any sound worth calling sound.
+const FLOOR_LIMIT_DB: f64 = -70.0;
 
 pub struct SilenceAnalysis {
     /// One level per 10 ms window, in dB.
@@ -109,10 +113,20 @@ pub fn window_levels(pcm: &[f32], sample_rate: u32) -> Vec<f64> {
     pcm.chunks(window).map(window_db).collect()
 }
 
-/// The silence threshold for one recording: `max(-40, min(p10 + 6, p90 - 12))` dB.
-/// p10 estimates the noise floor. The cap keeps the threshold 12 dB under the
-/// loud part, so a recording with no quiet stretch is not marked silent. The
-/// -40 floor keeps clean recordings at the fixed threshold used before.
+/// The silence threshold for one recording:
+/// `max(floor, min(p10 + 6, p90 - 12))` dB, where the floor is `-40` for most
+/// recordings.
+///
+/// p10 estimates the noise floor. The p90 cap keeps the threshold 12 dB under
+/// the loud part, so a recording with no quiet stretch is not marked silent.
+/// The -40 floor keeps clean recordings at the fixed threshold used before.
+///
+/// A recording whose sound is all quieter than -40 (a download with almost no
+/// audio, a low-gain microphone) would sit under the floor and be one giant
+/// gap, so the floor follows the loud part down: `min(-40, p99 - 12)`. It uses
+/// p99, not p90, because a recording that is mostly silence has a p90 equal to
+/// the silence. It stops at -70 so that a recording with under 1% sound still
+/// has a threshold above its silence.
 pub fn threshold_db(levels: &[f64]) -> f64 {
     if levels.is_empty() {
         return FLOOR_DB;
@@ -120,9 +134,9 @@ pub fn threshold_db(levels: &[f64]) -> f64 {
     let sorted = sorted(levels);
     let noise = rank(&sorted, 10);
     let loud = rank(&sorted, 90);
-    (noise + NOISE_MARGIN_DB)
-        .min(loud - HEADROOM_DB)
-        .max(FLOOR_DB)
+    let loudest = rank(&sorted, LOUD_PERCENTILE);
+    let floor = FLOOR_DB.min(loudest - HEADROOM_DB).max(FLOOR_LIMIT_DB);
+    (noise + NOISE_MARGIN_DB).min(loud - HEADROOM_DB).max(floor)
 }
 
 /// Nearest-rank percentile: `sorted[min(n - 1, p * n / 100)]`. `levels` must not be empty.

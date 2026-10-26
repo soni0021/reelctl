@@ -19,10 +19,10 @@ Let the silence threshold's −40 dB floor come down to `p99 − 12` when a reco
 
 ### Phase 1: The rule
 - [x] Task 1: Baselines, `quiet12`, and the failing tests
-- [ ] Task 2: The new threshold
+- [x] Task 2: The new threshold
 
 ### Checkpoint A
-- [ ] `cargo test` passes; every fixture and the real iPhone recording unchanged apart from timings; the Reels file has no whole-clip gap
+- [x] `cargo test` passes; every fixture and the real iPhone recording unchanged apart from timings; the Reels file has no whole-clip gap
 
 ### Phase 2: Close-out
 - [ ] Task 3: Docs, ADR-013, and the real-file numbers
