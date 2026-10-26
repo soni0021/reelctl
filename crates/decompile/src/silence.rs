@@ -1,9 +1,10 @@
 //! Silence gaps from mono PCM.
 //!
 //! A 10 ms window whose mean-square level is below the recording's threshold
-//! is silent. The threshold is `max(-40, min(p10 + 6, p90 - 12))` dB over all
-//! window levels (see `threshold_db`), so a pause under room noise is still a
-//! gap while a clean recording keeps -40 dBFS. A gap ends only after 30 ms of
+//! is silent. The threshold is `max(max(min(-40, p99 - 12), -70), min(p10 + 6,
+//! p90 - 12))` dB over all window levels (see `threshold_db`), so a pause under
+//! room noise is still a gap, a clean recording keeps -40 dBFS, and a recording
+//! quieter than -28 dB is not one giant gap. A gap ends only after 30 ms of
 //! sound, so a noise spike does not split a pause. Runs shorter than 80 ms are
 //! dropped so encoder padding is not a gap. The diff flag for dead air is a
 //! separate, higher limit (180 ms).
@@ -20,6 +21,10 @@ const MIN_SOUND_WINDOWS: usize = 3;
 const FLOOR_DB: f64 = -40.0;
 const NOISE_MARGIN_DB: f64 = 6.0;
 const HEADROOM_DB: f64 = 12.0;
+const LOUD_PERCENTILE: usize = 99;
+/// The lowest the floor may fall: well above digital silence (-120) and 16-bit
+/// dither (about -96), and below any sound worth calling sound.
+const FLOOR_LIMIT_DB: f64 = -70.0;
 
 pub struct SilenceAnalysis {
     /// One level per 10 ms window, in dB.
@@ -109,10 +114,20 @@ pub fn window_levels(pcm: &[f32], sample_rate: u32) -> Vec<f64> {
     pcm.chunks(window).map(window_db).collect()
 }
 
-/// The silence threshold for one recording: `max(-40, min(p10 + 6, p90 - 12))` dB.
-/// p10 estimates the noise floor. The cap keeps the threshold 12 dB under the
-/// loud part, so a recording with no quiet stretch is not marked silent. The
-/// -40 floor keeps clean recordings at the fixed threshold used before.
+/// The silence threshold for one recording:
+/// `max(floor, min(p10 + 6, p90 - 12))` dB, where the floor is `-40` for most
+/// recordings.
+///
+/// p10 estimates the noise floor. The p90 cap keeps the threshold 12 dB under
+/// the loud part, so a recording with no quiet stretch is not marked silent.
+/// The -40 floor keeps clean recordings at the fixed threshold used before.
+///
+/// A recording whose sound is all quieter than -40 (a download with almost no
+/// audio, a low-gain microphone) would sit under the floor and be one giant
+/// gap, so the floor follows the loud part down: `min(-40, p99 - 12)`. It uses
+/// p99, not p90, because a recording that is mostly silence has a p90 equal to
+/// the silence. It stops at -70 so that a recording with under 1% sound still
+/// has a threshold above its silence.
 pub fn threshold_db(levels: &[f64]) -> f64 {
     if levels.is_empty() {
         return FLOOR_DB;
@@ -120,9 +135,9 @@ pub fn threshold_db(levels: &[f64]) -> f64 {
     let sorted = sorted(levels);
     let noise = rank(&sorted, 10);
     let loud = rank(&sorted, 90);
-    (noise + NOISE_MARGIN_DB)
-        .min(loud - HEADROOM_DB)
-        .max(FLOOR_DB)
+    let loudest = rank(&sorted, LOUD_PERCENTILE);
+    let floor = FLOOR_DB.min(loudest - HEADROOM_DB).max(FLOOR_LIMIT_DB);
+    (noise + NOISE_MARGIN_DB).min(loud - HEADROOM_DB).max(floor)
 }
 
 /// Nearest-rank percentile: `sorted[min(n - 1, p * n / 100)]`. `levels` must not be empty.
@@ -276,6 +291,81 @@ mod tests {
     fn a_constant_level_is_capped_below_the_loud_part() {
         // p10 + 6 = -15 would mark the tone silent; the cap p90 - 12 = -33 wins.
         assert_eq!(threshold_db(&repeat(-21.0, 100)), -33.0);
+    }
+
+    /// Window levels shaped like a very quiet download: p10 -56, p90 -44, p99 -42.
+    fn quiet_levels() -> Vec<f64> {
+        let mut levels = repeat(-56.0, 11);
+        levels.extend(repeat(-49.0, 69));
+        levels.extend(repeat(-44.0, 19));
+        levels.extend(repeat(-42.0, 1));
+        levels
+    }
+
+    #[test]
+    fn a_recording_quieter_than_the_floor_gets_a_threshold_under_its_loud_part() {
+        // The floor follows p99 - 12 = -54; the noise term p10 + 6 = -50 would
+        // be above it but the cap p90 - 12 = -56 is below it.
+        assert_eq!(threshold_db(&quiet_levels()), -54.0);
+    }
+
+    #[test]
+    fn a_constant_quiet_tone_is_capped_below_itself() {
+        assert_eq!(threshold_db(&repeat(-50.0, 100)), -62.0);
+    }
+
+    #[test]
+    fn a_pause_in_a_very_quiet_tone_is_a_gap_and_the_tone_is_not() {
+        let rate = 48_000u32;
+        // 4 s of a tone at -46 dB peak (about -49 dB), 0.5 s of silence, 4 s of tone.
+        let mut pcm = sine(0.005, 4 * rate as usize);
+        pcm.extend(std::iter::repeat(0.0).take(rate as usize / 2));
+        pcm.extend(sine(0.005, 4 * rate as usize));
+        let analysis = analyze(&pcm, rate);
+        assert!(
+            analysis.threshold_db < FLOOR_DB,
+            "{}",
+            analysis.threshold_db
+        );
+        let long: Vec<(u64, u64)> = spans(&analysis.gaps)
+            .into_iter()
+            .filter(|(start, end)| end - start >= 180)
+            .collect();
+        assert_eq!(long.len(), 1, "{:?}", analysis.gaps);
+        assert!(long[0].0.abs_diff(4_000) <= 20 && long[0].1.abs_diff(4_500) <= 20);
+    }
+
+    #[test]
+    fn a_recording_that_is_mostly_silence_keeps_the_fixed_floor() {
+        // The loud 5% is at -14 dB, so p99 is high enough to leave the floor alone.
+        let mut levels = repeat(-120.0, 95);
+        levels.extend(repeat(-14.0, 5));
+        assert_eq!(threshold_db(&levels), -40.0);
+    }
+
+    #[test]
+    fn a_recording_whose_p90_is_the_silence_keeps_the_fixed_floor() {
+        // p90 is the silence level here, which a cap applied last would follow.
+        let mut levels = repeat(-60.0, 92);
+        levels.extend(repeat(-20.0, 8));
+        assert_eq!(threshold_db(&levels), -40.0);
+    }
+
+    #[test]
+    fn under_one_percent_sound_cannot_push_the_floor_below_the_silence() {
+        // p99 is the silence level (-120), so p99 - 12 = -132 would sit under
+        // the silence. The lower bound holds the threshold at -70 instead.
+        let mut levels = repeat(-120.0, 995);
+        levels.extend(repeat(-14.0, 5));
+        assert_eq!(threshold_db(&levels), -70.0);
+        assert_eq!(spans(&detect_gaps(&levels, -70.0, 10_000)), [(0, 9_950)]);
+    }
+
+    #[test]
+    fn digital_silence_is_one_gap_with_a_finite_threshold() {
+        let analysis = analyze(&[0.0; 48_000], 48_000);
+        assert_eq!(analysis.threshold_db, -70.0);
+        assert_eq!(spans(&analysis.gaps), [(0, 1_000)]);
     }
 
     #[test]

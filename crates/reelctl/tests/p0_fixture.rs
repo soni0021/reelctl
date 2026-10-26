@@ -271,6 +271,63 @@ fn a_pause_under_room_noise_is_a_gap_and_dead_air() {
     let _ = fs::remove_dir_all(&root);
 }
 
+/// A recording whose sound is all quieter than the old -40 dB floor used to be
+/// one silence gap from start to end. Its pause is the only gap of 180 ms or
+/// more (the mute is switched per 1,024-sample audio frame, so it starts
+/// 13 ms late), and `diff` flags that pause as dead air.
+#[test]
+fn a_pause_in_a_very_quiet_recording_is_the_only_long_gap() {
+    let root = std::env::temp_dir().join(format!("reelctl-quiet-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("temp dir");
+    let mp4 = root.join("quiet.mp4");
+    generate("quiet12", &mp4);
+    let (dna, _) = decompile_with(&root, &mp4, "quiet", "auto");
+
+    assert!(
+        dna.silence_threshold_db < -40.0,
+        "threshold {}",
+        dna.silence_threshold_db
+    );
+    let long: Vec<(u64, u64)> = dna
+        .silence_gaps
+        .iter()
+        .filter(|gap| gap.duration_ms >= 180)
+        .map(|gap| (gap.start_ms, gap.end_ms))
+        .collect();
+    assert_eq!(long.len(), 1, "gaps of 180 ms or more: {long:?}");
+    let (start, end) = long[0];
+    assert!(
+        start.abs_diff(5_000) <= 40 && end.abs_diff(5_500) <= 40,
+        "pause {long:?}"
+    );
+
+    let json = root.join("quiet.edit_dna.json");
+    let diff = reelctl()
+        .args(["diff", "--draft"])
+        .arg(&mp4)
+        .arg("--outlier")
+        .arg(&json)
+        .output()
+        .expect("spawn diff");
+    assert!(
+        diff.status.success(),
+        "diff failed: {}",
+        String::from_utf8_lossy(&diff.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&diff.stdout).expect("diff json");
+    let dead_air: Vec<&serde_json::Value> = report["flags"]
+        .as_array()
+        .expect("flags")
+        .iter()
+        .filter(|flag| flag["kind"] == "dead_air")
+        .collect();
+    assert_eq!(dead_air.len(), 1, "{dead_air:?}");
+    assert_eq!(dead_air[0]["start_ms"].as_u64(), Some(start));
+
+    let _ = fs::remove_dir_all(&root);
+}
+
 #[test]
 fn ten_bit_hlg_video_reads_like_the_eight_bit_draft() {
     let root = std::env::temp_dir().join(format!("reelctl-10bit-{}", std::process::id()));

@@ -26,14 +26,6 @@ impl CutDetectorChoice {
             Self::Auto => "auto",
             Self::Scene => "scene",
             Self::TransNet => "transnet",
-            other => {
-                let _never: std::convert::Infallible = match other {
-                    Self::Auto | Self::Scene | Self::TransNet => {
-                        unreachable!("CutDetectorChoice is handled above")
-                    }
-                };
-                match _never {}
-            }
         }
     }
 }
@@ -108,16 +100,6 @@ pub fn select_detector(
             } else {
                 Ok(SelectedDetector::Scene(SceneScoreDetector::default()))
             }
-        }
-        other => {
-            let _never: std::convert::Infallible = match other {
-                CutDetectorChoice::Scene
-                | CutDetectorChoice::TransNet
-                | CutDetectorChoice::Auto => {
-                    unreachable!("CutDetectorChoice is handled above")
-                }
-            };
-            match _never {}
         }
     }
 }

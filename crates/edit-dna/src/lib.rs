@@ -106,12 +106,6 @@ impl PassStatus {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Unimplemented => "unimplemented",
-            other => {
-                let _never: std::convert::Infallible = match other {
-                    Self::Unimplemented => unreachable!("PassStatus is handled above"),
-                };
-                match _never {}
-            }
         }
     }
 }
@@ -151,14 +145,6 @@ impl CutDetectorKind {
         match self {
             Self::FfmpegSceneScore => "ffmpeg_scene_score",
             Self::TransNetV2 => "transnet_v2",
-            other => {
-                let _never: std::convert::Infallible = match other {
-                    Self::FfmpegSceneScore | Self::TransNetV2 => {
-                        unreachable!("CutDetectorKind is handled above")
-                    }
-                };
-                match _never {}
-            }
         }
     }
 }
@@ -176,14 +162,6 @@ impl AsrBackend {
         match self {
             Self::WhisperCpp => "whisper_cpp",
             Self::SilenceBursts => "silence_bursts",
-            other => {
-                let _never: std::convert::Infallible = match other {
-                    Self::WhisperCpp | Self::SilenceBursts => {
-                        unreachable!("AsrBackend is handled above")
-                    }
-                };
-                match _never {}
-            }
         }
     }
 }

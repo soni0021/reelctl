@@ -159,26 +159,8 @@ fn resolve_cuts(
                 }
                 CutDetectorChoice::TransNet => Err(err),
                 CutDetectorChoice::Scene => Err(err),
-                other => {
-                    let _never: std::convert::Infallible = match other {
-                        CutDetectorChoice::Auto
-                        | CutDetectorChoice::TransNet
-                        | CutDetectorChoice::Scene => {
-                            unreachable!("CutDetectorChoice is handled above")
-                        }
-                    };
-                    match _never {}
-                }
             },
         },
-        other => {
-            let _never: std::convert::Infallible = match other {
-                SelectedDetector::Scene(_) | SelectedDetector::TransNet(_) => {
-                    unreachable!("SelectedDetector is handled above")
-                }
-            };
-            match _never {}
-        }
     }
 }
 
