@@ -272,10 +272,11 @@ fn a_pause_under_room_noise_is_a_gap_and_dead_air() {
 }
 
 /// A recording whose sound is all quieter than the old -40 dB floor used to be
-/// one silence gap from start to end. Its pause is the only gap, and `diff`
-/// flags that pause as dead air.
+/// one silence gap from start to end. Its pause is the only gap of 180 ms or
+/// more (the mute is switched per 1,024-sample audio frame, so it starts
+/// 13 ms late), and `diff` flags that pause as dead air.
 #[test]
-fn a_pause_in_a_very_quiet_recording_is_the_only_gap() {
+fn a_pause_in_a_very_quiet_recording_is_the_only_long_gap() {
     let root = std::env::temp_dir().join(format!("reelctl-quiet-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).expect("temp dir");
@@ -297,7 +298,7 @@ fn a_pause_in_a_very_quiet_recording_is_the_only_gap() {
     assert_eq!(long.len(), 1, "gaps of 180 ms or more: {long:?}");
     let (start, end) = long[0];
     assert!(
-        start.abs_diff(5_000) <= 20 && end.abs_diff(5_500) <= 20,
+        start.abs_diff(5_000) <= 40 && end.abs_diff(5_500) <= 40,
         "pause {long:?}"
     );
 

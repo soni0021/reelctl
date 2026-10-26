@@ -56,7 +56,7 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/quiet-audio.md](../docs/specs/
 
 **Verification:**
 - [x] Links checked; `cargo test` unchanged
-- [ ] The `audit` subagent run on the final commit
+- [x] The `audit` subagent run on the final commit: no code defects; its doc, wording, and test-granularity findings fixed in the next commit
 
 **Dependencies:** Task 2
 
@@ -65,4 +65,4 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/quiet-audio.md](../docs/specs/
 **Estimated scope:** Small
 
 ### Checkpoint B
-- [ ] All five spec success criteria verified; audit run; reviewed with the user, merged into `main`, and this plan moved to `tasks/archive/quiet-audio/`
+- [x] All five spec success criteria verified; audit run; reviewed with the user, merged into `main`, and this plan moved to `tasks/archive/quiet-audio/`

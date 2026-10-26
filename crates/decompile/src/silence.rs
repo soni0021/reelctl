@@ -1,9 +1,10 @@
 //! Silence gaps from mono PCM.
 //!
 //! A 10 ms window whose mean-square level is below the recording's threshold
-//! is silent. The threshold is `max(-40, min(p10 + 6, p90 - 12))` dB over all
-//! window levels (see `threshold_db`), so a pause under room noise is still a
-//! gap while a clean recording keeps -40 dBFS. A gap ends only after 30 ms of
+//! is silent. The threshold is `max(max(min(-40, p99 - 12), -70), min(p10 + 6,
+//! p90 - 12))` dB over all window levels (see `threshold_db`), so a pause under
+//! room noise is still a gap, a clean recording keeps -40 dBFS, and a recording
+//! quieter than -28 dB is not one giant gap. A gap ends only after 30 ms of
 //! sound, so a noise spike does not split a pause. Runs shorter than 80 ms are
 //! dropped so encoder padding is not a gap. The diff flag for dead air is a
 //! separate, higher limit (180 ms).
@@ -340,6 +341,10 @@ mod tests {
         let mut levels = repeat(-120.0, 95);
         levels.extend(repeat(-14.0, 5));
         assert_eq!(threshold_db(&levels), -40.0);
+    }
+
+    #[test]
+    fn a_recording_whose_p90_is_the_silence_keeps_the_fixed_floor() {
         // p90 is the silence level here, which a cap applied last would follow.
         let mut levels = repeat(-60.0, 92);
         levels.extend(repeat(-20.0, 8));
@@ -354,7 +359,10 @@ mod tests {
         levels.extend(repeat(-14.0, 5));
         assert_eq!(threshold_db(&levels), -70.0);
         assert_eq!(spans(&detect_gaps(&levels, -70.0, 10_000)), [(0, 9_950)]);
-        // Only digital silence is one gap, with a finite threshold.
+    }
+
+    #[test]
+    fn digital_silence_is_one_gap_with_a_finite_threshold() {
         let analysis = analyze(&[0.0; 48_000], 48_000);
         assert_eq!(analysis.threshold_db, -70.0);
         assert_eq!(spans(&analysis.gaps), [(0, 1_000)]);

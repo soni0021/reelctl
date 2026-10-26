@@ -13,7 +13,7 @@ Apple M3 (8 cores, 16 GB), macOS 26.5, rustc 1.98.1, FFmpeg 8.1.
 | Check | Result |
 |---|---|
 | `cargo check --workspace --all-targets` | 2026-10-20: passes with 23 warnings. 2026-10-26, on `main` after the decode-inputs merge: 21. 2026-10-26, after removing the unreachable `match` arms: 0 |
-| `cargo test --workspace` | 2026-10-21, on `main`: 31 of 31 pass, plus the whisper model test, which is ignored by default and passes with both models. 2026-10-26, on `main` after the whisper-coverage merge: 57 of 57, and the 2 whisper model tests pass with both models. 2026-10-26, on `main` after the decode-inputs merge: 66 of 66 after 10-bit reading, 76 of 76 after the stream resampler and the audit's extra tests, and the 2 ignored whisper model tests pass with both `base.en` (4.2 s for the file's 3 tests) and Apex (31.3 s) |
+| `cargo test --workspace` | 2026-10-21, on `main`: 31 of 31 pass, plus the whisper model test, which is ignored by default and passes with both models. 2026-10-26, on `main` after the whisper-coverage merge: 57 of 57, and the 2 whisper model tests pass with both models. 2026-10-26, on `main` after the decode-inputs merge: 66 of 66 after 10-bit reading, 76 of 76 after the stream resampler and the audit's extra tests, and the 2 ignored whisper model tests pass with both `base.en` (4.2 s for the file's 3 tests) and Apex (31.3 s) 2026-10-26, on `feature/quiet-audio`: 103 pass and 2 whisper model tests are ignored by default (run, with the Apex model, they pass). |
 | 60 s benchmark, release build | `signal_ms` 310, 316, 284 over three runs; the target is under 500 |
 | 12 s fixtures (640×360), release build | `signal_ms` 11–21 |
 

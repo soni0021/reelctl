@@ -1,6 +1,6 @@
 # Spec: Quiet recordings are not all silence
 
-Status: implemented 2026-10-26 on `feature/quiet-audio`; criteria 1–4 verified (evidence in [status.md](../status.md#quiet-audio-2026-10-26)). Approved 2026-10-26, revised after review: levels re-measured with `reelctl`'s own mix, the rule uses p99 so mostly-silent recordings keep −40, and a −70 lower bound keeps near-total silence a gap (added during planning and approved with the plan). Branch: `feature/quiet-audio` (started from `chore/remove-unreachable-arms`, which is not yet merged into `main`). Follows [ADR-008](../decisions/ADR-008-silence-relative-to-the-noise-floor.md) and the [relative-silence spec](relative-silence.md).
+Status: implemented 2026-10-26 on `feature/quiet-audio`; criteria 1–4 verified on this machine, with the real Reels file and iPhone recording that are kept outside the repo (evidence in [status.md](../status.md#quiet-audio-2026-10-26)). Approved 2026-10-26, revised after review: levels re-measured with `reelctl`'s own mix, the rule uses p99 so mostly-silent recordings keep −40, and a −70 lower bound keeps near-total silence a gap (added during planning and approved with the plan). Branch: `feature/quiet-audio` (started from `chore/remove-unreachable-arms`, which is not yet merged into `main`). Follows [ADR-008](../decisions/ADR-008-silence-relative-to-the-noise-floor.md) and the [relative-silence spec](relative-silence.md).
 
 ## Objective
 
@@ -67,4 +67,4 @@ Test-first.
 ## Resolved Questions (recommended answers; please confirm)
 
 1. **Should `edit_dna.json` say "audio too quiet to judge"?** Recommended: no. The threshold fix removes the false dead air, and a new field is a schema change (version 3). If the audio is almost absent, `integrated_lufs` already shows it (−48.6 here). Revisit if `comparative-diff` needs it.
-2. **Is 12 dB under `p99` the right distance?** It reuses the 12 dB headroom of ADR-008, tuned on one iPhone recording. On the Reels file the other threshold, p10 + 6, is −49 and `p99 − 12` is −53.9, so the floor decides. Recommended: accept 12 dB; there is one quiet recording to test on, and a second one would be the time to retune. Recommended: accept it; a recording with no quiet stretch should have no gaps, which is the same reasoning as the existing cap.
+2. **Is 12 dB under `p99` the right distance?** It reuses the 12 dB headroom of ADR-008, tuned on one iPhone recording. On the Reels file the other threshold, p10 + 6, is −49 and `p99 − 12` is −53.9, so the floor decides. Recommended: accept 12 dB; there is one quiet recording to test on, and a second one would be the time to retune.
