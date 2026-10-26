@@ -94,12 +94,12 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/fast-decode.md](../docs/specs/
 **Description:** Re-measure the real iPhone file (hardware against software, alternating) and the benchmark. Record the per-class decode cost and the unmet 500 ms in the status page. Write ADR-012 and mark ADR-001 as partly superseded.
 
 **Acceptance criteria:**
-- [ ] `docs/status.md`: the measured cost per 60 s by input class, 500 ms recorded as unmet on real footage with numbers, the capability map and spec updated, boxes ticked
-- [ ] The iPhone file's `signal_ms` is at least 40% lower with hardware, in three alternating runs
-- [ ] The docs link check passes
+- [x] `docs/status.md`: the measured cost per 60 s by input class, 500 ms recorded as unmet on real footage with numbers, the capability map and spec updated, boxes ticked
+- [x] The iPhone file's `signal_ms` is at least 40% lower with hardware, in three alternating runs
+- [x] The docs link check passes
 
 **Verification:**
-- [ ] Release-build runs; the `audit` subagent on the final commit
+- [x] Release-build runs; the `audit` subagent on the final commit
 
 **Dependencies:** Tasks 3 and 4
 

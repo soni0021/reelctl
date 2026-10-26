@@ -1,6 +1,6 @@
 # Spec: fast decode
 
-Status: approved 2026-10-26, with the recommended answer to each open question (see Resolved Questions). Plan: [tasks/plan.md](../../tasks/plan.md). Module `fast-decode` in the [P0 capability map](p0-capability-map.md). Branch: `feature/fast-decode`. The user's direction for this module: quality is the goal, time is not.
+Status: approved 2026-10-26, with the recommended answer to each open question (see Resolved Questions). Built on `feature/fast-decode`; awaiting review and merge, with two changes made during building (the loop filter and the whole-decode fallback, marked below). Plan: [tasks/plan.md](../../tasks/plan.md). Module `fast-decode` in the [P0 capability map](p0-capability-map.md). Branch: `feature/fast-decode`. The user's direction for this module: quality is the goal, time is not.
 
 ## Objective
 

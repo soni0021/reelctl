@@ -31,7 +31,7 @@ Make `decompile` faster on HEVC without changing any output: decode HEVC on the 
 
 ### Phase 3: Software tuning and close-out
 - [x] Task 4: Loop filter (done inside Task 3: nothing is skipped, because even today's skip diverged from the hardware decoder)
-- [ ] Task 5: Measurements and docs
+- [x] Task 5: Measurements and docs
 
 ### Checkpoint B
 - [ ] All six spec success criteria verified, reviewed with the user, merged into `main`
