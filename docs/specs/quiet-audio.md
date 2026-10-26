@@ -1,6 +1,6 @@
 # Spec: Quiet recordings are not all silence
 
-Status: draft, awaiting approval (revised after review: levels re-measured with `reelctl`'s own mix, and the rule uses p99 so mostly-silent recordings keep −40). Branch: `feature/quiet-audio` (started from `chore/remove-unreachable-arms`, which is not yet merged into `main`). Follows [ADR-008](../decisions/ADR-008-silence-relative-to-the-noise-floor.md) and the [relative-silence spec](relative-silence.md).
+Status: draft, awaiting approval (revised after review: levels re-measured with `reelctl`'s own mix, the rule uses p99 so mostly-silent recordings keep −40, and a −70 lower bound keeps near-total silence a gap. Approved 2026-10-26 before the bound was added; the bound is flagged to the user in the plan). Branch: `feature/quiet-audio` (started from `chore/remove-unreachable-arms`, which is not yet merged into `main`). Follows [ADR-008](../decisions/ADR-008-silence-relative-to-the-noise-floor.md) and the [relative-silence spec](relative-silence.md).
 
 ## Objective
 
@@ -10,11 +10,11 @@ Found on the first reel downloaded for the comparison workflow (`Reels/`, a 15 s
 
 **The rule.** Keep the formula, but let its floor come down when the recording's loudest windows are themselves under about −28 dB:
 
-`threshold = max(min(−40, p99 − 12), min(p10 + 6, p90 − 12))`
+`threshold = max(max(min(−40, p99 − 12), −70), min(p10 + 6, p90 − 12))`
 
-The floor is `−40` for any recording whose 99th-percentile window level is −28 dB or higher, so the threshold is unchanged for those. For a quieter recording the floor becomes `p99 − 12`: the threshold stays 12 dB under the recording's own loud part. `p99` is used, not `p90`, because a recording that is mostly digital silence or room noise has a `p90` equal to the silence itself; a `p90` cap applied last would push the threshold below the silence and stop real silence from being a gap.
+The floor is `−40` for any recording whose 99th-percentile window level is −28 dB or higher, so the threshold is unchanged for those. For a quieter recording the floor becomes `p99 − 12`: the threshold stays 12 dB under the recording's own loud part. It never goes below `−70` dB (`FLOOR_LIMIT_DB`): a recording with under 1% sound, such as a silent clip with one click, has a `p99` equal to its silence (−120), and without the bound the floor would fall to −132, below the silence, and the silence would stop being a gap. −70 is clear of the Reels file (−53.9), of a −50 dB tone (−62), and of 16-bit dither (about −96). `p99` is used, not `p90`, because a recording that is mostly digital silence or room noise has a `p90` equal to the silence itself; a `p90` cap applied last would push the threshold below the silence and stop real silence from being a gap.
 
-**Who it changes.** Only recordings whose loudest 1% of 10 ms windows are quieter than −28 dBFS: near-silent downloads, very low gain, or a very quiet speaker. Every recording whose p99 is −28 dB or higher keeps today's threshold exactly. That includes every synthetic fixture, the real iPhone recording (p90 −22.6), and recordings that are mostly silence with some sound at −20 dB or louder.
+**Who it changes.** Only recordings whose loudest 1% of 10 ms windows are quieter than −28 dBFS: near-silent downloads, very low gain, or a very quiet speaker. Every recording whose p99 is −28 dB or higher keeps today's threshold exactly. That includes every synthetic fixture, the real iPhone recording (p90 −22.6), and recordings that are mostly silence with at least 1% of windows at −20 dB or louder. A recording with under 1% sound (a silent clip with one click) moves from −40 to −70; its gaps change only if some window's level lies between −70 and −40, which digital silence does not have. A recording that is entirely digital silence also gets −70 and is still all one gap.
 
 **On the Reels file** the threshold becomes −53.9 dB. The model gives 3 gaps instead of the whole clip: 0–990 ms, 1,370–1,640 ms, and 1,760–1,850 ms, 1,350 ms in all, all in the first 1.9 s. `diff` would flag the first two as dead air (over 180 ms). They are the quiet opening of the file, not a pause to trim; the audio is very quiet throughout (−48.6 LUFS), and `integrated_lufs` already says so. To be confirmed with the real binary.
 
@@ -44,6 +44,7 @@ Test-first.
   - Quiet recording: levels shaped like the Reels file (p10 about −55, p90 −45.5, p99 −42) give a threshold below −40, not −40.
   - Quiet recording with a pause: a tone at −46 dB with a planted pause 20 dB lower keeps the pause as a gap, and the tone is not a gap.
   - **Unchanged cases, which fail under a plain "cap last" formula:** 95 windows at −120 plus 5 at −14 stays −40; 92 at −60 plus 8 at −20 stays −40; digital silence with speech at −14 stays −40.
+  - **The lower bound:** 995 windows at −120 plus 5 at −14 gives −70, not −132, and its gaps are the silence; a recording of only −120 gives −70 and one gap; a constant −50 tone gives −62.
   - The existing threshold tests pass unchanged: noise floor at p10 + 6 (−34), constant level capped at p90 − 12 (−33), no audio −40.
   - A silent recording (all `−120`) cannot give a `−inf` or NaN threshold.
 - **End-to-end:** `quiet12`, 12 s of a tone at −46 dBFS with a planted 0.5 s mute. Today it is one gap over the whole clip; after the change its gaps of 180 ms or more are exactly the planted pause (±20 ms), and `diff` flags that pause. The existing fixtures' gaps and thresholds do not change.
@@ -59,7 +60,7 @@ Test-first.
 
 1. The Reels file, run with the real binary, gives no whole-clip silence gap and a threshold below −40.
 2. `quiet12` gives the planted pause as a gap and the rest of the clip is not silence.
-3. All existing fixtures and the real iPhone recording give identical `silence_gaps` and `silence_threshold_db`; the three mostly-silent unit cases stay at −40.
+3. All existing fixtures and the real iPhone recording give identical `silence_gaps` and `silence_threshold_db`; the mostly-silent unit cases stay at −40, and the under-1% case gives −70 with the silence still a gap.
 4. The existing silence unit tests pass unchanged; the new tests failed before the change.
 5. ADR-013 supersedes the threshold formula in ADR-008, and the docs match the code.
 

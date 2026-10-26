@@ -8,12 +8,12 @@ Let the silence threshold's −40 dB floor come down to `p99 − 12` when a reco
 
 ## Architecture Decisions
 
-- **One function changes:** `threshold_db` in `crates/decompile/src/silence.rs` becomes `max(min(−40, p99 − 12), min(p10 + 6, p90 − 12))`. `analyze`, `detect_gaps`, the burst estimator in `asr.rs`, and `diff` all read the threshold from there, so nothing else needs to learn about it. The result is stored in `silence_threshold_db`, so the JSON already says what was used.
-- **A new constant, not a new knob:** a `LOUD_PERCENTILE` of 99 next to the existing `FLOOR_DB`, `NOISE_MARGIN_DB`, and `HEADROOM_DB`. No flag, no environment variable, no schema change (spec Resolved Question 1).
+- **One function changes:** `threshold_db` in `crates/decompile/src/silence.rs` becomes `max(max(min(−40, p99 − 12), −70), min(p10 + 6, p90 − 12))`, with the new constants `LOUD_PERCENTILE = 99` and `FLOOR_LIMIT_DB = −70`. The bound was added during planning (advisor review): without it a recording with under 1% sound gets a threshold below its own silence and loses its gaps. `analyze`, `detect_gaps`, the burst estimator in `asr.rs`, and `diff` all read the threshold from there, so nothing else needs to learn about it. The result is stored in `silence_threshold_db`, so the JSON already says what was used.
+- **New constants, not a new knob:** `LOUD_PERCENTILE` and `FLOOR_LIMIT_DB` next to the existing `FLOOR_DB`, `NOISE_MARGIN_DB`, and `HEADROOM_DB`. No flag, no environment variable, no schema change (spec Resolved Question 1).
 - **Percentiles keep the existing nearest-rank `rank`.** The Python model in the spec used the same rule and reproduced the binary's p10 to 0.03 dB.
 - **Baseline first.** Before any change, save every fixture's `edit_dna.json` and the real iPhone recording's `silence_gaps` and `silence_threshold_db` from the current build. After Task 2 they must match apart from timings (criterion 3). The Reels file's before-value is already known: one gap, 0–15,092 ms, threshold −40.0.
-- **`quiet12` is a tone at −46 dBFS** with a planted 0.5 s mute, 12 s, black video. A tone at that level has p99 near −49 dB (under −28), so the new floor applies; its p10 is the mute (−120), so the noise term does not decide.
-- **Unit tests pin the cases the first draft of the rule would have broken:** 95 windows at −120 plus 5 at −14, and 92 at −60 plus 8 at −20, both staying at −40.
+- **`quiet12` is a 440 Hz tone at −46 dB peak, which `window_db` reads as −49 dB RMS** (checked with ffmpeg `astats`: lavfi `sine` has a fixed peak of −18 dBFS, so the fixture applies `volume=-28dB`). It has a planted 0.5 s mute in 12 s, about 4% of the windows, so p10 is the tone (−49), not the mute. The threshold is then `max(max(min(−40, −49 − 12), −70), min(−49 + 6, −49 − 12)) = max(−61, −61) = −61`: the mute (−120) is a gap and the tone (−49) is not. Task 1 checks the window level of the file with ffmpeg, not only that it exists.
+- **Unit tests pin the cases the first drafts of the rule would have broken:** 95 windows at −120 plus 5 at −14, and 92 at −60 plus 8 at −20, both staying at −40; and 995 at −120 plus 5 at −14, which the bound holds at −70 instead of −132.
 
 ## Task List
 
