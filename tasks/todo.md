@@ -50,7 +50,7 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/fast-decode.md](../docs/specs/
 - [x] Unit tests: HEVC tries hardware under `auto`; H.264 and other codecs use software; `software` forces software; `decode_note` text for each case, and unchanged for 8-bit software
 - [x] `draft12_10bit` and `textured_cuts12` (as HEVC) give the same `edit_dna.json` with hardware and with `--decoder software`, apart from timings and `decode_note`; on macOS the test asserts that the note says the media engine ran
 - [x] With hardware failing (forced in a test), the output equals software's and `decode_note` gives the reason
-- [x] Decoding the 12 s HEVC fixture 50 times in one process does not grow memory beyond a stated bound
+- [x] Decoding a 2 s 1280×720 HEVC clip 50 times in one process does not grow memory beyond 20 MiB, and an HDR10 clip does not pile up side data on the reused frame
 - [x] Docs: `docs/cli.md` (`--decoder`), `docs/edit-dna.md` (`decode_note`), ADR-012, CHANGELOG
 
 **Verification:**

@@ -94,7 +94,7 @@ textured_cuts12_hevc() (
   textured_cuts_shots "$1"
 )
 
-# textured_cuts12_hevc8 flagged as full range (0-255), as some Android and
+# textured_cuts12_hevc8 (the 8-bit variant) flagged as full range (0-255), as some Android and
 # screen-recording exports are. FFmpeg's software decoder reads it as yuvj420p;
 # the media engine returns nv12 and only the frame metadata says "full".
 textured_cuts12_hevc_full() (

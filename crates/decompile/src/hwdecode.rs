@@ -105,6 +105,24 @@ mod videotoolbox {
         ffi::AVPixelFormat::AV_PIX_FMT_NONE
     }
 
+    /// Whether `software` already holds a frame in a pixel format other than the
+    /// one `hardware` copies to (`nv12` or `p010`).
+    fn software_format_changed(hardware: &VideoFrame, software: &VideoFrame) -> bool {
+        // SAFETY: `hardware` is a valid frame. A VideoToolbox frame carries a
+        // frames context, whose data is an `AVHWFramesContext`; both pointers
+        // are checked for null before they are read.
+        let target = unsafe {
+            let frames = (*hardware.as_ptr()).hw_frames_ctx;
+            if frames.is_null() || (*frames).data.is_null() {
+                return false;
+            }
+            (*((*frames).data as *const ffi::AVHWFramesContext)).sw_format as i32
+        };
+        // SAFETY: `software` is a valid frame and `format` is a plain field.
+        let held = unsafe { (*software.as_ptr()).format };
+        held != ffi::AVPixelFormat::AV_PIX_FMT_NONE as i32 && held != target
+    }
+
     /// Copy a decoded hardware frame to `software` (`nv12` or `p010`), with its
     /// timestamps and color metadata.
     pub(crate) fn download(hardware: &VideoFrame, software: &mut VideoFrame) -> Result<(), String> {
@@ -114,18 +132,21 @@ mod videotoolbox {
                 hardware.format()
             ));
         }
-        // The transfer fills the buffers `software` already has, at the size
-        // they were made for, and does not check that the new frame is the same
-        // size. A stream that changes size would be copied into the old buffers
-        // and cropped without an error, so start from an empty frame instead.
-        if software.width() != hardware.width() || software.height() != hardware.height() {
+        // The transfer fills the buffers `software` already has, in the size and
+        // pixel format they were made for, and libavutil requires the new frame
+        // to match. A stream that changes size or bit depth would be copied
+        // into the old buffers and cropped, or refused, so start from an empty
+        // frame instead.
+        if software.width() != hardware.width()
+            || software.height() != hardware.height()
+            || software_format_changed(hardware, software)
+        {
             *software = VideoFrame::empty();
         }
         // SAFETY: both frames are valid for the calls, and the side data array is
-        // the one `software` owns. `software` is empty or
-        // has the size of `hardware`, which libavutil requires, so the transfer
-        // allocates its buffers or fills ones of the right size. A change of
-        // pixel format makes the call fail, and is reported below.
+        // the one `software` owns. `software` is empty or has the size and
+        // pixel format that `hardware` copies to, which libavutil requires, so
+        // the transfer allocates its buffers or fills ones that fit.
         unsafe {
             let code = ffi::av_hwframe_transfer_data(software.as_mut_ptr(), hardware.as_ptr(), 0);
             if code < 0 {

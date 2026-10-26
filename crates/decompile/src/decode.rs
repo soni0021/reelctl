@@ -1726,8 +1726,10 @@ mod tests {
 
     #[test]
     fn the_software_note_does_not_say_the_media_engine_is_unavailable() {
-        assert!(!DECODE_NOTE.contains("does not expose"), "{DECODE_NOTE}");
-        assert!(!DECODE_NOTE.contains("slower"), "{DECODE_NOTE}");
+        let note = decode_note(VideoFormat::default(), &DecoderUsed::Software);
+        assert!(note.contains("software decode"), "{note}");
+        assert!(!note.contains("VideoToolbox"), "{note}");
+        assert!(!note.contains("hwdevice"), "{note}");
     }
 
     #[test]

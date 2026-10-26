@@ -110,7 +110,7 @@ Test-first.
 - **End-to-end, default suite:**
   - `textured_cuts12` gives the planted cuts, from both decoders where hardware is available. The hardware test asserts on macOS that `decode_note` says the media engine ran (a silent fallback would make the two equal by construction); elsewhere it asserts that it did not.
   - `draft12_10bit` is HEVC, so it takes the hardware path: its `edit_dna.json` equals the software result.
-  - `textured_cuts12_hevc_full` (full-range 8-bit, which the media engine returns as `nv12`) `resize12_hevc` and `shrink12_hevc` (streams that change size), and `depth12_hevc` (a change of bit depth, which falls back to software) give the same results from both decoders; an HDR10 clip checks that side data does not pile up on the reused frame.
+  - `textured_cuts12_hevc_full` (full-range 8-bit, which the media engine returns as `nv12`) `resize12_hevc` and `shrink12_hevc` (streams that change size), and `depth12_hevc` (a change of bit depth, which the media engine decodes) give the same results from both decoders; an HDR10 clip checks that side data does not pile up on the reused frame.
   - The existing fixtures are unchanged apart from timings.
 - **Manual, outside the repo:** the known-cut corpus in all four encodings. The new path's `edit_dna.json` equals the software path's: same cuts, scores within 0.005, shot colors and thumbnails equal. Then the real iPhone file, three alternating runs against software.
 

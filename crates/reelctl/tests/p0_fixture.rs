@@ -610,10 +610,9 @@ fn a_hevc_stream_that_changes_size_decodes_the_same_on_both_decoders() {
     let _ = fs::remove_dir_all(&root);
 }
 
-/// A stream that changes from 8-bit to 10-bit part-way through cannot be copied
-/// out of the media engine into the frame made for the first format. Either
-/// decoder may end up doing the work, but the results must be the same, and
-/// the note must say which one ran.
+/// A stream that changes from 8-bit to 10-bit part-way through needs its frame
+/// copy remade in the new pixel format. The media engine must decode it, with
+/// the same results as software.
 #[test]
 fn a_hevc_stream_that_changes_bit_depth_decodes_the_same_on_both_decoders() {
     let root = std::env::temp_dir().join(format!("reelctl-depth-{}", std::process::id()));
@@ -626,10 +625,10 @@ fn a_hevc_stream_that_changes_bit_depth_decodes_the_same_on_both_decoders() {
     let (soft, soft_views) = decompile_with(&root, &hevc, "soft", "software");
 
     if cfg!(target_os = "macos") {
-        let note = &auto.decode_note;
         assert!(
-            note.contains("Apple media engine") || note.contains("was tried and not used"),
-            "{note}"
+            auto.decode_note.contains("Apple media engine"),
+            "the hardware path did not run: {}",
+            auto.decode_note
         );
     }
     assert_eq!(auto.frame_size, soft.frame_size);
