@@ -7,7 +7,7 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/comparative-diff.md](../docs/s
 **Description:** Save the baselines of `reelctl diff` first (every existing fixture pair, and the two real reels in both directions). Then, test-first in `crates/diff`: per-reel metrics, the 5 s rhythm windows with their votes, `rhythm_gap` and `pause_density`, the payoff rule for several outliers, and `compare_many`.
 
 **Acceptance criteria:**
-- [ ] Baselines saved; the failing tests committed before the implementation
+- [ ] Baselines saved; the failing tests committed before the implementation, in a commit that compiles (public types and signatures with honest stub bodies, so the tests fail on assertions)
 - [ ] Metrics: mean and longest shot with and without cuts, dead-air count and per minute, silent share, `words_source`, and no division by zero for a zero-length reel
 - [ ] Rhythm: counts per window for the draft and each outlier; an ended outlier is `None` and does not vote; the last window is short
 - [ ] `rhythm_gap`: 2 of 3 yes, 1 of 2 no, 1 of 1 yes; adjacent windows merge; no flag when the draft cuts as often; none after every outlier has ended
@@ -34,7 +34,8 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/comparative-diff.md](../docs/s
 **Acceptance criteria:**
 - [ ] `draft12` against `outlier12`: `flags` exactly as today, plus `comparison` with both reels' metrics and a `rhythm_gap` for 0–5 s
 - [ ] `draft12` against `outlier12` and `textured_cuts12`: per-outlier metrics and window rows, and `rhythm_gap` only where both outliers cut and the draft does not
-- [ ] Four `--outlier` arguments exit with code 2 and a message; zero still exits with code 2 from clap
+- [ ] Four `--outlier` arguments exit with code 2 (through clap's error path, not `main`'s exit 1) and a message naming the limit of three; zero still exits with code 2 from clap
+- [ ] Each reel carries a `name` in the metrics (file name without directory or `.edit_dna.json`), and the text report's column headings use it
 - [ ] `--format text` has the table header, the window rows, and the flag lines; `--format json` parses and is the default
 - [ ] The existing diff end-to-end tests pass unchanged, including the version 1 outlier test
 - [ ] `flags` equals the Task 1 baselines for every fixture pair
