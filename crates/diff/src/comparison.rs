@@ -4,10 +4,10 @@
 //! The findings live in [`Comparison::flags`], never in [`Report::flags`], so
 //! everything that reads the older flags keeps working.
 
-use edit_dna::EditDna;
+use edit_dna::{EditDna, PAYOFF_WINDOW_END_MS, PAYOFF_WINDOW_START_MS};
 use serde::{Deserialize, Serialize};
 
-use crate::{compare, DiffFlag};
+use crate::{push_dead_air, push_static_windows, DiffFlag, DEAD_AIR_LIMIT_MS};
 
 /// Length of one cut-rhythm window.
 pub const RHYTHM_WINDOW_MS: u64 = 5_000;
@@ -85,36 +85,199 @@ pub struct Report {
     pub comparison: Comparison,
 }
 
+/// More than half of `counted`, the rule for an outlier majority.
+fn more_than_half(with: usize, counted: usize) -> bool {
+    counted > 0 && 2 * with > counted
+}
+
+/// Shot lengths in milliseconds, from the start to each cut and to the end.
+fn shot_lengths(dna: &EditDna) -> Vec<u64> {
+    if dna.duration_ms == 0 {
+        return Vec::new();
+    }
+    let mut bounds = vec![0];
+    bounds.extend(
+        dna.cuts
+            .iter()
+            .map(|cut| cut.time_ms)
+            .filter(|time_ms| *time_ms > 0 && *time_ms < dna.duration_ms),
+    );
+    bounds.push(dna.duration_ms);
+    bounds.sort_unstable();
+    bounds.dedup();
+    bounds.windows(2).map(|pair| pair[1] - pair[0]).collect()
+}
+
 /// Metrics of one reel.
 pub fn reel_metrics(reel: NamedReel<'_>) -> ReelMetrics {
+    let dna = reel.dna;
+    let shots = shot_lengths(dna);
+    let mean_shot_ms = match u64::try_from(shots.len()) {
+        Ok(count) if count > 0 => shots.iter().sum::<u64>() / count,
+        _ => 0,
+    };
+    let dead_air_count = dna
+        .silence_gaps
+        .iter()
+        .filter(|gap| gap.duration_ms > DEAD_AIR_LIMIT_MS)
+        .count();
+    let silent_ms: u64 = dna.silence_gaps.iter().map(|gap| gap.duration_ms).sum();
+    let (dead_air_per_minute, silent_share) = if dna.duration_ms == 0 {
+        (0.0, 0.0)
+    } else {
+        let duration = dna.duration_ms as f64;
+        (
+            dead_air_count as f64 * 60_000.0 / duration,
+            silent_ms as f64 / duration,
+        )
+    };
     ReelMetrics {
         name: reel.name.to_string(),
-        duration_ms: 0,
-        cut_count: 0,
-        mean_shot_ms: 0,
-        longest_shot_ms: 0,
-        dead_air_count: 0,
-        dead_air_per_minute: 0.0,
-        silent_share: 0.0,
-        words_per_minute: 0.0,
-        words_source: String::new(),
-        integrated_lufs: 0.0,
+        duration_ms: dna.duration_ms,
+        cut_count: dna.cuts.len(),
+        mean_shot_ms,
+        longest_shot_ms: shots.iter().copied().max().unwrap_or(0),
+        dead_air_count,
+        dead_air_per_minute,
+        silent_share,
+        words_per_minute: dna.words_per_minute,
+        words_source: dna.asr_backend.as_str().to_string(),
+        integrated_lufs: dna.integrated_lufs,
+    }
+}
+
+fn cuts_between(dna: &EditDna, start_ms: u64, end_ms: u64) -> usize {
+    dna.cuts
+        .iter()
+        .filter(|cut| cut.time_ms >= start_ms && cut.time_ms < end_ms)
+        .count()
+}
+
+/// Windows over the draft's length. An outlier that ended before a window starts
+/// has no count there.
+fn rhythm_windows(draft: &EditDna, outliers: &[NamedReel<'_>]) -> Vec<RhythmWindow> {
+    let mut windows = Vec::new();
+    let mut start_ms = 0;
+    while start_ms < draft.duration_ms {
+        let end_ms = (start_ms + RHYTHM_WINDOW_MS).min(draft.duration_ms);
+        windows.push(RhythmWindow {
+            start_ms,
+            end_ms,
+            draft_cuts: cuts_between(draft, start_ms, end_ms),
+            outlier_cuts: outliers
+                .iter()
+                .map(|outlier| {
+                    (outlier.dna.duration_ms > start_ms)
+                        .then(|| cuts_between(outlier.dna, start_ms, end_ms))
+                })
+                .collect(),
+        });
+        start_ms = end_ms;
+    }
+    windows
+}
+
+/// Windows where the draft has no cut and most of the outliers still running do,
+/// with adjacent ones joined. A joined span carries the counts of its weakest
+/// window, the one with the fewest outliers cutting.
+fn rhythm_gaps(windows: &[RhythmWindow]) -> Vec<RelativeFlag> {
+    let mut spans: Vec<(u64, u64, usize, usize)> = Vec::new();
+    let mut open = false;
+    for window in windows {
+        let counted = window.outlier_cuts.iter().flatten().count();
+        let with_cut = window
+            .outlier_cuts
+            .iter()
+            .flatten()
+            .filter(|n| **n > 0)
+            .count();
+        if window.draft_cuts > 0 || !more_than_half(with_cut, counted) {
+            open = false;
+            continue;
+        }
+        match spans.last_mut() {
+            Some(span) if open => {
+                span.1 = window.end_ms;
+                if with_cut < span.2 {
+                    span.2 = with_cut;
+                    span.3 = counted;
+                }
+            }
+            _ => spans.push((window.start_ms, window.end_ms, with_cut, counted)),
+        }
+        open = true;
+    }
+    spans
+        .into_iter()
+        .map(
+            |(window_start_ms, window_end_ms, outliers_with_cut, outliers_counted)| {
+                RelativeFlag::RhythmGap {
+                    window_start_ms,
+                    window_end_ms,
+                    outliers_with_cut,
+                    outliers_counted,
+                }
+            },
+        )
+        .collect()
+}
+
+/// The middle value of `values`, or the mean of the two middle ones.
+fn median(mut values: Vec<f64>) -> Option<f64> {
+    values.sort_by(f64::total_cmp);
+    let middle = values.len() / 2;
+    match values.len() {
+        0 => None,
+        len if len % 2 == 1 => Some(values[middle]),
+        _ => Some((values[middle - 1] + values[middle]) / 2.0),
+    }
+}
+
+fn pause_density(draft: &ReelMetrics, outliers: &[ReelMetrics]) -> Option<RelativeFlag> {
+    let outlier_per_minute = median(outliers.iter().map(|m| m.dead_air_per_minute).collect())?;
+    let draft_per_minute = draft.dead_air_per_minute;
+    (draft_per_minute > outlier_per_minute * PAUSE_DENSITY_RATIO
+        && draft_per_minute - outlier_per_minute >= PAUSE_DENSITY_MIN_EXTRA_PER_MINUTE)
+        .then_some(RelativeFlag::PauseDensity {
+            draft_per_minute,
+            outlier_per_minute,
+        })
+}
+
+/// The payoff flag: the draft has no cue in the window, and more than half of
+/// the outliers do. With one outlier this is [`compare`]'s rule.
+fn push_missing_payoff(flags: &mut Vec<DiffFlag>, draft: &EditDna, outliers: &[NamedReel<'_>]) {
+    let with_cue = outliers
+        .iter()
+        .filter(|outlier| outlier.dna.payoff_window.has_cue)
+        .count();
+    if !draft.payoff_window.has_cue && more_than_half(with_cue, outliers.len()) {
+        flags.push(DiffFlag::MissingPayoffCue {
+            window_start_ms: PAYOFF_WINDOW_START_MS,
+            window_end_ms: PAYOFF_WINDOW_END_MS,
+        });
     }
 }
 
 /// Compare a draft with one to three outliers.
 pub fn compare_many(draft: NamedReel<'_>, outliers: &[NamedReel<'_>]) -> Report {
-    let flags = outliers
-        .first()
-        .map(|outlier| compare(draft.dna, outlier.dna).flags)
-        .unwrap_or_default();
+    let mut flags = Vec::new();
+    push_dead_air(&mut flags, draft.dna);
+    push_static_windows(&mut flags, draft.dna);
+    push_missing_payoff(&mut flags, draft.dna, outliers);
+
+    let draft_metrics = reel_metrics(draft);
+    let outlier_metrics: Vec<ReelMetrics> = outliers.iter().copied().map(reel_metrics).collect();
+    let windows = rhythm_windows(draft.dna, outliers);
+    let mut relative = rhythm_gaps(&windows);
+    relative.extend(pause_density(&draft_metrics, &outlier_metrics));
     Report {
         flags,
         comparison: Comparison {
-            draft: reel_metrics(draft),
-            outliers: outliers.iter().copied().map(reel_metrics).collect(),
-            windows: Vec::new(),
-            flags: Vec::new(),
+            draft: draft_metrics,
+            outliers: outlier_metrics,
+            windows,
+            flags: relative,
         },
     }
 }
@@ -122,6 +285,7 @@ pub fn compare_many(draft: NamedReel<'_>, outliers: &[NamedReel<'_>]) -> Report 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compare;
     use edit_dna::{AsrBackend, Cut, SilenceGap};
 
     fn reel(duration_ms: u64, cuts: &[u64]) -> EditDna {
@@ -408,9 +572,13 @@ mod tests {
     fn the_report_serializes_with_flags_first_and_a_comparison() {
         let draft = reel(15_092, &[]);
         let outlier = reel(38_498, &[8_466]);
-        let value = serde_json::to_value(run(&draft, &[&outlier])).expect("json");
-        let keys: Vec<&String> = value.as_object().expect("object").keys().collect();
-        assert_eq!(keys, ["flags", "comparison"]);
+        let report = run(&draft, &[&outlier]);
+        // A `Value` sorts its keys, so read the order from the text.
+        let text = serde_json::to_string(&report).expect("json");
+        let flags_at = text.find("\"flags\"").expect("flags");
+        let comparison_at = text.find("\"comparison\"").expect("comparison");
+        assert!(flags_at < comparison_at, "{text}");
+        let value = serde_json::to_value(&report).expect("json");
         assert_eq!(value["comparison"]["flags"][0]["kind"], "rhythm_gap");
         assert_eq!(value["comparison"]["draft"]["name"], "draft");
         assert_eq!(value["comparison"]["outliers"][0]["name"], "a");

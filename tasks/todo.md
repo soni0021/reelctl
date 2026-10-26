@@ -8,15 +8,15 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/comparative-diff.md](../docs/s
 
 **Acceptance criteria:**
 - [x] Baselines saved (40 pairs: 8 drafts × 5 outliers, including both real reels, single outlier); the failing tests committed before the implementation, in a commit that compiles (public types and signatures with honest stub bodies, so the tests fail on assertions)
-- [ ] Metrics: mean and longest shot with and without cuts, dead-air count and per minute, silent share, `words_source`, and no division by zero for a zero-length reel
-- [ ] Rhythm: counts per window for the draft and each outlier; an ended outlier is `None` and does not vote; the last window is short
-- [ ] `rhythm_gap`: 2 of 3 yes, 1 of 2 no, 1 of 1 yes; adjacent windows merge; no flag when the draft cuts as often; none after every outlier has ended
-- [ ] `pause_density`: nothing below 1.5× or under 3 extra per minute; one flag above both; the median of two outliers is their mean
-- [ ] Payoff with one, two (both needed), and three (two needed) outliers; with one it equals `compare`
-- [ ] `compare` and its existing tests are untouched and pass
+- [x] Metrics: mean and longest shot with and without cuts, dead-air count and per minute, silent share, `words_source`, and no division by zero for a zero-length reel
+- [x] Rhythm: counts per window for the draft and each outlier; an ended outlier is `None` and does not vote; the last window is short
+- [x] `rhythm_gap`: 2 of 3 yes, 1 of 2 no, 1 of 1 yes; adjacent windows merge; no flag when the draft cuts as often; none after every outlier has ended
+- [x] `pause_density`: nothing below 1.5× or under 3 extra per minute; one flag above both; the median of two outliers is their mean
+- [x] Payoff with one, two (both needed), and three (two needed) outliers; with one it equals `compare`
+- [x] `compare` and its existing tests are untouched and pass
 
 **Verification:**
-- [ ] `cargo test -p diff` (new tests red first); `cargo fmt`; no warnings
+- [x] `cargo test -p diff` (new tests red first); `cargo fmt`; no warnings
 
 **Dependencies:** None
 
@@ -25,7 +25,7 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/comparative-diff.md](../docs/s
 **Estimated scope:** Medium
 
 ### Checkpoint A
-- [ ] `cargo test -p diff` passes
+- [x] `cargo test -p diff` passes
 
 ## Task 2: `--outlier` up to three times, `comparison` in the JSON, and `--format text`
 

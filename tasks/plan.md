@@ -23,10 +23,10 @@ Let `reelctl diff` compare a draft with one to three outliers: per-reel metrics,
 ## Task List
 
 ### Phase 1: Comparison
-- [ ] Task 1: Metrics, rhythm windows, relative findings, and multi-outlier payoff in `crates/diff`
+- [x] Task 1: Metrics, rhythm windows, relative findings, and multi-outlier payoff in `crates/diff`
 
 ### Checkpoint A
-- [ ] `cargo test -p diff` passes; `compare` and its existing tests are untouched
+- [x] `cargo test -p diff` passes; `compare` and its existing tests are untouched
 
 ### Phase 2: Command line
 - [ ] Task 2: `--outlier` up to three times, `comparison` in the JSON, and `--format text`
