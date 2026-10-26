@@ -94,6 +94,33 @@ textured_cuts12_hevc() (
   textured_cuts_shots "$1"
 )
 
+# textured_cuts12_hevc8 flagged as full range (0-255), as some Android and
+# screen-recording exports are. FFmpeg's software decoder reads it as yuvj420p;
+# the media engine returns nv12 and only the frame metadata says "full".
+textured_cuts12_hevc_full() (
+  video_codec=(-c:v libx265 -preset fast -crf 24 -pix_fmt yuv420p -color_range pc -tag:v hvc1
+    -x265-params "keyint=25:min-keyint=25:scenecut=0:bframes=3:range=full:log-level=error")
+  textured_cuts_shots "$1"
+)
+
+# 6 s of HEVC that grows from 320x180 to 640x360 after 3 s, as raw Annex B: a
+# new SPS and a keyframe, with no container to hold one frame size. Only the
+# frame size changes. Video only, so it has no silence and no words.
+resize12_hevc() {
+  local out="$1" dir
+  dir="$(mktemp -d -t reelctl-resize)"
+  for size in 320x180 640x360; do
+    ffmpeg -y -hide_banner -loglevel error \
+      -f lavfi -i "testsrc2=s=${size}:r=24:d=3" \
+      -c:v libx265 -preset fast -crf 24 -pix_fmt yuv420p \
+      -x265-params "keyint=25:min-keyint=25:scenecut=0:bframes=3:log-level=error" \
+      -f hevc "${dir}/${size}.hevc"
+  done
+  mkdir -p "$(dirname "$out")"
+  cat "${dir}/320x180.hevc" "${dir}/640x360.hevc" > "$out"
+  rm -rf "$dir"
+}
+
 outlier12() {
   local out="$1"
   local size="${2:-640x360}"
@@ -182,6 +209,12 @@ case "$cmd" in
   textured_cuts12_hevc8)
     textured_cuts12_hevc "$out" yuv420p
     ;;
+  textured_cuts12_hevc_full)
+    textured_cuts12_hevc_full "$out"
+    ;;
+  resize12_hevc)
+    resize12_hevc "$out"
+    ;;
   outlier12)
     outlier12 "$out"
     ;;
@@ -207,12 +240,14 @@ case "$cmd" in
     textured_cuts12 "${dir}/textured_cuts_12s.mp4"
     textured_cuts12_hevc "${dir}/textured_cuts_12s_hevc.mp4"
     textured_cuts12_hevc "${dir}/textured_cuts_12s_hevc8.mp4" yuv420p
+    textured_cuts12_hevc_full "${dir}/textured_cuts_12s_hevc_full.mp4"
+    resize12_hevc "${dir}/resize_6s.hevc"
     outlier12 "${dir}/outlier_12s.mp4"
     noisy12 "${dir}/noisy_12s.mp4"
     bench60 "${dir}/bench_60s.mp4"
     ;;
   *)
-    echo "usage: generate.sh draft12|draft12_10bit|draft12_44k|textured_cuts12|textured_cuts12_hevc|textured_cuts12_hevc8|outlier12|noisy12|bench60|speech12|tonespeech|all [out.mp4]" >&2
+    echo "usage: generate.sh draft12|draft12_10bit|draft12_44k|textured_cuts12|textured_cuts12_hevc|textured_cuts12_hevc8|textured_cuts12_hevc_full|resize12_hevc|outlier12|noisy12|bench60|speech12|tonespeech|all [out.mp4]" >&2
     exit 2
     ;;
 esac

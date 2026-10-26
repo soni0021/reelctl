@@ -83,18 +83,20 @@ bash fixtures/generate.sh textured_cuts12 /tmp/textured_cuts12.mp4
 | `crates/decompile/src/hwdecode.rs` | New: VideoToolbox device, `get_format` callback, frame transfer, the only `unsafe` |
 | `crates/reelctl/src/main.rs`, `docs/cli.md` | A `--decoder <auto\|software>` option on `decompile`, so the software path can be forced for comparison and as an escape hatch (added in planning; `auto` is the default) |
 | `crates/decompile/src/decode.rs` | Choose hardware or software per codec; `p010` plane support; `decode_note` says which ran |
-| `fixtures/generate.sh` | `textured_cuts12`: 12 s, 640×360, hard cuts between smoothly changing textured sources, B-frames, a keyframe every 25 frames, scene-cut detection off. A small stand-in for the corpus. `textured_cuts12_hevc` (Main 10) and `textured_cuts12_hevc8` (Main) are the same shots as HEVC, for the media engine |
+| `fixtures/generate.sh` | `textured_cuts12`: 12 s, 640×360, hard cuts between smoothly changing textured sources, B-frames, a keyframe every 25 frames, scene-cut detection off. A small stand-in for the corpus. `textured_cuts12_hevc` (Main 10) and `textured_cuts12_hevc8` (Main) are the same shots as HEVC, for the media engine. `textured_cuts12_hevc_full` is the 8-bit version flagged full range, and `resize12_hevc` is raw HEVC that grows from 320×180 to 640×360, both added after the audit found the media engine path wrong on them |
 | `crates/reelctl/tests/p0_fixture.rs` | End-to-end tests |
 | Docs | `docs/status.md` (measurements, the revised statement of the target), `docs/cli.md`, `docs/edit-dna.md` (`decode_note`), ADR-012, ADR-001 superseded in part, README, CHANGELOG, the capability map |
 
 ## Code Style
 
 ```rust
-/// Why the hardware decoder was not used, for `decode_note`.
-enum HwSkip {
-    Codec,
-    NoDevice(String),
-    FirstFrame(String),
+/// How a file was decoded, for `decode_note`. A failed hardware attempt keeps
+/// its reason as text.
+enum DecoderUsed {
+    Software,
+    Forced,
+    Hardware,
+    Fallback(String),
 }
 ```
 
@@ -106,8 +108,9 @@ Test-first.
 
 - **Unit tests, no media:** `p010` plane reads return the high byte of each 16-bit sample, with strides wider than the row; the codec-to-decoder choice (HEVC tries hardware, H.264 and the rest use software); `decode_note` text for each case.
 - **End-to-end, default suite:**
-  - `textured_cuts12` gives the planted cuts, from both decoders where hardware is available. The hardware test skips itself, with a printed reason, on a machine with no VideoToolbox.
+  - `textured_cuts12` gives the planted cuts, from both decoders where hardware is available. The hardware test asserts on macOS that `decode_note` says the media engine ran (a silent fallback would make the two equal by construction); elsewhere it asserts that it did not.
   - `draft12_10bit` is HEVC, so it takes the hardware path: its `edit_dna.json` equals the software result.
+  - `textured_cuts12_hevc_full` (full-range 8-bit, which the media engine returns as `nv12`) and `resize12_hevc` (a stream that changes size) give the same results from both decoders.
   - The existing fixtures are unchanged apart from timings.
 - **Manual, outside the repo:** the known-cut corpus in all four encodings. The new path's `edit_dna.json` equals the software path's: same cuts, scores within 0.005, shot colors and thumbnails equal. Then the real iPhone file, three alternating runs against software.
 
@@ -119,7 +122,7 @@ Test-first.
 
 ## Success Criteria
 
-1. **Same results.** On the known-cut corpus in all four encodings, and on the original iPhone file, the hardware path gives the same `cuts` (same frame indices and times), scene scores within 0.0001, and equal per-shot colors and thumbnails as the software path. (The software path filters every frame; see Behavior. The 0.005 first written here was loose because the old software shortcut differed by up to 0.022.)
+1. **Same results.** On the known-cut corpus in all four encodings, and on the original iPhone file, the hardware path gives the same `cuts` (same frame indices and times), scene scores of the cuts within 0.0001 (the equality test compares the cuts' scores, and shot colors and thumbnails, which depend on every frame), and equal per-shot colors and thumbnails as the software path, also for full-range 8-bit video and for a stream that grows. (The software path filters every frame; see Behavior. The 0.005 first written here was loose because the old software shortcut differed by up to 0.022.)
 2. **Faster on HEVC.** On the original iPhone file, `signal_ms` is at least 40% lower than software (measured 8.9 s → 4.0 s, 55%), in three alternating runs.
 3. **Safe fallback.** With hardware forced off, and with a file the hardware decoder rejects, the output equals the software output, and `decode_note` says why software ran.
 4. **Nothing else moves.** All existing fixtures give identical `edit_dna.json` apart from timings and `decode_note` (whose text changed with the loop filter and the decoder names), and byte-identical PNGs; the 60 s H.264 benchmark's median `signal_ms` stays within 242–262 ms.

@@ -114,10 +114,17 @@ mod videotoolbox {
                 hardware.format()
             ));
         }
-        // SAFETY: both frames are valid for the calls. `software` is reused
-        // between frames, so its buffers already exist and the transfer copies
-        // into them; those frames match in size and format unless the stream
-        // changes, which makes the call fail and is reported below.
+        // The transfer fills the buffers `software` already has, at the size
+        // they were made for, and does not check that the new frame is the same
+        // size. A stream that changes size would be copied into the old buffers
+        // and cropped without an error, so start from an empty frame instead.
+        if software.width() != hardware.width() || software.height() != hardware.height() {
+            *software = VideoFrame::empty();
+        }
+        // SAFETY: both frames are valid for the calls. `software` is empty or
+        // has the size of `hardware`, which libavutil requires, so the transfer
+        // allocates its buffers or fills ones of the right size. A change of
+        // pixel format makes the call fail, and is reported below.
         unsafe {
             let code = ffi::av_hwframe_transfer_data(software.as_mut_ptr(), hardware.as_ptr(), 0);
             if code < 0 {
@@ -135,6 +142,15 @@ mod videotoolbox {
                     ffmpeg_next::Error::from(code)
                 ));
             }
+        }
+        if software.width() != hardware.width() || software.height() != hardware.height() {
+            return Err(format!(
+                "the copied frame is {}x{}, not the decoded {}x{}",
+                software.width(),
+                software.height(),
+                hardware.width(),
+                hardware.height()
+            ));
         }
         Ok(())
     }

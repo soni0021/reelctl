@@ -52,10 +52,7 @@ const HIST_TARGET_H: u32 = 18;
 
 const DECODE_NOTE: &str = "\
 libavcodec frame-threaded software decode (thread_count auto, loop filter on \
-every frame, so the picture is the one the format defines). VideoToolbox hwaccel \
-was slower on the 60s 1080p \
-fixture (3.8s vs 0.38s) and ffmpeg-next does not expose a hwdevice wrapper. \
-Scene score and color are sampled from decoded planes; the hot path does not \
+every frame, so the picture is the one the format defines). Scene score and color are sampled from decoded planes; the hot path does not \
 shell out to ffmpeg.";
 
 /// What the first decoded video frame says about its samples, for `decode_note`.
@@ -1003,7 +1000,7 @@ fn chroma_planes<'a>(
         }
         return Ok(ChromaPlanes::Nv12 {
             uv: plane(frame, 1, depth, chroma_w * 2, chroma_h, "nv12 chroma")?,
-            full: depth == Depth::P010 && frame.color_range() == Range::JPEG,
+            full: frame.color_range() == Range::JPEG,
         });
     }
     if frame.planes() < 3 {
@@ -1568,6 +1565,44 @@ mod tests {
         assert!(VideoFormat::of(&limited).ten_bit);
     }
 
+    /// A 4x4 `nv12` frame of mid-grey, with the given range in its metadata.
+    fn grey_nv12_frame(range: Range) -> VideoFrame {
+        ensure_ffmpeg().expect("ffmpeg");
+        let mut frame = VideoFrame::new(Pixel::NV12, 4, 4);
+        frame.set_color_range(range);
+        for index in 0..2 {
+            frame.data_mut(index).fill(128);
+        }
+        frame
+    }
+
+    /// The media engine returns every 8-bit HEVC frame as `nv12`, and has no
+    /// `yuvj420p` to say "full range", so the metadata is all there is. The
+    /// software decoder reads the same stream as `yuvj420p`, which is full.
+    #[test]
+    fn an_nv12_frame_follows_its_range_metadata() {
+        let limited = grey_nv12_frame(Range::MPEG);
+        let full = grey_nv12_frame(Range::JPEG);
+        let unspecified = grey_nv12_frame(Range::Unspecified);
+        let full_view = yuv_view(&full).expect("nv12 full view");
+        assert_eq!(pixel_rgb(&full_view, 1, 1), [128, 128, 128]);
+        assert_eq!(
+            pixel_rgb(&yuv_view(&limited).expect("nv12 view"), 1, 1),
+            yuv601_to_rgb(128, 128, 128, false)
+        );
+        // No range in the metadata is limited, as for every other format.
+        assert_eq!(
+            pixel_rgb(&yuv_view(&unspecified).expect("nv12 view"), 1, 1),
+            yuv601_to_rgb(128, 128, 128, false)
+        );
+    }
+
+    #[test]
+    fn the_software_note_does_not_say_the_media_engine_is_unavailable() {
+        assert!(!DECODE_NOTE.contains("does not expose"), "{DECODE_NOTE}");
+        assert!(!DECODE_NOTE.contains("slower"), "{DECODE_NOTE}");
+    }
+
     #[test]
     fn hevc_tries_hardware_and_everything_else_decodes_in_software() {
         use ffmpeg::codec::Id;
@@ -1693,8 +1728,8 @@ mod tests {
 
     /// Each hardware decode creates a device and a pool of frames and releases
     /// them with `unsafe` code, so decode one file many times and require the
-    /// process to stop growing. A leaked 640x360 frame per decode would add
-    /// over 40 MB across the second half of the runs.
+    /// process to stop growing. The clip is 1280x720 so that a leaked p010 frame
+    /// per decode (2.6 MiB) would add about 120 MiB over the 45 measured runs.
     #[cfg(target_os = "macos")]
     #[test]
     fn repeated_hardware_decodes_do_not_grow_memory() {
@@ -1702,7 +1737,7 @@ mod tests {
         let path = std::env::temp_dir().join(format!("reelctl-leak-{}.mp4", std::process::id()));
         let status = std::process::Command::new("ffmpeg")
             .args(["-y", "-hide_banner", "-loglevel", "error"])
-            .args(["-f", "lavfi", "-i", "testsrc2=s=640x360:r=24:d=3"])
+            .args(["-f", "lavfi", "-i", "testsrc2=s=1280x720:r=24:d=2"])
             .args([
                 "-c:v",
                 "libx265",
@@ -1721,7 +1756,7 @@ mod tests {
         for run in 1..=50 {
             let reel = decode_planned(&path, Plan::TryHardware).expect("decode");
             assert_eq!(reel.decoder, DecoderUsed::Hardware, "run {run}");
-            assert_eq!(reel.frames.len(), 72);
+            assert_eq!(reel.frames.len(), 48);
             if run == 5 {
                 after_five = resident_kib();
             }
@@ -1730,7 +1765,7 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         let growth_mib = after_fifty.saturating_sub(after_five) / 1024;
         assert!(
-            growth_mib < 30,
+            growth_mib < 20,
             "resident memory grew {growth_mib} MiB between run 5 and run 50"
         );
     }
