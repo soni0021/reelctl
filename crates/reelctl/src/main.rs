@@ -28,14 +28,6 @@ fn run() -> Result<()> {
         Command::Decompile(args) => decompile(args),
         Command::Diff(args) => diff(args),
         Command::WhisperWorker(args) => whisper_worker(args),
-        other => {
-            let _never: std::convert::Infallible = match other {
-                Command::Decompile(_) | Command::Diff(_) | Command::WhisperWorker(_) => {
-                    unreachable!("Command is handled above")
-                }
-            };
-            match _never {}
-        }
     }
 }
 
@@ -147,14 +139,6 @@ impl DetectorArg {
             Self::Auto => CutDetectorChoice::Auto,
             Self::Scene => CutDetectorChoice::Scene,
             Self::Transnet => CutDetectorChoice::TransNet,
-            other => {
-                let _never: std::convert::Infallible = match other {
-                    Self::Auto | Self::Scene | Self::Transnet => {
-                        unreachable!("DetectorArg is handled above")
-                    }
-                };
-                match _never {}
-            }
         }
     }
 }

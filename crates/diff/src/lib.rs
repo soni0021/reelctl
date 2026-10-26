@@ -40,16 +40,6 @@ impl DiffFlag {
             Self::DeadAir { .. } => "dead_air",
             Self::StaticWindow { .. } => "static_window",
             Self::MissingPayoffCue { .. } => "missing_payoff_cue",
-            other => {
-                let _never: std::convert::Infallible = match other {
-                    Self::DeadAir { .. }
-                    | Self::StaticWindow { .. }
-                    | Self::MissingPayoffCue { .. } => {
-                        unreachable!("DiffFlag is handled above")
-                    }
-                };
-                match _never {}
-            }
         }
     }
 }
@@ -170,18 +160,10 @@ mod tests {
             .iter()
             .find(|flag| flag.kind_name() == "dead_air")
             .expect("dead air");
-        match dead {
-            DiffFlag::DeadAir { duration_ms, .. } => assert_eq!(*duration_ms, 500),
-            other => {
-                let _never: std::convert::Infallible = match other {
-                    DiffFlag::DeadAir { .. } => unreachable!("kind was dead_air"),
-                    DiffFlag::StaticWindow { .. } | DiffFlag::MissingPayoffCue { .. } => {
-                        unreachable!("kind was dead_air")
-                    }
-                };
-                match _never {}
-            }
-        }
+        let DiffFlag::DeadAir { duration_ms, .. } = dead else {
+            panic!("expected dead air, got {dead:?}");
+        };
+        assert_eq!(*duration_ms, 500);
         assert!(report.flags.iter().any(|flag| matches!(
             flag,
             DiffFlag::StaticWindow { duration_ms, .. } if *duration_ms > STATIC_WINDOW_LIMIT_MS

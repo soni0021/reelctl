@@ -12,7 +12,7 @@ Apple M3 (8 cores, 16 GB), macOS 26.5, rustc 1.98.1, FFmpeg 8.1.
 
 | Check | Result |
 |---|---|
-| `cargo check --workspace --all-targets` | 2026-10-20: passes with 23 warnings. 2026-10-26, on `main` after the decode-inputs merge: 21 (see Known issues) |
+| `cargo check --workspace --all-targets` | 2026-10-20: passes with 23 warnings. 2026-10-26, on `main` after the decode-inputs merge: 21. 2026-10-26, after removing the unreachable `match` arms: 0 |
 | `cargo test --workspace` | 2026-10-21, on `main`: 31 of 31 pass, plus the whisper model test, which is ignored by default and passes with both models. 2026-10-26, on `main` after the whisper-coverage merge: 57 of 57, and the 2 whisper model tests pass with both models. 2026-10-26, on `main` after the decode-inputs merge: 66 of 66 after 10-bit reading, 76 of 76 after the stream resampler and the audit's extra tests, and the 2 ignored whisper model tests pass with both `base.en` (4.2 s for the file's 3 tests) and Apex (31.3 s) |
 | 60 s benchmark, release build | `signal_ms` 310, 316, 284 over three runs; the target is under 500 |
 | 12 s fixtures (640×360), release build | `signal_ms` 11–21 |
@@ -170,7 +170,6 @@ Not yet listed in AGENTS.md:
 
 ## Known issues
 
-- `cargo check` reports 20 warnings in library and binary code (`unreachable_patterns`, `unreachable_code`), plus 1 in a `diff` unit test. The 20 come from 10 `other => { ... }` arms placed after `match` arms that already cover every case. They do not change behavior.
 - In a `timeline_view` PNG, the thumbnails and the waveform use different time scales. The 8 thumbnails cover about 0.27 s at 30 fps; the waveform and word ticks cover 1.5 s either side of the cut, across the same width.
 - The JSON value for TransNetV2 is `"trans_net_v2"`, but `CutDetectorKind::as_str()` returns `"transnet_v2"`. Nothing emits either until TransNetV2 is linked.
 - Colors are converted from YUV with BT.601 coefficients, while most HD video uses BT.709, so absolute RGB values are slightly off.
