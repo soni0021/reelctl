@@ -3,7 +3,7 @@
 `reelctl` measures how a short vertical video is edited and compares a creator's draft against a top-performing reel (an "outlier") in the same niche.
 
 - `reelctl decompile` turns an MP4 into `edit_dna.json`: cut times, silence gaps, loudness, per-shot color, whether there is a cut near the 9-second payoff mark, and, given a whisper model, timed words. It also writes a `timeline_view` PNG at each cut, so an agent can inspect cuts without opening the video.
-- `reelctl diff` decompiles a draft and flags dead air, long stretches with no cut, and a missing payoff cue.
+- `reelctl diff` decompiles a draft and flags dead air, long stretches with no cut, and a missing payoff cue. With one to three outliers (`--outlier` up to three times) it also compares cut rhythm in 5 s windows, pause density, speaking rate, and loudness, as JSON or as a text table (`--format text`).
 
 This repository is P0 of the plan in [planer.md](planer.md). P1–P3 (trend watchtower, timeline editor, specialist video model) are specified there and not built. Current state, measurements, and known gaps are in [docs/status.md](docs/status.md).
 
@@ -32,7 +32,7 @@ target/release/reelctl diff \
 
 Add `--whisper-model <model.bin>` to `decompile` for real words instead of voiced bursts. HEVC video decodes on the Apple media engine on macOS; add `--decoder software` to force software decoding.
 
-`decompile` prints a one-line summary, writes the JSON, and writes one PNG per cut to `fixtures/generated/outlier_12s.edit_dna_timeline/`. `diff` prints a JSON list of flags. See [docs/cli.md](docs/cli.md).
+`decompile` prints a one-line summary, writes the JSON, and writes one PNG per cut to `fixtures/generated/outlier_12s.edit_dna_timeline/`. `diff` prints a JSON list of flags and a `comparison` of the draft with each outlier. See [docs/cli.md](docs/cli.md).
 
 ## Commands
 
@@ -57,7 +57,7 @@ The Cargo workspace has five crates:
 |---|---|
 | `edit-dna` | Serde types and JSON Schema for `edit_dna.json` |
 | `decompile` | Decode with ffmpeg-next, then find cuts, silence, loudness, per-shot color, and the payoff cue |
-| `diff` | Pacing flags for a draft against an outlier |
+| `diff` | Pacing flags, and a comparison, for a draft against one to three outliers |
 | `filmstrip` | `timeline_view` PNGs at cut boundaries |
 | `reelctl` | The command-line tool |
 

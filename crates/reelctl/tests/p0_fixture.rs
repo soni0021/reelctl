@@ -696,3 +696,179 @@ fn a_hevc_stream_that_changes_bit_depth_decodes_the_same_on_both_decoders() {
 
     let _ = fs::remove_dir_all(&root);
 }
+
+/// `reelctl diff` with the given extra arguments, on fixtures `draft12` and the
+/// listed outliers (decompiled first). Returns the output.
+fn diff_fixtures(
+    root: &std::path::Path,
+    outliers: &[&str],
+    extra: &[&str],
+) -> std::process::Output {
+    let draft = root.join("draft.mp4");
+    if !draft.exists() {
+        generate("draft12", &draft);
+    }
+    let mut command = reelctl();
+    command.args(["diff", "--draft"]).arg(&draft);
+    for kind in outliers {
+        let mp4 = root.join(format!("{kind}.mp4"));
+        let json = root.join(format!("{kind}.edit_dna.json"));
+        if !json.exists() {
+            generate(kind, &mp4);
+            let _ = decompile_with(root, &mp4, kind, "auto");
+        }
+        command.arg("--outlier").arg(&json);
+    }
+    command.args(extra);
+    command.output().expect("spawn diff")
+}
+
+fn scratch(name: &str) -> PathBuf {
+    let root = std::env::temp_dir().join(format!("reelctl-{name}-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("temp dir");
+    root
+}
+
+#[test]
+fn diff_with_one_outlier_keeps_its_flags_and_adds_a_comparison() {
+    let root = scratch("cmp1");
+    let output = diff_fixtures(&root, &["outlier12"], &[]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("json");
+
+    // The flags are what `diff` printed before this feature.
+    let kinds: Vec<&str> = report["flags"]
+        .as_array()
+        .expect("flags")
+        .iter()
+        .filter_map(|flag| flag["kind"].as_str())
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            "dead_air",
+            "static_window",
+            "static_window",
+            "missing_payoff_cue"
+        ]
+    );
+
+    let comparison = &report["comparison"];
+    assert_eq!(comparison["draft"]["name"], "draft");
+    assert_eq!(comparison["outliers"][0]["name"], "outlier12");
+    assert_eq!(comparison["draft"]["cut_count"], 1);
+    assert_eq!(comparison["outliers"][0]["cut_count"], 2);
+    // The draft cuts at 6 s; the outlier at 3 s and 9 s.
+    // The draft also pauses 5 times a minute (one 0.5 s mute in 12 s) where the
+    // outlier never does.
+    let found = comparison["flags"].as_array().expect("relative flags");
+    let kinds: Vec<&str> = found.iter().filter_map(|f| f["kind"].as_str()).collect();
+    assert_eq!(kinds, ["rhythm_gap", "pause_density"], "{found:?}");
+    assert_eq!(found[0]["window_start_ms"], 0);
+    assert_eq!(found[0]["window_end_ms"], 5_000);
+    assert_eq!(found[1]["draft_per_minute"], 5.0);
+    assert_eq!(found[1]["outlier_per_minute"], 0.0);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn diff_with_two_outliers_compares_each_and_votes() {
+    let root = scratch("cmp2");
+    let output = diff_fixtures(&root, &["outlier12", "textured_cuts12"], &[]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("json");
+    let comparison = &report["comparison"];
+    assert_eq!(
+        comparison["outliers"].as_array().expect("outliers").len(),
+        2
+    );
+    assert_eq!(comparison["outliers"][1]["name"], "textured_cuts12");
+    assert_eq!(comparison["outliers"][1]["cut_count"], 3);
+    // 0-5 s: both outliers cut (at 3 s), the draft does not. 5-10 s: the draft cuts.
+    let windows = comparison["windows"].as_array().expect("windows");
+    assert_eq!(windows[0]["draft_cuts"], 0);
+    assert_eq!(windows[0]["outlier_cuts"], serde_json::json!([1, 1]));
+    assert_eq!(windows[1]["draft_cuts"], 1);
+    let found = comparison["flags"].as_array().expect("relative flags");
+    let kinds: Vec<&str> = found.iter().filter_map(|f| f["kind"].as_str()).collect();
+    assert_eq!(kinds, ["rhythm_gap", "pause_density"], "{found:?}");
+    assert_eq!(found[0]["outliers_with_cut"], 2);
+    assert_eq!(found[0]["outliers_counted"], 2);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn diff_with_four_outliers_is_an_argument_error_before_any_decoding() {
+    let root = scratch("cmp4");
+    let output = diff_fixtures(&root, &["outlier12"], &[]);
+    assert!(output.status.success());
+    let json = root.join("outlier12.edit_dna.json");
+    // The draft does not exist: if the count were checked after decoding it,
+    // the error would be about the draft and the exit code 1.
+    let mut command = reelctl();
+    command
+        .args(["diff", "--draft"])
+        .arg(root.join("no-such-draft.mp4"));
+    for _ in 0..4 {
+        command.arg("--outlier").arg(&json);
+    }
+    let output = command.output().expect("spawn diff");
+    assert_eq!(output.status.code(), Some(2), "exit code");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("at most three"), "{stderr}");
+    assert!(stderr.contains("--draft"), "the usage is diff's: {stderr}");
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn diff_without_an_outlier_is_an_argument_error() {
+    let root = scratch("cmp0");
+    let draft = root.join("draft.mp4");
+    generate("draft12", &draft);
+    let output = reelctl()
+        .args(["diff", "--draft"])
+        .arg(&draft)
+        .output()
+        .expect("spawn diff");
+    assert_eq!(output.status.code(), Some(2), "exit code");
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn diff_can_print_a_text_report_and_json_is_the_default() {
+    let root = scratch("cmpt");
+    let text = diff_fixtures(&root, &["outlier12"], &["--format", "text"]);
+    assert!(
+        text.status.success(),
+        "{}",
+        String::from_utf8_lossy(&text.stderr)
+    );
+    let text = String::from_utf8_lossy(&text.stdout).into_owned();
+    let header = text.lines().next().expect("header");
+    assert!(
+        header.contains("draft") && header.contains("outlier12"),
+        "{text}"
+    );
+    assert!(text.contains("cuts per 5 s window"), "{text}");
+    assert!(
+        text.contains("NO CUT 0.0-5.0 s: 1 of 1 outliers cut here, the draft does not"),
+        "{text}"
+    );
+    assert!(text.contains("DEAD AIR 2.01-2.51 s (500 ms)"), "{text}");
+    assert!(text.contains("NO PAYOFF 8-10 s"), "{text}");
+
+    let json = diff_fixtures(&root, &["outlier12"], &["--format", "json"]);
+    assert!(serde_json::from_slice::<serde_json::Value>(&json.stdout).is_ok());
+    let default = diff_fixtures(&root, &["outlier12"], &[]);
+    assert_eq!(json.stdout, default.stdout, "json is the default");
+    let _ = fs::remove_dir_all(&root);
+}

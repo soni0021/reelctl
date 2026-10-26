@@ -7,12 +7,13 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::error::ErrorKind;
+use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use decompile::{
     decompile_file, run_whisper_worker, CutDetectorChoice, DecoderSetting, DecompileRequest,
     WhisperRunner,
 };
-use diff::compare;
+use diff::{compare_many, render_text, NamedReel};
 use edit_dna::EditDna;
 
 fn main() {
@@ -86,9 +87,13 @@ struct DiffArgs {
     /// Draft reel (mp4). Decompiled in-process, then compared.
     #[arg(long)]
     draft: PathBuf,
-    /// Outlier edit_dna.json from a previous decompile.
-    #[arg(long)]
-    outlier: PathBuf,
+    /// Outlier edit_dna.json from a previous decompile. Give it one to three
+    /// times.
+    #[arg(long, required = true)]
+    outlier: Vec<PathBuf>,
+    /// How to print the report.
+    #[arg(long, value_enum, default_value_t = FormatArg::Json)]
+    format: FormatArg,
     #[command(flatten)]
     signal: SignalArgs,
 }
@@ -109,6 +114,12 @@ struct SignalArgs {
     /// where it works, and everything else in software; `software` forces software.
     #[arg(long, value_enum, default_value_t = DecoderArg::Auto)]
     decoder: DecoderArg,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum FormatArg {
+    Json,
+    Text,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -201,7 +212,42 @@ fn decompile(args: DecompileArgs) -> Result<()> {
     Ok(())
 }
 
+/// The most outliers `diff` compares a draft with.
+const MAX_OUTLIERS: usize = 3;
+
+/// A reel's name in the report: its file name without the directory and without
+/// a trailing `.edit_dna.json` or extension.
+fn reel_name(path: &std::path::Path) -> String {
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("reel");
+    match name.strip_suffix(".edit_dna.json") {
+        Some(stem) => stem.to_string(),
+        None => path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or(name)
+            .to_string(),
+    }
+}
+
 fn diff(args: DiffArgs) -> Result<()> {
+    if args.outlier.len() > MAX_OUTLIERS {
+        // An argument error, so it exits with code 2 like clap's own, and shows
+        // `diff`'s usage.
+        let message = format!(
+            "at most three --outlier files are allowed, got {}",
+            args.outlier.len()
+        );
+        let mut command = Cli::command();
+        let error = match command.find_subcommand_mut("diff") {
+            Some(diff) => diff.error(ErrorKind::TooManyValues, message),
+            None => Cli::command().error(ErrorKind::TooManyValues, message),
+        };
+        error.exit();
+    }
+    let draft_name = reel_name(&args.draft);
     let request = DecompileRequest {
         input: args.draft,
         output: None,
@@ -212,14 +258,31 @@ fn diff(args: DiffArgs) -> Result<()> {
         decoder: args.signal.decoder.setting(),
     };
     let draft = decompile_file(&request).context("decompile draft")?;
-    let file =
-        File::open(&args.outlier).with_context(|| format!("open {}", args.outlier.display()))?;
-    let outlier: EditDna = serde_json::from_reader(file).context("parse outlier edit_dna.json")?;
-    let report = compare(&draft.dna, &outlier);
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&report).context("format diff")?
+    let mut outliers: Vec<(String, EditDna)> = Vec::with_capacity(args.outlier.len());
+    for path in &args.outlier {
+        let file = File::open(path).with_context(|| format!("open {}", path.display()))?;
+        let dna: EditDna = serde_json::from_reader(file)
+            .with_context(|| format!("parse outlier {}", path.display()))?;
+        outliers.push((reel_name(path), dna));
+    }
+    let named: Vec<NamedReel<'_>> = outliers
+        .iter()
+        .map(|(name, dna)| NamedReel { name, dna })
+        .collect();
+    let report = compare_many(
+        NamedReel {
+            name: &draft_name,
+            dna: &draft.dna,
+        },
+        &named,
     );
+    match args.format {
+        FormatArg::Json => println!(
+            "{}",
+            serde_json::to_string_pretty(&report).context("format diff")?
+        ),
+        FormatArg::Text => print!("{}", render_text(&report)),
+    }
     Ok(())
 }
 
@@ -248,4 +311,21 @@ fn filmstrip_dir(out: &std::path::Path, explicit: Option<PathBuf>) -> PathBuf {
     let mut dir = out.to_path_buf();
     dir.set_file_name(format!("{stem}_timeline"));
     dir
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::reel_name;
+
+    #[test]
+    fn a_reel_is_named_by_its_file_without_directory_or_suffix() {
+        assert_eq!(reel_name(Path::new("out/reel.edit_dna.json")), "reel");
+        assert_eq!(reel_name(Path::new("dir/x.mp4")), "x");
+        // Dots inside the name stay.
+        assert_eq!(reel_name(Path::new("a.v1.edit_dna.json")), "a.v1");
+        assert_eq!(reel_name(Path::new("my.video.mp4")), "my.video");
+        assert_eq!(reel_name(Path::new("plain")), "plain");
+    }
 }

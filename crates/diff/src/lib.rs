@@ -3,11 +3,23 @@
 //! Dead air, static shots, and a missing 9 second payoff are properties of the
 //! draft. The payoff flag is raised only when the outlier DNA has a cue inside
 //! the 8–10 second window and the draft does not.
+//!
+//! [`compare_many`] compares a draft with one to three outliers: per-reel
+//! metrics, cut rhythm in 5 s windows, and two relative findings, kept apart
+//! from the flags above so those never change.
 
 #![warn(clippy::all)]
 
+mod comparison;
+
 use edit_dna::{EditDna, PAYOFF_WINDOW_END_MS, PAYOFF_WINDOW_START_MS};
 use serde::{Deserialize, Serialize};
+
+pub use comparison::{
+    compare_many, reel_metrics, render_text, Comparison, NamedReel, ReelMetrics, RelativeFlag,
+    Report, RhythmWindow, PAUSE_DENSITY_MIN_EXTRA_PER_MINUTE, PAUSE_DENSITY_RATIO,
+    RHYTHM_WINDOW_MS,
+};
 
 /// Silence longer than this is dead air.
 pub const DEAD_AIR_LIMIT_MS: u64 = 180;
@@ -64,7 +76,7 @@ pub fn compare(draft: &EditDna, outlier: &EditDna) -> DiffReport {
     DiffReport { flags }
 }
 
-fn push_dead_air(flags: &mut Vec<DiffFlag>, draft: &EditDna) {
+pub(crate) fn push_dead_air(flags: &mut Vec<DiffFlag>, draft: &EditDna) {
     for gap in &draft.silence_gaps {
         if gap.duration_ms > DEAD_AIR_LIMIT_MS {
             flags.push(DiffFlag::DeadAir {
@@ -76,7 +88,7 @@ fn push_dead_air(flags: &mut Vec<DiffFlag>, draft: &EditDna) {
     }
 }
 
-fn push_static_windows(flags: &mut Vec<DiffFlag>, draft: &EditDna) {
+pub(crate) fn push_static_windows(flags: &mut Vec<DiffFlag>, draft: &EditDna) {
     let mut bounds = Vec::with_capacity(draft.cuts.len() + 2);
     bounds.push(0);
     for cut in &draft.cuts {

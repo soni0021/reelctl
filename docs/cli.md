@@ -85,19 +85,20 @@ reelctl decompile --input reel.mp4 --out reel.edit_dna.json \
 
 ## reelctl diff
 
-Decompile a draft in memory and compare it with an outlier's edit DNA.
+Decompile a draft in memory and compare it with one to three outliers' edit DNA.
 
 ```bash
-reelctl diff --draft <draft.mp4> --outlier <outlier.edit_dna.json> [options]
+reelctl diff --draft <draft.mp4> --outlier <outlier.edit_dna.json> [--outlier <b.edit_dna.json> ...] [options]
 ```
 
 | Flag | Meaning |
 |---|---|
 | `--draft <path>` | Draft video. It is decompiled in memory; no JSON or PNGs are written for it |
-| `--outlier <path>` | `edit_dna.json` from an earlier `reelctl decompile` |
+| `--outlier <path>` | `edit_dna.json` from an earlier `reelctl decompile`. Give it one to three times; a fourth exits with code 2 |
+| `--format <json\|text>` | `json` (default) or a readable report. See [the comparison](#comparing-with-outliers) |
 | `--cut-detector`, `--transnet-weights`, `--whisper-model` | As for `decompile`, applied to the draft |
 
-The report is JSON on stdout. This is the actual output for the `draft12` and `outlier12` fixtures:
+The report is JSON on stdout: `flags`, then `comparison` (below). This is the actual `flags` for the `draft12` and `outlier12` fixtures; `comparison` follows it in the output:
 
 ```json
 {
@@ -137,13 +138,56 @@ The report is JSON on stdout. This is the actual output for the `draft12` and `o
 
 Flags come in that order: all dead air, then all static windows, then the payoff flag. An empty `flags` array means nothing was flagged. Only `missing_payoff_cue` uses the outlier; the other two depend on the draft alone.
 
+### Comparing with outliers
+
+`flags` above is the same for one outlier or several, apart from the payoff flag: with several outliers it is raised when more than half of them have a cue in 8–10 s and the draft has none. The comparison itself is a second key, `comparison`, after `flags`:
+
+| Key | Meaning |
+|---|---|
+| `draft`, `outliers[]` | Metrics per reel, named by file name (an outlier's trailing `.edit_dna.json` is dropped): `duration_ms`, `cut_count`, `mean_shot_ms`, `longest_shot_ms`, `dead_air_count`, `dead_air_per_minute` (gaps over 180 ms), `silent_share` (0–1), `words_per_minute` with `words_source` (`silence_bursts` means an estimate), `integrated_lufs` |
+| `windows[]` | The draft's length in 5,000 ms windows (the last one shorter): `start_ms`, `end_ms`, `draft_cuts`, and `outlier_cuts`, one number per outlier, or `null` once that outlier has ended |
+| `flags[]` | Relative findings, kept apart from `flags` so nothing that reads `flags` changes (below) |
+
+| `kind` in `comparison.flags` | Raised when | Fields |
+|---|---|---|
+| `rhythm_gap` | The draft has no cut in a window, and more than half of the outliers still running have one. Adjacent windows are joined, and the counts are those of the weakest window | `window_start_ms`, `window_end_ms`, `outliers_with_cut`, `outliers_counted` |
+| `pause_density` | The draft's dead-air gaps per minute are more than 1.5 times the outliers' median and at least 3 more | `draft_per_minute`, `outlier_per_minute` |
+
+The 1.5, the 3, and the 5 s window were chosen on two slow reels; they have not been tried against a fast-cut outlier. Speaking rate and loudness are listed, not judged. For `draft12` against `outlier12`, `comparison.flags` is a `rhythm_gap` for 0–5 s (the outlier cuts at 3 s; the draft first cuts at 6 s) and a `pause_density` of 5.0 against 0.0 per minute.
+
+`--format text` prints the same report as a table, with reel names cut to between 8 and 20 characters so that lines stay within 80 (fewer characters when more reels share a line, and numbered if two cut names would match; the JSON keeps the full names), and the windows continuing on further rows when they do not fit one line, then one line per flag (the older flags first, then the relative ones). This is the actual output for `draft12` against `outlier12`:
+
+```
+                     draft12     outlier12
+length               12.0 s      12.0 s
+cuts                 1           2
+mean shot            6.0 s       4.0 s
+longest shot         6.0 s       6.0 s
+pauses over 180 ms   1 (5/min)   0 (0/min)
+silent time          4 %         0 %
+words/min (est.)     10.0 est.   5.0 est.
+loudness             -21.9 LUFS  -21.8 LUFS
+
+cuts per 5 s window
+                     0-5      5-10     10-12
+draft12              0        1        0
+outlier12            1        1        0
+
+DEAD AIR 2.01-2.51 s (500 ms)
+NO CUT 0.0-6.0 s (6.0 s)
+NO CUT 6.0-12.0 s (6.0 s)
+NO PAYOFF 8-10 s: the outliers have a cut here, the draft does not
+NO CUT 0.0-5.0 s: 1 of 1 outliers cut here, the draft does not
+PAUSES 5.0 per minute against 0.0 in the outliers
+```
+
 ## Exit codes
 
 | Code | Meaning |
 |---|---|
 | 0 | Success |
 | 1 | Runtime error. stderr gets `error: ` and the cause chain, for example `error: decompile: open input: No such file or directory` or `error: decompile: whisper: model not found at /missing.bin` |
-| 2 | Invalid arguments; clap prints the usage |
+| 2 | Invalid arguments, including more than three `--outlier` files or none; clap prints the usage |
 
 ## Input requirements
 
