@@ -372,3 +372,65 @@ fn a_pause_at_50_seconds_in_44k_audio_is_found_on_time() {
 
     let _ = fs::remove_dir_all(&root);
 }
+
+#[test]
+fn hard_cuts_between_textured_shots_without_keyframes_are_all_found() {
+    let root = std::env::temp_dir().join(format!("reelctl-textured-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("temp dir");
+    let mp4 = root.join("textured.mp4");
+    let json = root.join("textured.edit_dna.json");
+    generate("textured_cuts12", &mp4);
+
+    let output = reelctl()
+        .args(["decompile", "--input"])
+        .arg(&mp4)
+        .arg("--out")
+        .arg(&json)
+        .arg("--filmstrip-dir")
+        .arg(root.join("timeline"))
+        .output()
+        .expect("spawn reelctl");
+    assert!(
+        output.status.success(),
+        "decompile failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let dna: EditDna = serde_json::from_slice(&fs::read(&json).expect("json")).expect("dna");
+
+    // The fixture is only worth having if the encoder put no keyframe within a
+    // frame of a cut, so check its packets.
+    let probe = Command::new("ffprobe")
+        .args(["-v", "error", "-select_streams", "v:0"])
+        .args(["-show_entries", "packet=pts_time,flags", "-of", "csv=p=0"])
+        .arg(&mp4)
+        .output()
+        .expect("spawn ffprobe");
+    assert!(probe.status.success(), "ffprobe failed");
+    let keyframes: Vec<u64> = String::from_utf8_lossy(&probe.stdout)
+        .lines()
+        .filter_map(|line| {
+            let (time, flags) = line.split_once(',')?;
+            let frame = (time.parse::<f64>().ok()? * 24.0).round() as u64;
+            flags.contains('K').then_some(frame)
+        })
+        .collect();
+    assert!(keyframes.len() >= 10, "keyframes {keyframes:?}");
+    for planted in [72u64, 144, 216] {
+        assert!(
+            keyframes.iter().all(|key| key.abs_diff(planted) > 1),
+            "a keyframe sits on the cut at frame {planted}: {keyframes:?}"
+        );
+    }
+
+    // Four 3 s shots at 24 fps, so cuts at frames 72, 144, and 216. The encoder
+    // has scene-cut detection off and keyframes every 25 frames.
+    let found: Vec<u64> = dna.cuts.iter().map(|cut| cut.frame_index).collect();
+    assert_eq!(found.len(), 3, "cuts {:?}", dna.cuts);
+    for (cut, planted) in found.iter().zip([72u64, 144, 216]) {
+        assert!(cut.abs_diff(planted) <= 1, "cuts {found:?}");
+    }
+    assert_eq!(dna.shot_histograms.len(), 4);
+
+    let _ = fs::remove_dir_all(&root);
+}

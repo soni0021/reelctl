@@ -19,7 +19,7 @@ Make `decompile` faster on HEVC without changing any output: decode HEVC on the 
 ## Task List
 
 ### Phase 1: The exactness check
-- [ ] Task 1: Baselines, the `textured_cuts12` fixture, and the corpus tooling
+- [x] Task 1: Baselines, the `textured_cuts12` fixture, and the corpus tooling
 
 ### Phase 2: The hardware path
 - [ ] Task 2: `p010` planes, the decoder choice, and `decode_note` (no hardware yet)

@@ -7,14 +7,14 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/fast-decode.md](../docs/specs/
 **Description:** Save the baseline output of every existing fixture from the current release build. Add `textured_cuts12` (12 s, 640×360, hard cuts between textured sources, B-frames, scene-cut detection off) to `fixtures/generate.sh`, with an end-to-end test that its planted cuts are found by the software path. Keep the corpus script and its four encodings outside the repo, and save the software outputs for them.
 
 **Acceptance criteria:**
-- [ ] `textured_cuts12` finds each planted cut within one frame, in the default suite
-- [ ] The existing fixtures' baselines are saved, and the corpus has four software `edit_dna.json` files
-- [ ] `generate.sh all` includes the new fixture and every clip keeps its codec (checked with `ffprobe`)
-- [ ] Docs: README fixture list, CHANGELOG not needed (no user-visible change)
+- [x] `textured_cuts12` finds each planted cut within one frame, in the default suite
+- [x] The existing fixtures' baselines are saved, and the corpus has four software `edit_dna.json` files
+- [x] `generate.sh all` includes the new fixture and every clip keeps its codec (checked with `ffprobe`)
+- [x] Docs: README fixture list and status.md (CHANGELOG not needed: no user-visible change)
 
 **Verification:**
-- [ ] `cargo test` (new test red first, against a wrong expected cut)
-- [ ] `ffprobe` on `generate.sh all`
+- [x] `cargo test` (new test red first, against a wrong expected cut)
+- [x] `ffprobe` on `generate.sh all`
 
 **Dependencies:** None
 

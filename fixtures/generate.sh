@@ -59,6 +59,25 @@ draft12_44k() (
     -f lavfi -i "sine=frequency=440:sample_rate=44100:duration=60"
 )
 
+# 12 s of four 3 s shots with hard cuts at 3, 6, and 9 s (frames 72, 144, 216
+# at 24 fps), between textured sources: a test pattern, a Mandelbrot zoom, a
+# gradient pattern, and cellular automata. The encode has B-frames and
+# scene-cut detection off and a keyframe every 25 frames (not 24, so none lands
+# on a cut at frames 72, 144, 216), so the encoder places no keyframe at a cut and the
+# packet sizes do not mark one (measured on a longer corpus, status.md): a
+# decoder that skips frames would lose these cuts.
+textured_cuts12() (
+  video_codec=(-c:v libx264 -preset fast -crf 22 -profile:v high -g 25 -bf 3 -sc_threshold 0 -pix_fmt yuv420p)
+  local cut="trim=duration=3,setpts=PTS-STARTPTS,format=yuv420p"
+  encode "$1" \
+    "[0:v]${cut}[a0];[1:v]${cut}[a1];[2:v]${cut}[a2];[3:v]${cut}[a3];[a0][a1][a2][a3]concat=n=4:v=1:a=0[v];[4:a]anull[a]" \
+    -f lavfi -i "testsrc2=s=640x360:r=24" \
+    -f lavfi -i "mandelbrot=s=640x360:r=24" \
+    -f lavfi -i "gradients=s=640x360:r=24:seed=7" \
+    -f lavfi -i "cellauto=s=640x360:r=24:seed=7:full=1" \
+    -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=12"
+)
+
 outlier12() {
   local out="$1"
   local size="${2:-640x360}"
@@ -138,6 +157,9 @@ case "$cmd" in
   draft12_44k)
     draft12_44k "$out"
     ;;
+  textured_cuts12)
+    textured_cuts12 "$out"
+    ;;
   outlier12)
     outlier12 "$out"
     ;;
@@ -160,12 +182,13 @@ case "$cmd" in
     draft12 "${dir}/draft_12s.mp4"
     draft12_10bit "${dir}/draft_12s_10bit.mp4"
     draft12_44k "${dir}/draft_12s_44k.mp4"
+    textured_cuts12 "${dir}/textured_cuts_12s.mp4"
     outlier12 "${dir}/outlier_12s.mp4"
     noisy12 "${dir}/noisy_12s.mp4"
     bench60 "${dir}/bench_60s.mp4"
     ;;
   *)
-    echo "usage: generate.sh draft12|draft12_10bit|draft12_44k|outlier12|noisy12|bench60|speech12|tonespeech|all [out.mp4]" >&2
+    echo "usage: generate.sh draft12|draft12_10bit|draft12_44k|textured_cuts12|outlier12|noisy12|bench60|speech12|tonespeech|all [out.mp4]" >&2
     exit 2
     ;;
 esac
