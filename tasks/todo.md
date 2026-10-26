@@ -58,7 +58,7 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/comparative-diff.md](../docs/s
 **Acceptance criteria:**
 - [ ] Both real-reel directions match the expected output in the spec's Evidence (including the known-limit `pause_density`), recorded in `docs/status.md` with date and machine; the reels themselves are not committed
 - [ ] ADR-014; `docs/cli.md` (`--outlier` repeated, `--format`, the `comparison` object, an updated example); README; CHANGELOG; the capability map row; this spec's status
-- [ ] `Reels/compare.sh` uses `--format text` (it is git-ignored, so this is a note in the PR text and the docs, not a commit)
+- [ ] `Reels/compare.sh` uses `--format text` (it is git-ignored, so it is updated in place and not committed)
 - [ ] The thresholds are listed in `status.md` as untested on a fast-cut outlier
 
 **Verification:**
