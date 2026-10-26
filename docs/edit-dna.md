@@ -43,9 +43,13 @@ Audio is mixed to mono and resampled to 48 kHz first.
 | `words` | `{text, start_ms, end_ms}` entries: transcribed words with a whisper model, voiced bursts without one; see below. |
 | `words_per_minute` | Number of `words` divided by the duration in minutes, rounded to 2 decimals |
 | `asr_backend` | `"whisper_cpp"` when `--whisper-model` was given, otherwise `"silence_bursts"` |
-| `asr_note` | Which backend ran and how. For whisper.cpp: its version, the model's file name (not its path), the DTW preset, and the detected language |
+| `asr_note` | Which backend ran and how. For whisper.cpp: its version, the model's file name (not its path), the DTW preset, the detected language, and which stretches were transcribed a second time (see below) |
 
 With `"whisper_cpp"`, `text` is the word as whisper.cpp wrote it, with any attached punctuation, such as `air.`. `start_ms` is the word's DTW timestamp. `end_ms` is the next word's `start_ms`, or the start of the next silence gap if that is earlier, so a word never runs into a gap that `silence_gaps` lists; it can run into a pause louder than the recording's silence threshold. Times have 10 ms resolution. `words_per_minute` is a real speaking rate. See [ADR-007](decisions/ADR-007-whisper-cpp-word-timing.md).
+
+whisper.cpp can skip speech without saying so. So after the first pass, every stretch of more than 3 s with no word start and at least 1.5 s of sound (outside `silence_gaps`) is transcribed again on its own, with 1 s of silence before and after it and the language the first pass detected. Words the second pass finds inside the stretch replace the first pass's words there; if it finds none, the first pass stands. `asr_note` lists each such stretch with the number of words found, for example `16.0-30.9 s: 51`. A stretch of music or tone is also re-run, and usually comes back empty. See [ADR-009](decisions/ADR-009-transcribe-skipped-stretches-again.md).
+
+If whisper.cpp aborts during a pass, that pass is run again without DTW ([ADR-010](decisions/ADR-010-run-whisper-in-a-child-process.md)), and `asr_note` names it. Its words then start at whisper's segment timestamps, which can run into pauses.
 
 With `"silence_bursts"`, each word is a stretch of 10 ms windows at or above the recording's silence threshold (the one `silence_gaps` uses) that ends at the first 40 ms below it, kept if it lasts at least 40 ms. `text` is a placeholder: `burst-0`, `burst-1`, and so on. A continuous tone or music bed counts as one long word, so `words_per_minute` is a burst rate, not a speaking rate. See [ADR-003](decisions/ADR-003-silence-burst-word-estimator.md).
 

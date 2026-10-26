@@ -147,3 +147,60 @@ fn whisper_finds_the_spoken_words_on_either_side_of_the_planted_pause() {
     }
     fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+#[ignore = "needs a whisper model in REELCTL_WHISPER_MODEL and macOS `say`"]
+fn a_stretch_of_tone_is_transcribed_again_and_stays_empty() {
+    let model = std::env::var_os("REELCTL_WHISPER_MODEL")
+        .expect("set REELCTL_WHISPER_MODEL to a ggml whisper model");
+    let dir = temp_dir("tonespeech");
+    let input = dir.join("tonespeech.mp4");
+    let out = dir.join("tonespeech.edit_dna.json");
+    generate("tonespeech", &input);
+    let output = reelctl()
+        .args(["decompile", "--input"])
+        .arg(&input)
+        .arg("--out")
+        .arg(&out)
+        .arg("--whisper-model")
+        .arg(&model)
+        .output()
+        .expect("spawn reelctl");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let dna: EditDna = serde_json::from_slice(&fs::read(&out).expect("read json")).expect("parse");
+
+    // The 25 s tone has sound and no words: one hole, re-run, nothing found.
+    assert!(
+        dna.asr_note.contains("left 1 stretches") && dna.asr_note.contains("found 0 words"),
+        "{}",
+        dna.asr_note
+    );
+    assert!(
+        dna.words.iter().all(|word| word.start_ms >= 24_000),
+        "a word inside the tone: {:?}",
+        dna.words
+    );
+    let texts: Vec<String> = dna
+        .words
+        .iter()
+        .map(|word| {
+            word.text
+                .chars()
+                .filter(|c| c.is_alphanumeric())
+                .collect::<String>()
+                .to_lowercase()
+        })
+        .collect();
+    let mut remaining = texts.iter();
+    for key in ["dead", "air", "proof", "viewer", "scrolls"] {
+        assert!(
+            remaining.any(|text| text == key),
+            "{key:?} missing or out of order in {texts:?}"
+        );
+    }
+    fs::remove_dir_all(&dir).ok();
+}

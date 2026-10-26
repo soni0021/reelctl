@@ -8,7 +8,9 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use decompile::{decompile_file, CutDetectorChoice, DecompileRequest};
+use decompile::{
+    decompile_file, run_whisper_worker, CutDetectorChoice, DecompileRequest, WhisperRunner,
+};
 use diff::compare;
 use edit_dna::EditDna;
 
@@ -24,9 +26,10 @@ fn run() -> Result<()> {
     match cli.command {
         Command::Decompile(args) => decompile(args),
         Command::Diff(args) => diff(args),
+        Command::WhisperWorker(args) => whisper_worker(args),
         other => {
             let _never: std::convert::Infallible = match other {
-                Command::Decompile(_) | Command::Diff(_) => {
+                Command::Decompile(_) | Command::Diff(_) | Command::WhisperWorker(_) => {
                     unreachable!("Command is handled above")
                 }
             };
@@ -52,6 +55,22 @@ enum Command {
     Decompile(DecompileArgs),
     /// Flag dead air, static shots, and a missing 9s payoff on a draft.
     Diff(DiffArgs),
+    /// Internal: runs whisper passes for a parent `reelctl`, one JSON line in
+    /// and one out per pass, so a whisper.cpp abort cannot end the parent.
+    #[command(hide = true)]
+    WhisperWorker(WorkerArgs),
+}
+
+#[derive(Args)]
+struct WorkerArgs {
+    #[arg(long)]
+    model: PathBuf,
+    /// 16 kHz mono f32 audio written by the parent.
+    #[arg(long)]
+    audio: PathBuf,
+    /// Load the model without DTW timestamps.
+    #[arg(long)]
+    no_dtw: bool,
 }
 
 #[derive(Args)]
@@ -89,7 +108,8 @@ struct SignalArgs {
     /// Cut detector. `auto` uses TransNetV2 when the weight file exists.
     #[arg(long, value_enum, default_value_t = DetectorArg::Auto)]
     cut_detector: DetectorArg,
-    /// ggml whisper.cpp model. Ignored until whisper.cpp is linked.
+    /// ggml whisper.cpp model. With one, words come from whisper.cpp; without
+    /// one, from voiced bursts.
     #[arg(long, env = "REELCTL_WHISPER_MODEL")]
     whisper_model: Option<PathBuf>,
 }
@@ -119,12 +139,39 @@ impl DetectorArg {
     }
 }
 
+/// whisper runs in a child `reelctl whisper-worker`. If this executable
+/// cannot be found, it runs in this process instead.
+fn whisper_runner() -> WhisperRunner {
+    match std::env::current_exe() {
+        Ok(program) => WhisperRunner::Worker {
+            program,
+            args: vec!["whisper-worker".to_string()],
+        },
+        Err(_) => WhisperRunner::InProcess,
+    }
+}
+
+fn whisper_worker(args: WorkerArgs) -> Result<()> {
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+    run_whisper_worker(
+        &args.model,
+        &args.audio,
+        !args.no_dtw,
+        stdin.lock(),
+        stdout.lock(),
+    )
+    .context("whisper worker")?;
+    Ok(())
+}
+
 fn decompile(args: DecompileArgs) -> Result<()> {
     let request = DecompileRequest {
         input: args.input,
         output: Some(args.out.clone()),
         transnet_weights: args.signal.transnet_weights,
         whisper_model: args.signal.whisper_model,
+        whisper_runner: whisper_runner(),
         cut_detector: args.signal.cut_detector.choice(),
     };
     let output = decompile_file(&request).context("decompile")?;
@@ -134,12 +181,14 @@ fn decompile(args: DecompileArgs) -> Result<()> {
     print_timing(&output);
     if std::env::var_os("REELCTL_PROFILE").is_some() {
         eprintln!(
-            "profile decode_ms={} analyze_ms={} silence_ms={} loudness_ms={} asr_ms={} json_ms={} filmstrips={}",
+            "profile decode_ms={} analyze_ms={} silence_ms={} loudness_ms={} asr_ms={} asr_first_ms={} asr_second_ms={} json_ms={} filmstrips={}",
             output.profile.decode.as_millis(),
             output.profile.analyze.as_millis(),
             output.profile.silence.as_millis(),
             output.profile.loudness.as_millis(),
             output.profile.asr.as_millis(),
+            output.profile.asr_first_pass.as_millis(),
+            output.profile.asr_second_pass.as_millis(),
             output.profile.json.as_millis(),
             paths.len()
         );
@@ -153,6 +202,7 @@ fn diff(args: DiffArgs) -> Result<()> {
         output: None,
         transnet_weights: args.signal.transnet_weights,
         whisper_model: args.signal.whisper_model,
+        whisper_runner: whisper_runner(),
         cut_detector: args.signal.cut_detector.choice(),
     };
     let draft = decompile_file(&request).context("decompile draft")?;

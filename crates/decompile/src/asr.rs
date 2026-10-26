@@ -8,12 +8,14 @@
 //! times this stage.
 
 use std::path::Path;
+use std::time::Duration;
 
 use edit_dna::{AsrBackend, Word};
 
 use crate::error::DecompileError;
 use crate::silence::SilenceAnalysis;
-use crate::whisper;
+use crate::whisper::{self, Pass, Rerun};
+use crate::worker::WhisperRunner;
 
 const WINDOW_MS: u64 = 10;
 const MIN_BURST_MS: u64 = 40;
@@ -30,6 +32,9 @@ pub struct AsrEstimate {
     pub words_per_minute: f64,
     pub backend: AsrBackend,
     pub note: String,
+    /// whisper's first pass, and its re-runs of skipped stretches. Zero for bursts.
+    pub first_pass: Duration,
+    pub second_pass: Duration,
 }
 
 pub fn transcribe(
@@ -38,6 +43,7 @@ pub fn transcribe(
     duration_ms: u64,
     silence: &SilenceAnalysis,
     model: Option<&Path>,
+    runner: &WhisperRunner,
 ) -> Result<AsrEstimate, DecompileError> {
     let Some(path) = model else {
         let end_ms = (pcm.len() as u128 * 1_000 / u128::from(sample_rate.max(1))) as u64;
@@ -47,9 +53,11 @@ pub fn transcribe(
             words,
             backend: AsrBackend::SilenceBursts,
             note: NO_MODEL.to_string(),
+            first_pass: Duration::ZERO,
+            second_pass: Duration::ZERO,
         });
     };
-    let transcript = whisper::transcribe(path, pcm, sample_rate, &silence.gaps)?;
+    let transcript = whisper::transcribe(path, pcm, sample_rate, &silence.gaps, runner)?;
     let file_name = path.file_name().map_or_else(
         || path.display().to_string(),
         |name| name.to_string_lossy().into_owned(),
@@ -58,17 +66,72 @@ pub fn transcribe(
         "whisper.cpp {} transcribed the audio with {file_name} (DTW preset {}, language {}). \
 Each word starts at its DTW timestamp and ends at the next word's start or the next silence \
 gap, whichever is earlier. words_per_minute is word_count / (duration_ms / 60000) over the \
-whole reel.",
+whole reel. {}{}",
         whisper_rs::get_whisper_version(),
         transcript.preset,
         transcript.language,
+        coverage_sentence(&transcript.reruns),
+        fallback_sentence(&transcript.fallbacks),
     );
     Ok(AsrEstimate {
         words_per_minute: per_minute(transcript.words.len(), duration_ms),
         words: transcript.words,
         backend: AsrBackend::WhisperCpp,
         note,
+        first_pass: transcript.first_pass,
+        second_pass: transcript.second_pass,
     })
+}
+
+/// What the second pass did: which stretches whisper left without words, and
+/// how many words transcribing each again found.
+fn coverage_sentence(reruns: &[Rerun]) -> String {
+    if reruns.is_empty() {
+        return "No stretch longer than 3 s with at least 1.5 s of sound was left without words."
+            .to_string();
+    }
+    let found: usize = reruns.iter().map(|rerun| rerun.words_found).sum();
+    let each: Vec<String> = reruns
+        .iter()
+        .map(|rerun| {
+            format!(
+                "{:.1}-{:.1} s: {}",
+                rerun.hole.start_ms as f64 / 1_000.0,
+                rerun.hole.end_ms as f64 / 1_000.0,
+                rerun.words_found
+            )
+        })
+        .collect();
+    format!(
+        "The first pass left {} stretches with sound but no words; transcribing each again \
+found {found} words, which replace that stretch's first-pass words ({}). A stretch whose \
+second pass found nothing keeps its first-pass words.",
+        reruns.len(),
+        each.join("; ")
+    )
+}
+
+/// Passes whisper.cpp aborted on, if any. Their words start at whisper's
+/// segment timestamps, because the second attempt ran without DTW.
+fn fallback_sentence(fallbacks: &[Pass]) -> String {
+    if fallbacks.is_empty() {
+        return String::new();
+    }
+    let spans: Vec<String> = fallbacks
+        .iter()
+        .map(|pass| {
+            format!(
+                "{:.1}-{:.1} s",
+                pass.start_ms as f64 / 1_000.0,
+                pass.end_ms as f64 / 1_000.0
+            )
+        })
+        .collect();
+    format!(
+        " whisper.cpp aborted while transcribing {}; each was transcribed again without DTW, \
+so its words start at whisper's segment timestamps, which can run into pauses.",
+        spans.join(", ")
+    )
 }
 
 fn per_minute(count: usize, duration_ms: u64) -> f64 {
@@ -125,6 +188,28 @@ fn round2(value: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::coverage::Hole;
+
+    fn rerun(start_ms: u64, end_ms: u64, words_found: usize) -> Rerun {
+        Rerun {
+            hole: Hole { start_ms, end_ms },
+            words_found,
+        }
+    }
+
+    #[test]
+    fn the_note_says_when_no_stretch_was_left_without_words() {
+        assert!(coverage_sentence(&[]).starts_with("No stretch longer than 3 s"));
+    }
+
+    #[test]
+    fn the_note_lists_each_rerun_and_the_words_it_found() {
+        let sentence = coverage_sentence(&[rerun(9_900, 15_600, 13), rerun(16_000, 30_900, 0)]);
+        assert!(sentence.contains("left 2 stretches"), "{sentence}");
+        assert!(sentence.contains("found 13 words"), "{sentence}");
+        assert!(sentence.contains("9.9-15.6 s: 13"), "{sentence}");
+        assert!(sentence.contains("16.0-30.9 s: 0"), "{sentence}");
+    }
 
     #[test]
     fn a_silence_gap_splits_one_tone_into_two_words() {
@@ -138,7 +223,8 @@ mod tests {
             pcm.push((index as f32 * 0.3).sin() * 0.2);
         }
         let silence = crate::silence::analyze(&pcm, rate);
-        let estimate = transcribe(&pcm, rate, 500, &silence, None).expect("no model");
+        let estimate = transcribe(&pcm, rate, 500, &silence, None, &WhisperRunner::InProcess)
+            .expect("no model");
         assert_eq!(estimate.backend, AsrBackend::SilenceBursts);
         assert_eq!(estimate.words.len(), 2, "words={:?}", estimate.words);
         assert!(estimate.words_per_minute > 0.0);

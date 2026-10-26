@@ -4,7 +4,7 @@ Last updated 2026-10-25. Update this page in the same commit as any change that 
 
 ## Summary
 
-P0, the Rust decompiler and reel-diff CLI, is built and its tests pass. It meets the 500 ms target on the synthetic 60-second benchmark clip but misses it on real footage: 60 s of an iPhone recording, converted to 8-bit H.264, took 2.1–2.8 s ([First real footage](#first-real-footage-2026-10-20)). Given a whisper model, `decompile` now produces real words timed with DTW, including Hinglish (merged into `main` on 2026-10-21). Silence is now detected relative to each recording's noise floor, so `diff` finds dead air under room noise (merged into `main` on 2026-10-25). `diff` does not yet compare pacing against the outlier. P1–P3 in [planer.md](../planer.md) have not started.
+P0, the Rust decompiler and reel-diff CLI, is built and its tests pass. It meets the 500 ms target on the synthetic 60-second benchmark clip but misses it on real footage: 60 s of an iPhone recording, converted to 8-bit H.264, took 2.1–2.8 s ([First real footage](#first-real-footage-2026-10-20)). Given a whisper model, `decompile` now produces real words timed with DTW, including Hinglish (merged into `main` on 2026-10-21). Silence is now detected relative to each recording's noise floor, so `diff` finds dead air under room noise (merged into `main` on 2026-10-25). Stretches whisper skips are transcribed again, and whisper runs in a child process so a whisper.cpp abort cannot end `reelctl` (branch `feature/whisper-coverage`, awaiting review). `diff` does not yet compare pacing against the outlier. P1–P3 in [planer.md](../planer.md) have not started.
 
 ## Verified 2026-10-20
 
@@ -58,6 +58,19 @@ Same machine, release builds of `main` and `feature/relative-silence` on the sam
 | 60 s benchmark `signal_ms`, five interleaved runs each | `main` 242–248 ms, branch 243–250 ms; the silence stage takes 1 ms on both |
 
 The real clip was re-cut from the original recording on 2026-10-25 with its audio copied, not re-encoded, so its word count (125) differs from the 2026-10-21 runs (183); see Known issues.
+
+## Whisper coverage, 2026-10-25
+
+Same machine, release build of `feature/whisper-coverage`, Apex model unless noted ([spec](specs/whisper-coverage.md), [ADR-009](decisions/ADR-009-transcribe-skipped-stretches-again.md), [ADR-010](decisions/ADR-010-run-whisper-in-a-child-process.md)). The load average stayed between 4 and 6 throughout, so single `asr_ms` values vary by tens of percent between runs.
+
+| Check | Result |
+|---|---|
+| iPhone clip, first 60 s with copied audio | 125 → 183 words. Re-runs of 9.9–15.6 s and 16.0–30.9 s found 9 and 51 words. `asr_ms` 20.8 s → 33.1 s in-process; through the worker in a later run, 55.4 s (first pass 39.4 s, re-runs 15.9 s) |
+| NEET video, 18 min | 3,894 → 4,040 words. Five holes re-run: 0–30.4 s found 86 words ("Hello, kya haal chaal? Welcome to my channel…"), 355.8, 505.5, and 985.9 s found 27, 18, and 17, and 96.7–100.5 s found "in 672853.", which looks invented. Through the worker: first pass 528.0 s, re-runs 44.1 s, which is 8.4% of the first pass in the same run, or 11.0% of the 401.6 s first pass measured earlier under lighter load |
+| Runs without holes | Identical words: `speech12` with `base.en` and Apex, and five 30–63 s NEET cuts |
+| Worker against in-process | Identical words on `speech12` (both models), the iPhone clip, and the NEET video. Start-up cost not measurable above noise: three alternating `speech12` runs took 9.7–12.5 s through the worker and 13.0–18.2 s in-process on `main` |
+| Temporary audio | Removed after every run; none left in `$TMPDIR` |
+| whisper.cpp abort | Not reproduced through `reelctl`. The retry path is covered by unit tests with a stand-in worker that aborts |
 
 ## Long-form YouTube video, 2026-10-25
 
@@ -124,7 +137,8 @@ Not yet listed in AGENTS.md:
 - In a `timeline_view` PNG, the thumbnails and the waveform use different time scales. The 8 thumbnails cover about 0.27 s at 30 fps; the waveform and word ticks cover 1.5 s either side of the cut, across the same width.
 - The JSON value for TransNetV2 is `"trans_net_v2"`, but `CutDetectorKind::as_str()` returns `"transnet_v2"`. Nothing emits either until TransNetV2 is linked.
 - Colors are converted from YUV with BT.601 coefficients, while most HD video uses BT.709, so absolute RGB values are slightly off.
-- whisper can silently drop up to a 30 s window of speech. With Apex it skipped 15.96–30.86 s of the re-cut real clip and 0–30.44 s of the 18-minute NEET video, although neither stretch is mostly silent; other cuts of the same audio transcribe it. The cause is not known. Module `whisper-coverage` in the [P0 capability map](specs/p0-capability-map.md).
+- whisper can silently drop up to a 30 s window of speech. On `feature/whisper-coverage` such stretches are found and transcribed again, which recovered every measured loss ([Whisper coverage](#whisper-coverage-2026-10-25)). A stretch can still stay empty, and `asr_note` then lists it. Which of whisper.cpp's two skip rules fired in each case is not known.
+- With the Apex model, 29 s of digital silence before English speech (`say`) produced 6 invented words at 0.1 s and a garbled first sentence. `base.en` did not do this. Found 2026-10-25; not addressed.
 - Audio that is not 48 kHz drifts early, because the decoder resamples each frame on its own and drops the fractional sample. At 44.1 kHz a pause planted at 50.0 s is found 10–40 ms early; over 18 minutes the drift is about 0.5 s. Module `decode-inputs`.
 - Thresholds read from FFmpeg tools are not comparable with `reelctl`'s: FFmpeg's `-ac 1` downmix reads about 3 dB louder than `reelctl`'s channel average, and `silencedetect` compares sample peaks rather than 10 ms mean-square levels.
 - The quality interview in [CONSTRAINTS.md](../CONSTRAINTS.md) has not been run, so only the floor rules plus `cargo check` and `cargo test` are enforced.

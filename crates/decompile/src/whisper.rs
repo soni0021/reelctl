@@ -11,21 +11,39 @@
 //! the next measured silence gap. DTW needs the alignment-head preset of the
 //! model's shape, which is read from the file header because fine-tuned
 //! models such as Oriserve's Hinglish Apex do not carry a standard file name.
+//!
+//! whisper.cpp can skip speech without saying so (see `coverage.rs`), so the
+//! first pass is checked for holes and each hole is transcribed again with
+//! the same loaded model. A re-run gets 1 s of silence before and after the
+//! hole and uses the language the first pass detected: on the iPhone clip
+//! that recovered 10 words in a hole where no padding found none, and
+//! skipping language detection saved 7.5 s. The first pass is not padded,
+//! because padding changed the words on runs that had no holes
+//! (docs/specs/whisper-coverage.md, Revision).
+//!
+//! The passes run through `Passes`: in this process (`Local`), or in a child
+//! process (`worker::Remote`) so that a whisper.cpp abort cannot end the
+//! caller.
 
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use edit_dna::{SilenceGap, Word};
 use whisper_rs::{
     DtwMode, DtwModelPreset, DtwParameters, FullParams, SamplingStrategy, WhisperContext,
-    WhisperContextParameters,
+    WhisperContextParameters, WhisperState, WhisperTokenId,
 };
 
+use crate::coverage::{drop_after, find_holes, merge, shift_into, Hole, WordStart};
 use crate::error::DecompileError;
 use crate::resample::to_whisper_rate;
+use crate::worker::{Remote, WhisperRunner};
 
 const GGML_MAGIC: u32 = 0x6767_6d6c;
+const WHISPER_RATE_PER_MS: usize = 16;
+const PADDING_MS: usize = 1_000;
 
 /// One whisper.cpp segment. Times are in centiseconds, as whisper.cpp reports them.
 pub(crate) struct RawSegment {
@@ -41,6 +59,44 @@ pub(crate) struct Transcript {
     pub words: Vec<Word>,
     pub preset: &'static str,
     pub language: String,
+    /// Holes in the first pass and how many words their re-run found.
+    pub reruns: Vec<Rerun>,
+    /// Passes whisper.cpp aborted on, which were run again without DTW.
+    pub fallbacks: Vec<Pass>,
+    /// Time of the first pass, including loading the model or starting the worker.
+    pub first_pass: Duration,
+    /// Time of all re-runs.
+    pub second_pass: Duration,
+}
+
+/// A request to transcribe `start_ms..end_ms` of the 16 kHz audio.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Pass {
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub padding: Padding,
+    /// `None` lets a multilingual model detect the language.
+    pub language: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PassOutput {
+    /// Times relative to `Pass::start_ms`.
+    pub words: Vec<WordStart>,
+    pub language: Option<String>,
+}
+
+/// Something that runs whisper passes over one recording's audio.
+pub(crate) trait Passes {
+    fn run(&mut self, pass: &Pass) -> Result<PassOutput, DecompileError>;
+    /// Passes that had to be run again without DTW.
+    fn fallbacks(&self) -> Vec<Pass>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Rerun {
+    pub hole: Hole,
+    pub words_found: usize,
 }
 
 /// The header fields that tell whisper.cpp model shapes apart.
@@ -57,6 +113,7 @@ pub(crate) fn transcribe(
     pcm: &[f32],
     sample_rate: u32,
     silence_gaps: &[SilenceGap],
+    runner: &WhisperRunner,
 ) -> Result<Transcript, DecompileError> {
     if !model.is_file() {
         return Err(DecompileError::Whisper(format!(
@@ -76,65 +133,208 @@ pub(crate) fn transcribe(
             words: Vec::new(),
             preset,
             language: String::new(),
+            reruns: Vec::new(),
+            fallbacks: Vec::new(),
+            first_pass: Duration::ZERO,
+            second_pass: Duration::ZERO,
         });
     }
+    let first_started = Instant::now();
     let audio = to_whisper_rate(pcm, sample_rate)?;
-    // With neither of whisper-rs's log-backend features enabled, this
-    // discards whisper.cpp's log output instead of printing it to stderr.
-    whisper_rs::install_logging_hooks();
-    let mut context_params = WhisperContextParameters::default();
-    // whisper.cpp computes DTW timestamps only without flash attention.
-    context_params.flash_attn(false);
-    context_params.dtw_parameters(DtwParameters {
-        mode: DtwMode::ModelPreset { model_preset },
-        ..Default::default()
-    });
-    let context = WhisperContext::new_with_params(model, context_params)
-        .map_err(|err| failed("load", model, err))?;
-    let mut state = context
-        .create_state()
-        .map_err(|err| failed("create a state for", model, err))?;
-    let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-    if context.is_multilingual() {
-        params.set_language(None);
-    }
-    params.set_token_timestamps(true);
-    params.set_max_len(1);
-    params.set_split_on_word(true);
-    params.set_suppress_nst(true);
-    params.set_print_special(false);
-    params.set_print_progress(false);
-    params.set_print_realtime(false);
-    params.set_print_timestamps(false);
-    state
-        .full(params, &audio)
-        .map_err(|err| failed("transcribe with", model, err))?;
-    let special_from = context.token_eot();
-    let mut segments = Vec::new();
-    for segment in state.as_iter() {
-        let text = segment
-            .to_str_lossy()
-            .map_err(|err| failed("read a segment from", model, err))?;
-        let onset_cs = (0..segment.n_tokens())
-            .filter_map(|index| segment.get_token(index))
-            .find(|token| token.token_id() < special_from)
-            .map(|token| token.token_data().t_dtw)
-            .filter(|t_dtw| *t_dtw >= 0);
-        segments.push(RawSegment {
-            text: text.into_owned(),
-            start_cs: segment.start_timestamp(),
-            end_cs: segment.end_timestamp(),
-            onset_cs,
+    let duration_ms = (audio.len() / WHISPER_RATE_PER_MS) as u64;
+    let mut passes: Box<dyn Passes + '_> = match runner {
+        WhisperRunner::InProcess => Box::new(Local::load(model, Some(model_preset), audio)?),
+        WhisperRunner::Worker { program, args } => {
+            Box::new(Remote::start(program, args, model, &audio)?)
+        }
+    };
+    let first = passes.run(&Pass {
+        start_ms: 0,
+        end_ms: duration_ms,
+        padding: Padding::None,
+        language: None,
+    })?;
+    let first_pass = first_started.elapsed();
+    let second_started = Instant::now();
+    let detected = first.language;
+    let first = drop_after(first.words, duration_ms);
+    let mut reruns = Vec::new();
+    let mut found = Vec::new();
+    for hole in find_holes(&first, silence_gaps, duration_ms) {
+        let words = passes
+            .run(&Pass {
+                start_ms: hole.start_ms,
+                end_ms: hole.end_ms,
+                padding: Padding::Around,
+                language: detected.clone(),
+            })?
+            .words;
+        reruns.push(Rerun {
+            hole,
+            words_found: shift_into(hole, words.clone()).len(),
         });
+        found.push((hole, words));
     }
-    let language = whisper_rs::get_lang_str(state.full_lang_id_from_state())
-        .unwrap_or("unknown")
-        .to_string();
     Ok(Transcript {
-        words: words_from_segments(&segments, silence_gaps),
+        words: finish(&merge(first, found), silence_gaps),
         preset,
-        language,
+        language: detected.unwrap_or_else(|| "unknown".to_string()),
+        reruns,
+        fallbacks: passes.fallbacks(),
+        first_pass,
+        second_pass: second_started.elapsed(),
     })
+}
+
+fn slice_ms(audio: &[f32], start_ms: u64, end_ms: u64) -> &[f32] {
+    let start = (start_ms as usize * WHISPER_RATE_PER_MS).min(audio.len());
+    let end = (end_ms as usize * WHISPER_RATE_PER_MS).clamp(start, audio.len());
+    &audio[start..end]
+}
+
+/// Passes in this process, over audio it holds.
+pub(crate) struct Local<'a> {
+    transcriber: Transcriber<'a>,
+    audio: Vec<f32>,
+}
+
+impl<'a> Local<'a> {
+    /// Loads `model`, with DTW for `model_preset`, or without DTW when `None`.
+    pub(crate) fn load(
+        model: &'a Path,
+        model_preset: Option<DtwModelPreset>,
+        audio: Vec<f32>,
+    ) -> Result<Self, DecompileError> {
+        Ok(Self {
+            transcriber: Transcriber::load(model, model_preset)?,
+            audio,
+        })
+    }
+}
+
+impl Passes for Local<'_> {
+    fn run(&mut self, pass: &Pass) -> Result<PassOutput, DecompileError> {
+        let slice = slice_ms(&self.audio, pass.start_ms, pass.end_ms);
+        let words = self
+            .transcriber
+            .pass(slice, pass.padding, pass.language.as_deref())?;
+        Ok(PassOutput {
+            words,
+            language: self.transcriber.language().map(str::to_string),
+        })
+    }
+
+    fn fallbacks(&self) -> Vec<Pass> {
+        Vec::new()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Padding {
+    None,
+    /// `PADDING_MS` of silence before and after the audio.
+    Around,
+}
+
+/// One loaded model, run over as many slices of 16 kHz audio as needed.
+struct Transcriber<'a> {
+    model: &'a Path,
+    multilingual: bool,
+    special_from: WhisperTokenId,
+    state: WhisperState,
+}
+
+impl<'a> Transcriber<'a> {
+    fn load(model: &'a Path, model_preset: Option<DtwModelPreset>) -> Result<Self, DecompileError> {
+        // With neither of whisper-rs's log-backend features enabled, this
+        // discards whisper.cpp's log output instead of printing it to stderr.
+        whisper_rs::install_logging_hooks();
+        let mut context_params = WhisperContextParameters::default();
+        // whisper.cpp computes DTW timestamps only without flash attention.
+        context_params.flash_attn(false);
+        if let Some(model_preset) = model_preset {
+            context_params.dtw_parameters(DtwParameters {
+                mode: DtwMode::ModelPreset { model_preset },
+                ..Default::default()
+            });
+        }
+        let context = WhisperContext::new_with_params(model, context_params)
+            .map_err(|err| failed("load", model, err))?;
+        let state = context
+            .create_state()
+            .map_err(|err| failed("create a state for", model, err))?;
+        Ok(Self {
+            model,
+            multilingual: context.is_multilingual(),
+            special_from: context.token_eot(),
+            state,
+        })
+    }
+
+    /// Transcribes `audio`, padded with silence if asked, in `language`, or in
+    /// the detected language when `None`. Times are relative to the start of
+    /// `audio`; words that start in the leading silence are dropped.
+    fn pass(
+        &mut self,
+        audio: &[f32],
+        padding: Padding,
+        language: Option<&str>,
+    ) -> Result<Vec<WordStart>, DecompileError> {
+        let pad = match padding {
+            Padding::None => 0,
+            Padding::Around => PADDING_MS * WHISPER_RATE_PER_MS,
+        };
+        let mut padded = vec![0.0; pad];
+        padded.extend_from_slice(audio);
+        padded.resize(audio.len() + 2 * pad, 0.0);
+        let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+        if self.multilingual {
+            params.set_language(language);
+        }
+        params.set_token_timestamps(true);
+        params.set_max_len(1);
+        params.set_split_on_word(true);
+        params.set_suppress_nst(true);
+        params.set_print_special(false);
+        params.set_print_progress(false);
+        params.set_print_realtime(false);
+        params.set_print_timestamps(false);
+        self.state
+            .full(params, &padded)
+            .map_err(|err| failed("transcribe with", self.model, err))?;
+        let mut segments = Vec::new();
+        for segment in self.state.as_iter() {
+            let text = segment
+                .to_str_lossy()
+                .map_err(|err| failed("read a segment from", self.model, err))?;
+            let onset_cs = (0..segment.n_tokens())
+                .filter_map(|index| segment.get_token(index))
+                .find(|token| token.token_id() < self.special_from)
+                .map(|token| token.token_data().t_dtw)
+                .filter(|t_dtw| *t_dtw >= 0);
+            segments.push(RawSegment {
+                text: text.into_owned(),
+                start_cs: segment.start_timestamp(),
+                end_cs: segment.end_timestamp(),
+                onset_cs,
+            });
+        }
+        let lead_ms = (pad / WHISPER_RATE_PER_MS) as u64;
+        Ok(word_starts(&segments)
+            .into_iter()
+            .filter(|word| word.start_ms >= lead_ms)
+            .map(|word| WordStart {
+                start_ms: word.start_ms - lead_ms,
+                segment_end_ms: word.segment_end_ms.saturating_sub(lead_ms),
+                text: word.text,
+            })
+            .collect())
+    }
+
+    /// The language whisper.cpp detected or used in the last pass.
+    fn language(&self) -> Option<&'static str> {
+        whisper_rs::get_lang_str(self.state.full_lang_id_from_state())
+    }
 }
 
 fn failed(action: &str, model: &Path, err: whisper_rs::WhisperError) -> DecompileError {
@@ -195,41 +395,54 @@ pub(crate) fn preset_for(shape: &ModelShape) -> Option<(DtwModelPreset, &'static
     Some(preset)
 }
 
-/// Turns one-word segments into words. A word starts at its DTW onset, or at
-/// the segment start without one. It ends at the next word's start, or at
-/// the first silence gap that opens after it starts, whichever is earlier;
-/// the last word falls back to its segment end.
-pub(crate) fn words_from_segments(
-    segments: &[RawSegment],
-    silence_gaps: &[SilenceGap],
-) -> Vec<Word> {
-    let kept: Vec<(&str, u64, u64)> = segments
+/// Turns one-word segments into word starts. A word starts at its DTW
+/// onset, or at the segment start without one. Empty, punctuation-only, and
+/// bracketed segments are not words.
+pub(crate) fn word_starts(segments: &[RawSegment]) -> Vec<WordStart> {
+    segments
         .iter()
         .filter_map(|segment| {
             let text = segment.text.trim();
             if !text.chars().any(char::is_alphanumeric) || is_marker(text) {
                 return None;
             }
-            let start_ms = centiseconds_to_ms(segment.onset_cs.unwrap_or(segment.start_cs));
-            Some((text, start_ms, centiseconds_to_ms(segment.end_cs)))
+            Some(WordStart {
+                text: text.to_string(),
+                start_ms: centiseconds_to_ms(segment.onset_cs.unwrap_or(segment.start_cs)),
+                segment_end_ms: centiseconds_to_ms(segment.end_cs),
+            })
         })
-        .collect();
-    kept.iter()
+        .collect()
+}
+
+/// Sets each word's end: the next word's start, or the first silence gap that
+/// opens after it starts, whichever is earlier; the last word falls back to
+/// its segment end.
+pub(crate) fn finish(words: &[WordStart], silence_gaps: &[SilenceGap]) -> Vec<Word> {
+    words
+        .iter()
         .enumerate()
-        .map(|(index, &(text, start_ms, segment_end_ms))| {
-            let next_start = kept.get(index + 1).map_or(segment_end_ms, |next| next.1);
+        .map(|(index, word)| {
+            let next_start = words
+                .get(index + 1)
+                .map_or(word.segment_end_ms, |next| next.start_ms);
             let gap_start = silence_gaps
                 .iter()
                 .map(|gap| gap.start_ms)
-                .find(|&gap_start| gap_start > start_ms)
+                .find(|&gap_start| gap_start > word.start_ms)
                 .unwrap_or(u64::MAX);
             Word {
-                text: text.to_string(),
-                start_ms,
-                end_ms: next_start.min(gap_start).max(start_ms),
+                text: word.text.clone(),
+                start_ms: word.start_ms,
+                end_ms: next_start.min(gap_start).max(word.start_ms),
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+fn words_from_segments(segments: &[RawSegment], silence_gaps: &[SilenceGap]) -> Vec<Word> {
+    finish(&word_starts(segments), silence_gaps)
 }
 
 /// Non-speech annotations such as `[BLANK_AUDIO]` or `(music)`.
@@ -379,7 +592,8 @@ mod tests {
     #[test]
     fn a_missing_model_is_an_error_naming_the_path() {
         let path = Path::new("/nonexistent/ggml-missing.bin");
-        let err = transcribe(path, &[0.0; 4_800], 48_000, &[]).expect_err("no model file");
+        let err = transcribe(path, &[0.0; 4_800], 48_000, &[], &WhisperRunner::InProcess)
+            .expect_err("no model file");
         assert!(
             err.to_string().contains("/nonexistent/ggml-missing.bin"),
             "{err}"

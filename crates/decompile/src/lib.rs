@@ -7,6 +7,7 @@
 #![warn(clippy::all)]
 
 mod asr;
+mod coverage;
 mod decode;
 mod error;
 mod histogram;
@@ -18,8 +19,10 @@ mod scene;
 mod silence;
 mod transnet;
 mod whisper;
+mod worker;
 
 pub use error::DecompileError;
 pub use pipeline::{decompile_file, DecompileOutput, DecompileRequest, StageProfile};
 pub use scene::{CutDetector, SCENE_SCORE_THRESHOLD};
 pub use transnet::CutDetectorChoice;
+pub use worker::{run_whisper_worker, WhisperRunner};
