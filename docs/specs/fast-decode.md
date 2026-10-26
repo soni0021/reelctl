@@ -1,6 +1,6 @@
 # Spec: fast decode
 
-Status: **draft, awaiting approval** (2026-10-26). Module `fast-decode` in the [P0 capability map](p0-capability-map.md). Branch: `feature/fast-decode`. The user's direction for this module: quality is the goal, time is not.
+Status: **draft, awaiting approval** (2026-10-26); question 1 answered (A), questions 2 and 3 open. Module `fast-decode` in the [P0 capability map](p0-capability-map.md). Branch: `feature/fast-decode`. The user's direction for this module: quality is the goal, time is not.
 
 ## Objective
 
@@ -127,7 +127,7 @@ Test-first.
 
 ## Open Questions
 
-1. **The 500 ms metric.** With exact decoding the best case here is about 2.8 s per 60 s of iPhone HEVC and about 2.1 s of 1080p H.264. Choose one:
+1. **The 500 ms metric.** *Resolved: A, 2026-10-26.* With exact decoding the best case here is about 2.8 s per 60 s of iPhone HEVC and about 2.1 s of 1080p H.264. Choose one:
    - **A (recommended):** keep exactness as the contract. Record the target as unmet on real footage, with these numbers, in status.md, and leave `planer.md` unchanged for you to revise.
    - **B:** you amend the metric in `planer.md` now (for example to a decode-time budget per 60 s of footage) and I mirror it in the docs.
    - **C:** add an opt-in `--preview` mode that samples frames and may miss cuts, labelled as approximate in the output. Not recommended: the evidence shows it misses cuts on exactly the footage the tool exists for, and it would ship as "fast" while hiding that.
@@ -137,4 +137,4 @@ Test-first.
 
 ## Resolved Questions
 
-None yet.
+1. **The 500 ms metric (answered 2026-10-26): A.** Exactness is the contract. 500 ms is recorded in [status.md](../status.md) as unmet on real footage, with the measured numbers; `planer.md` stays unchanged for the user to revise. Questions 2 and 3 are still open.
