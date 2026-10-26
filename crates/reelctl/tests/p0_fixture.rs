@@ -329,3 +329,46 @@ fn ten_bit_hlg_video_reads_like_the_eight_bit_draft() {
 
     let _ = fs::remove_dir_all(&root);
 }
+
+#[test]
+fn a_pause_at_50_seconds_in_44k_audio_is_found_on_time() {
+    let root = std::env::temp_dir().join(format!("reelctl-44k-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("temp dir");
+    let mp4 = root.join("draft_44k.mp4");
+    let json = root.join("draft_44k.edit_dna.json");
+    generate("draft12_44k", &mp4);
+
+    let output = reelctl()
+        .args(["decompile", "--input"])
+        .arg(&mp4)
+        .arg("--out")
+        .arg(&json)
+        .arg("--filmstrip-dir")
+        .arg(root.join("timeline"))
+        .output()
+        .expect("spawn reelctl");
+    assert!(
+        output.status.success(),
+        "decompile failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let dna: EditDna = serde_json::from_slice(&fs::read(&json).expect("json")).expect("dna");
+    let long: Vec<(u64, u64)> = dna
+        .silence_gaps
+        .iter()
+        .filter(|gap| gap.duration_ms >= 180)
+        .map(|gap| (gap.start_ms, gap.end_ms))
+        .collect();
+    assert_eq!(long.len(), 1, "gaps of 180 ms or more: {long:?}");
+    let (start, end) = long[0];
+    // ffmpeg's `volume enable=` switches on 1,024-sample frame boundaries, so
+    // the mute is at 50.0159-50.5034 s (checked on the source signal). Per-frame
+    // resampling found 50,000-50,470, 16 and 33 ms early.
+    assert!(
+        start.abs_diff(50_016) <= 10 && end.abs_diff(50_503) <= 10,
+        "pause {long:?}"
+    );
+
+    let _ = fs::remove_dir_all(&root);
+}

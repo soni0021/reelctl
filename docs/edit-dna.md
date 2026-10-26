@@ -32,7 +32,7 @@ The scene-score detector applies the formula behind FFmpeg's `scene` value (from
 
 ## Audio
 
-Audio is mixed to mono and resampled to 48 kHz first.
+Audio is mixed to mono and resampled to 48 kHz first, as one stream, so times do not drift with the input's sample rate.
 
 | Field | Meaning |
 |---|---|

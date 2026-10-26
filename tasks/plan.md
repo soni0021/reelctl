@@ -12,14 +12,14 @@ Read 10-bit 4:2:0 video, and resample non-48 kHz audio as one stream. Three task
 - **`chroma_planes` gains a `yuv420p10le` branch** next to `yuv420p`/`yuvj420p` and `nv12`. Other formats keep an error, which now names the format.
 - **`decode_note` is built per file:** the existing text, plus a sentence when the video was 10-bit and when its transfer is HLG or PQ (`AVCOL_TRC_ARIB_STD_B67`, `AVCOL_TRC_SMPTE2084`), read from the first decoded frame.
 - **The resampler becomes a struct** that `decode_file` keeps across audio frames: input rate, the fractional read position, and the last input sample, so interpolation can span a frame boundary. 48 kHz frames bypass it, as now. Its output length over a stream is `round(n × 48,000 / rate)` within one sample.
-- **Fixtures:** `draft12_10bit` re-encodes `draft12`'s sources with `libx265` Main 10 (`yuv420p10le`), like an iPhone. `draft12_44k` is 60 s of `draft12`-style video and tone with 44.1 kHz AAC audio and a mute at 50.0–50.5 s, the point where today's drift shows.
+- **Fixtures:** `draft12_10bit` re-encodes `draft12`'s sources with `libx265` Main 10 (`yuv420p10le`), like an iPhone. `draft12_44k` is 60 s of `draft12`-style video and tone with 44.1 kHz AAC audio and a mute at 50.0–50.5 s, the point where per-frame drift shows.
 - **Baseline first:** save every existing fixture's `edit_dna.json` from the current build before Task 1. After each task, all of them must match apart from timings.
 
 ## Task List
 
 ### Phase 1: Inputs
 - [x] Task 1: Read 10-bit 4:2:0 video
-- [ ] Task 2: Resample audio as one stream
+- [x] Task 2: Resample audio as one stream
 
 ### Checkpoint A
 - [ ] `cargo test` passes; all existing fixtures unchanged apart from timings

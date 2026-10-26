@@ -3,8 +3,9 @@
 # No scraped Reels, no network. speech12 needs macOS `say` and its Samantha voice.
 set -euo pipefail
 
-# Video codec arguments for encode. draft12_10bit replaces them.
+# Codec arguments for encode. draft12_10bit and draft12_44k replace them.
 video_codec=(-c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p -bf 0 -g 30)
+audio_codec=(-c:a pcm_s16le)
 
 encode() {
   local out="$1"
@@ -16,7 +17,7 @@ encode() {
     -filter_complex "$filter" \
     -map "[v]" -map "[a]" \
     "${video_codec[@]}" \
-    -c:a pcm_s16le \
+    "${audio_codec[@]}" \
     -movflags +faststart \
     "$out"
 }
@@ -41,6 +42,20 @@ draft12_10bit() {
     -x265-params "bframes=0:keyint=30:log-level=error"
     -bsf:v "hevc_metadata=colour_primaries=9:transfer_characteristics=18:matrix_coefficients=9")
   draft12 "$1"
+}
+
+# 60 s of 640x360 video over a 44.1 kHz sine, encoded as AAC, with a mute at
+# 50.0-50.5 s (the volume filter switches on 1,024-sample frames, so the mute
+# is really 50.0159-50.5034 s). Audio that is not 48 kHz is resampled by reelctl, and resampling
+# each decoded frame on its own made the pause drift early by 0.5 ms per second
+# (10-40 ms by 50 s). AAC frames are 1,024 samples, 0.56 samples short each.
+draft12_44k() {
+  audio_codec=(-c:a aac -b:a 128k)
+  encode "$1" \
+    "[0:v][1:v]concat=n=2:v=1:a=0[v];[2:a]volume=volume=0:enable='between(t,50.0,50.5)'[a]" \
+    -f lavfi -i "color=c=red:s=640x360:r=30:d=30" \
+    -f lavfi -i "color=c=white:s=640x360:r=30:d=30" \
+    -f lavfi -i "sine=frequency=440:sample_rate=44100:duration=60"
 }
 
 outlier12() {
@@ -119,6 +134,9 @@ case "$cmd" in
   draft12_10bit)
     draft12_10bit "$out"
     ;;
+  draft12_44k)
+    draft12_44k "$out"
+    ;;
   outlier12)
     outlier12 "$out"
     ;;
@@ -145,7 +163,7 @@ case "$cmd" in
     bench60 "${dir}/bench_60s.mp4"
     ;;
   *)
-    echo "usage: generate.sh draft12|draft12_10bit|outlier12|noisy12|bench60|speech12|tonespeech|all [out.mp4]" >&2
+    echo "usage: generate.sh draft12|draft12_10bit|draft12_44k|outlier12|noisy12|bench60|speech12|tonespeech|all [out.mp4]" >&2
     exit 2
     ;;
 esac

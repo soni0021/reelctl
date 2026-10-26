@@ -1,6 +1,6 @@
 # Spec: decode inputs
 
-Status: approved 2026-10-26, with the recommended answer to each open question (see Resolved Questions). Task 1, reading 10-bit video, done 2026-10-26 ([ADR-011](../decisions/ADR-011-read-10-bit-video-from-its-top-8-bits.md)); the resampler and the real recording are next. Plan: [tasks/plan.md](../../tasks/plan.md). Module `decode-inputs` in the [P0 capability map](p0-capability-map.md). Branch: `feature/decode-inputs`.
+Status: approved 2026-10-26, with the recommended answer to each open question (see Resolved Questions). Task 1, reading 10-bit video, and Task 2, the stream resampler, done 2026-10-26 ([ADR-011](../decisions/ADR-011-read-10-bit-video-from-its-top-8-bits.md)); the real recording is next. Plan: [tasks/plan.md](../../tasks/plan.md). Module `decode-inputs` in the [P0 capability map](p0-capability-map.md). Branch: `feature/decode-inputs`.
 
 ## Objective
 
@@ -75,7 +75,7 @@ Test-first.
   - The resampler: 60 s of 44.1 kHz audio fed in 1,024-sample frames gives 2,880,000 samples ± 1; an impulse at 50.0 s comes out at 50.0 s ± 1 sample; 48 kHz input passes through unchanged.
 - **End-to-end, default suite:**
   - `draft12_10bit` gives the same cut (± 1 frame), the same silence gaps, and the same payoff result as `draft12`, and per-shot mean RGB within 3 of it. `decode_note` mentions 10-bit and HLG.
-  - `draft12_44k` finds the planted pause within 10 ms of 50,000–50,500 ms.
+  - `draft12_44k` finds the planted pause within 10 ms of 50,016–50,503 ms. (The mute is planted at 50.0–50.5 s, but ffmpeg's `volume enable=` switches on 1,024-sample frames, so the signal mutes at 50.0159 s and unmutes at 50.5034 s; the 50,000 in the first draft of this spec was wrong.)
   - Every existing fixture's `edit_dna.json` is unchanged apart from timings.
 - **Manual, real footage outside the repo:** the original `IMG_1435.MOV` decompiles, and its cuts and silence gaps equal those of an 8-bit H.264 conversion of the whole file with the audio stream copied. The whole file, because the silence threshold is computed over the whole recording.
 

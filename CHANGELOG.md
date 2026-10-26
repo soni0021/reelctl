@@ -18,6 +18,8 @@ Notable changes to `reelctl`. Add an entry under Unreleased in the same commit a
 
 ### Changed
 
+- Audio that is not 48 kHz is now resampled as one stream instead of one decoded frame at a time. Per-frame resampling dropped a fractional sample at each frame, so at 44.1 kHz silence gaps and word times came out early: a pause at 50 s by 16–33 ms, and about 0.5 s by 18 minutes. 48 kHz audio is untouched.
+
 - `edit_dna.json` is now schema version 2, with `silence_threshold_db` and `noise_floor_db`. Version 1 files still load in `reelctl diff`.
 - `silence_gaps` now uses a threshold set from each recording's own levels instead of a fixed −40 dBFS, and a sound shorter than 30 ms no longer splits a gap. Pauses under room noise become gaps, so `diff` now flags dead air in real recordings; on a 60 s iPhone recording, gaps of 300 ms or more went from 0 to 24. Clean recordings get the same gaps as before. Without a whisper model, burst words use the same threshold, so `words_per_minute` changes on noisy recordings.
 - An unsupported pixel format's error now names the format, for example `unsupported pixel format yuv422p`.

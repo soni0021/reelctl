@@ -11,6 +11,7 @@ mod coverage;
 mod decode;
 mod error;
 mod histogram;
+mod linear_resample;
 mod loudness;
 mod payoff;
 mod pipeline;

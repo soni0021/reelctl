@@ -28,13 +28,13 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/decode-inputs.md](../docs/spec
 **Description:** A resampler struct that keeps its position and last sample across frames replaces the per-frame `resample_linear`. Add the `draft12_44k` fixture and an end-to-end test.
 
 **Acceptance criteria:**
-- [ ] Unit tests: 60 s of 44.1 kHz audio in 1,024-sample frames gives 2,880,000 samples ± 1; an impulse at 50.0 s comes out at 50.0 s ± 1 sample
-- [ ] `draft12_44k` finds its planted pause within 10 ms of 50,000–50,500 ms
-- [ ] Every existing fixture (all 48 kHz) matches its baseline apart from timings
-- [ ] Docs: CHANGELOG; status.md known issue updated
+- [x] Unit tests: 60 s of 44.1 kHz audio in 1,024-sample frames gives 2,880,000 samples ± 1; an impulse at 50.0 s comes out at 50.0 s ± 1 sample
+- [x] `draft12_44k` finds its planted pause within 10 ms of 50,016–50,503 ms (the mute's real position; see the spec)
+- [x] Every existing fixture (all 48 kHz) matches its baseline apart from timings
+- [x] Docs: CHANGELOG; status.md known issue updated
 
 **Verification:**
-- [ ] `cargo test` (new tests red first)
+- [x] `cargo test` (new tests red first)
 
 **Dependencies:** None (Task 1 first only to keep the baseline comparison simple)
 

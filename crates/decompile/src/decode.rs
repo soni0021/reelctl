@@ -31,9 +31,10 @@ use ffmpeg_next::{self as ffmpeg, Discard, Rational};
 
 use crate::error::DecompileError;
 use crate::histogram::{yuv601_to_rgb, FrameColor};
+use crate::linear_resample::LinearResampler;
 use crate::scene::{ffmpeg_scene_score, ScoredFrame, SCENE_SCORE_THRESHOLD};
 
-const SAMPLE_RATE: u32 = 48_000;
+pub(crate) const SAMPLE_RATE: u32 = 48_000;
 const SAD_TARGET_W: u32 = 160;
 const SAD_TARGET_H: u32 = 90;
 pub(crate) const THUMB_W: u32 = 64;
@@ -178,7 +179,7 @@ pub(crate) fn decode_file(path: &Path) -> Result<DecodedReel, DecompileError> {
     let expected_frames = expected_frame_count(container_ms, fps_rational);
     let mut scores = Vec::with_capacity(expected_frames);
     let mut colors = Vec::with_capacity(expected_frames);
-    let mut pcm = Vec::with_capacity(expected_pcm(container_ms));
+    let mut pcm = Pcm::with_capacity(expected_pcm(container_ms));
     let mut sad = SadState::new();
     let thumb_bytes = (THUMB_W * THUMB_H * 3) as usize;
     let mut ring = ThumbRing::new(BEFORE_FRAMES, thumb_bytes);
@@ -240,6 +241,7 @@ pub(crate) fn decode_file(path: &Path) -> Result<DecodedReel, DecompileError> {
         finish_audio(decoder, &mut audio_frame, &mut pcm)
             .map_err(|err| stage("flush audio decoder", err))?;
     }
+    let pcm = pcm.finish();
     if let Some(open) = pending.take() {
         boundaries.push(open.into_raw());
     }
@@ -401,7 +403,7 @@ fn finish_video(
 fn finish_audio(
     audio: &mut AudioDecoder,
     frame: &mut AudioFrame,
-    pcm: &mut Vec<f32>,
+    pcm: &mut Pcm,
 ) -> Result<(), DecompileError> {
     match audio.send_eof() {
         Ok(()) => {}
@@ -414,7 +416,7 @@ fn finish_audio(
 fn drain_audio(
     audio: &mut AudioDecoder,
     frame: &mut AudioFrame,
-    pcm: &mut Vec<f32>,
+    pcm: &mut Pcm,
 ) -> Result<(), DecompileError> {
     loop {
         match audio.receive_frame(frame) {
@@ -989,7 +991,7 @@ fn note_boundary(
     }
 }
 
-fn push_audio(frame: &AudioFrame, pcm: &mut Vec<f32>) -> Result<(), DecompileError> {
+fn push_audio(frame: &AudioFrame, pcm: &mut Pcm) -> Result<(), DecompileError> {
     let channels = usize::from(frame.channels());
     let samples = frame.samples();
     let rate = frame.rate();
@@ -1043,31 +1045,52 @@ fn push_audio(frame: &AudioFrame, pcm: &mut Vec<f32>) -> Result<(), DecompileErr
             "unsupported audio format {format:?} at {rate} Hz"
         )));
     }
-    if rate == SAMPLE_RATE {
-        pcm.extend(mono);
-    } else {
-        resample_linear(&mono, rate, pcm);
-    }
+    pcm.push(&mono, rate);
     Ok(())
 }
 
-fn resample_linear(input: &[f32], in_rate: u32, output: &mut Vec<f32>) {
-    if input.is_empty() || in_rate == 0 {
-        return;
+/// The decoded audio as mono 48 kHz. Audio at another rate goes through one
+/// [`LinearResampler`] for the whole stream.
+struct Pcm {
+    samples: Vec<f32>,
+    resampler: Option<LinearResampler>,
+}
+
+impl Pcm {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            samples: Vec::with_capacity(capacity),
+            resampler: None,
+        }
     }
-    let out_len = (input.len() as u64 * u64::from(SAMPLE_RATE) / u64::from(in_rate)) as usize;
-    if out_len == 0 {
-        return;
+
+    fn push(&mut self, mono: &[f32], rate: u32) {
+        if rate == SAMPLE_RATE && self.resampler.is_none() {
+            self.samples.extend_from_slice(mono);
+            return;
+        }
+        // A new rate mid-stream ends the old resampler's stream.
+        if self.resampler.as_ref().is_some_and(|r| r.in_rate() != rate) {
+            self.finish_resampler();
+        }
+        if rate == SAMPLE_RATE {
+            self.samples.extend_from_slice(mono);
+            return;
+        }
+        self.resampler
+            .get_or_insert_with(|| LinearResampler::new(rate))
+            .push(mono, &mut self.samples);
     }
-    output.reserve(out_len);
-    let last = input.len() - 1;
-    for index in 0..out_len {
-        let src = index as f64 * f64::from(in_rate) / f64::from(SAMPLE_RATE);
-        let base = src.floor() as usize;
-        let frac = (src - base as f64) as f32;
-        let left = input[base.min(last)];
-        let right = input[(base + 1).min(last)];
-        output.push(left + (right - left) * frac);
+
+    fn finish_resampler(&mut self) {
+        if let Some(mut resampler) = self.resampler.take() {
+            resampler.finish(&mut self.samples);
+        }
+    }
+
+    fn finish(mut self) -> Vec<f32> {
+        self.finish_resampler();
+        self.samples
     }
 }
 
