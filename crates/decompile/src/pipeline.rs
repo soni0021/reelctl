@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use edit_dna::{BoundaryView, CutDetectorKind, EditDna, SCHEMA_VERSION};
 
 use crate::asr::{self, AsrEstimate};
-use crate::decode::{self, DecodedReel, RawBoundary, THUMB_H, THUMB_W};
+use crate::decode::{self, DecodedReel, DecoderSetting, RawBoundary, THUMB_H, THUMB_W};
 use crate::error::DecompileError;
 use crate::histogram::aggregate;
 use crate::loudness::integrated_lufs;
@@ -30,6 +30,7 @@ pub struct DecompileRequest {
     pub whisper_model: Option<PathBuf>,
     pub whisper_runner: WhisperRunner,
     pub cut_detector: CutDetectorChoice,
+    pub decoder: DecoderSetting,
 }
 
 pub struct StageProfile {
@@ -54,7 +55,7 @@ pub struct DecompileOutput {
 
 pub fn decompile_file(request: &DecompileRequest) -> Result<DecompileOutput, DecompileError> {
     let decode_started = Instant::now();
-    let decoded = decode::decode_file(&request.input)?;
+    let decoded = decode::decode_file(&request.input, request.decoder)?;
     let decode_elapsed = decode_started.elapsed();
 
     let analyze_started = Instant::now();
@@ -213,7 +214,7 @@ fn assemble(
     dna.cut_detector_note = detector_note.to_string();
     dna.asr_backend = asr.backend;
     dna.asr_note = asr.note.clone();
-    dna.decode_note = decode::decode_note(decoded.format);
+    dna.decode_note = decode::decode_note(decoded.format, &decoded.decoder);
     dna
 }
 

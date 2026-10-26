@@ -13,7 +13,7 @@ Every field is always present. Times are whole milliseconds. Video times count f
 | `fps` | number | The stream's average frame rate, else its base rate, else 30 |
 | `frame_size` | object | `width` and `height` of the decoded frames, in pixels |
 | `frame_count` | integer | Number of frames decoded |
-| `decode_note` | string | How the video was decoded. For 10-bit video it adds that the top 8 bits of each sample were read, and for an HLG or PQ transfer that the input was HDR and colors were not tone-mapped |
+| `decode_note` | string | How the video was decoded: in software, or on the Apple media engine (HEVC on macOS), or in software after the media engine failed (with the reason), or in software because `--decoder software` asked for it. For 10-bit video it adds that the top 8 bits of each sample were read, and for an HLG or PQ transfer that the input was HDR and colors were not tone-mapped |
 
 ## Cuts
 

@@ -1,7 +1,7 @@
 # ADR-001: Decode in-process with ffmpeg-next software decoding
 
 ## Status
-Accepted
+Accepted. Partly superseded by [ADR-012](ADR-012-decode-hevc-in-hardware-and-every-frame-exactly.md) on 2026-10-26: HEVC now decodes on the media engine, and the loop filter is no longer skipped on non-reference frames. Decoding in-process through `ffmpeg-next`, and sampling coarse grids from the decoded planes, stand.
 
 ## Date
 2026-10-18. Recorded on 2026-10-20 from [decode.rs](../../crates/decompile/src/decode.rs) and [AGENTS.md](../../AGENTS.md).

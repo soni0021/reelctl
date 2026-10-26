@@ -1,19 +1,24 @@
 //! Demux and decode with ffmpeg-next.
 //!
-//! VideoToolbox was measured on a 60-second 1080p fixture:
-//! `ffmpeg -hwaccel videotoolbox` took 3.8s, multithreaded software decode took
-//! 0.38s. ffmpeg-next does not expose a VideoToolbox device wrapper, so the
-//! structural path uses libavcodec frame threading and skips the in-loop
-//! deblock on non-reference frames. Scene score, histograms, and filmstrip
-//! thumbs are sampled from the decoded luma/chroma planes. There is no ffmpeg
-//! process spawn on this path.
+//! Two decoders produce the frames, and they give the same picture:
+//!
+//! - Software: libavcodec with frame threading. The in-loop deblock runs on
+//!   every frame. Skipping it on non-reference frames saved 6% of decode time
+//!   but moved HEVC scene scores by up to 0.022 against the hardware decoder,
+//!   which always filters (status.md), so it is not skipped.
+//! - Hardware, for HEVC only on macOS (`hwdecode.rs`): VideoToolbox took 4.0 s
+//!   against 8.9 s on the 87 s iPhone recording. For 1080p H.264 it was slower
+//!   (11.2 s against 3.0 s), so H.264 stays in software.
+//!
+//! Scene score, histograms, and filmstrip thumbs are sampled from the decoded
+//! luma/chroma planes. There is no ffmpeg process spawn on this path.
 //!
 //! The planes are 8-bit 4:2:0 (`yuv420p`, `yuvj420p`, `nv12`) or 10-bit 4:2:0
 //! (`yuv420p10le`, what FFmpeg's software decoders give for iPhone HEVC Main
-//! 10, or `p010` from the hardware decoder). Both are read one sampled point at a time through [`Plane`], and a
-//! 10-bit sample is read as its top 8 bits, so limited-range 64-940 becomes the
-//! 16-235 that 8-bit uses. No frame is converted as a whole, and HDR is not
-//! tone-mapped (ADR-011).
+//! 10, or `p010` from the hardware decoder). Both are read one sampled point at
+//! a time through [`Plane`], and a 10-bit sample is read as its top 8 bits, so
+//! limited-range 64-940 becomes the 16-235 that 8-bit uses. No frame is
+//! converted as a whole, and HDR is not tone-mapped (ADR-011).
 
 use std::path::Path;
 use std::sync::OnceLock;
@@ -27,10 +32,11 @@ use ffmpeg_next::util::color::{Range, TransferCharacteristic};
 use ffmpeg_next::util::format::sample::Type as SampleType;
 use ffmpeg_next::util::format::Pixel;
 use ffmpeg_next::util::format::Sample;
-use ffmpeg_next::{self as ffmpeg, Discard, Rational};
+use ffmpeg_next::{self as ffmpeg, Rational};
 
 use crate::error::DecompileError;
 use crate::histogram::{yuv601_to_rgb, FrameColor};
+use crate::hwdecode::{self, HardwareDevice};
 use crate::linear_resample::LinearResampler;
 use crate::scene::{ffmpeg_scene_score, ScoredFrame, SCENE_SCORE_THRESHOLD};
 
@@ -45,8 +51,9 @@ const HIST_TARGET_W: u32 = 32;
 const HIST_TARGET_H: u32 = 18;
 
 const DECODE_NOTE: &str = "\
-libavcodec frame-threaded software decode (thread_count auto, \
-skip_loop_filter=nonref). VideoToolbox hwaccel was slower on the 60s 1080p \
+libavcodec frame-threaded software decode (thread_count auto, loop filter on \
+every frame, so the picture is the one the format defines). VideoToolbox hwaccel \
+was slower on the 60s 1080p \
 fixture (3.8s vs 0.38s) and ffmpeg-next does not expose a hwdevice wrapper. \
 Scene score and color are sampled from decoded planes; the hot path does not \
 shell out to ffmpeg.";
@@ -81,10 +88,73 @@ impl VideoFormat {
     }
 }
 
+const HARDWARE_NOTE: &str = "\
+HEVC decoded on the Apple media engine (VideoToolbox) through libavcodec, each \
+frame copied to system memory as nv12 or p010 and sampled like a software frame. \
+On an 87 s 1080x1920 HEVC Main 10 recording this took 4.0 s against 8.9 s in \
+software; H.264 was slower in hardware (11.2 s against 3.0 s), so H.264 is \
+decoded in software. Scene score and color are sampled from decoded planes; the \
+hot path does not shell out to ffmpeg.";
+
+/// Which decoder `decompile` may use (`--decoder`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DecoderSetting {
+    /// Hardware for HEVC where it works, software for everything else.
+    #[default]
+    Auto,
+    /// Software for everything.
+    Software,
+}
+
+/// Which decoder produced the frames, for `decode_note`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum DecoderUsed {
+    /// The software decoder, because the codec has no hardware path here.
+    Software,
+    /// The software decoder, because `--decoder software` asked for it.
+    Forced,
+    /// The media engine, shown by every frame being a VideoToolbox frame.
+    Hardware,
+    /// The software decoder, after hardware was tried and failed.
+    Fallback(String),
+}
+
+/// What to do for a codec and a setting.
+#[derive(Debug, PartialEq, Eq)]
+enum Plan {
+    TryHardware,
+    Software(DecoderUsed),
+}
+
+/// HEVC goes to the media engine (4.0 s against 8.9 s on the iPhone file); the
+/// rest stay in software, where H.264 is 3.7 times faster.
+fn choose_decoder(codec: ffmpeg::codec::Id, setting: DecoderSetting) -> Plan {
+    match setting {
+        DecoderSetting::Software => Plan::Software(DecoderUsed::Forced),
+        DecoderSetting::Auto if cfg!(target_os = "macos") && codec == ffmpeg::codec::Id::HEVC => {
+            Plan::TryHardware
+        }
+        DecoderSetting::Auto => Plan::Software(DecoderUsed::Software),
+    }
+}
+
 /// `decode_note` for one file: how it was decoded, then what was read from a
 /// 10-bit or HDR input and what was not done to it.
-pub(crate) fn decode_note(format: VideoFormat) -> String {
-    let mut note = DECODE_NOTE.to_string();
+pub(crate) fn decode_note(format: VideoFormat, decoder: &DecoderUsed) -> String {
+    let mut note = match decoder {
+        DecoderUsed::Hardware => HARDWARE_NOTE.to_string(),
+        _ => DECODE_NOTE.to_string(),
+    };
+    match decoder {
+        DecoderUsed::Forced => {
+            note.push_str(" Software decode was requested with --decoder software.");
+        }
+        DecoderUsed::Fallback(reason) => note.push_str(&format!(
+            " Hardware decode (VideoToolbox) was tried and not used: {reason}. \
+             Software decode ran instead."
+        )),
+        DecoderUsed::Software | DecoderUsed::Hardware => {}
+    }
     if format.ten_bit {
         note.push_str(
             " The video is 10-bit 4:2:0; scene score, color, and thumbnails read the \
@@ -111,6 +181,7 @@ pub(crate) struct DecodedReel {
     pub width: u32,
     pub height: u32,
     pub format: VideoFormat,
+    pub decoder: DecoderUsed,
     pub frames: Vec<ScoredFrame>,
     pub colors: Vec<FrameColor>,
     pub pcm: Vec<f32>,
@@ -125,8 +196,50 @@ pub(crate) struct RawBoundary {
     pub after: Vec<Vec<u8>>,
 }
 
-pub(crate) fn decode_file(path: &Path) -> Result<DecodedReel, DecompileError> {
+/// Decode a file. HEVC tries the media engine first (`choose_decoder`); on any
+/// failure, at any frame, the whole file is decoded again in software, since a
+/// decode depends on nothing but the file. If software fails too, that error is
+/// the one returned.
+pub(crate) fn decode_file(
+    path: &Path,
+    setting: DecoderSetting,
+) -> Result<DecodedReel, DecompileError> {
     ensure_ffmpeg().map_err(|err| stage("ffmpeg init", err))?;
+    decode_planned(path, choose_decoder(video_codec(path)?, setting))
+}
+
+fn decode_planned(path: &Path, plan: Plan) -> Result<DecodedReel, DecompileError> {
+    match plan {
+        Plan::Software(used) => decode_with(path, Decoder::Software(used)),
+        Plan::TryHardware => {
+            let attempt = HardwareDevice::create().and_then(|device| {
+                decode_with(path, Decoder::Hardware(&device)).map_err(|err| err.to_string())
+            });
+            match attempt {
+                Ok(reel) => Ok(reel),
+                Err(reason) => decode_with(path, Decoder::Software(DecoderUsed::Fallback(reason))),
+            }
+        }
+    }
+}
+
+/// The codec of the file's video stream.
+fn video_codec(path: &Path) -> Result<ffmpeg::codec::Id, DecompileError> {
+    let input = ffmpeg::format::input(path).map_err(|err| stage("open input", err))?;
+    let stream = input
+        .streams()
+        .best(MediaType::Video)
+        .ok_or_else(|| DecompileError::NoVideo(path.display().to_string()))?;
+    Ok(stream.parameters().id())
+}
+
+/// The decoder to run for one pass over the file.
+enum Decoder<'a> {
+    Software(DecoderUsed),
+    Hardware(&'a HardwareDevice),
+}
+
+fn decode_with(path: &Path, decoder: Decoder<'_>) -> Result<DecodedReel, DecompileError> {
     let mut input = ffmpeg::format::input(path).map_err(|err| stage("open input", err))?;
     let video_index = input
         .streams()
@@ -157,12 +270,18 @@ pub(crate) fn decode_file(path: &Path) -> Result<DecodedReel, DecompileError> {
         }
     };
 
-    let mut video = {
+    let device = match &decoder {
+        Decoder::Hardware(device) => Some(*device),
+        Decoder::Software(_) => None,
+    };
+    let mut receiver = {
         let stream = input
             .streams()
             .find(|stream| stream.index() == video_index)
             .ok_or_else(|| DecompileError::NoVideo(path.display().to_string()))?;
-        open_video(stream.parameters()).map_err(|err| stage("open video decoder", err))?
+        let video = open_video(stream.parameters(), device)
+            .map_err(|err| stage("open video decoder", err))?;
+        Receiver::new(video, device.is_some())
     };
     let mut audio = if let Some(index) = audio_index {
         let stream = input.streams().find(|stream| stream.index() == index);
@@ -185,21 +304,20 @@ pub(crate) fn decode_file(path: &Path) -> Result<DecodedReel, DecompileError> {
     let mut ring = ThumbRing::new(BEFORE_FRAMES, thumb_bytes);
     let mut pending: Option<Pending> = None;
     let mut boundaries = Vec::new();
-    let mut video_frame = VideoFrame::empty();
     let mut audio_frame = AudioFrame::empty();
     let mut picture = Picture {
-        width: video.width(),
-        height: video.height(),
+        width: receiver.video.width(),
+        height: receiver.video.height(),
         format: VideoFormat::default(),
     };
     let mut last_time_ms = 0u64;
 
     for (stream, packet) in input.packets() {
         if stream.index() == video_index {
-            send_video(&mut video, &packet).map_err(|err| stage("send video packet", err))?;
+            send_video(&mut receiver.video, &packet)
+                .map_err(|err| stage("send video packet", err))?;
             drain_video(
-                &mut video,
-                &mut video_frame,
+                &mut receiver,
                 &mut sad,
                 &mut ring,
                 &mut pending,
@@ -222,8 +340,7 @@ pub(crate) fn decode_file(path: &Path) -> Result<DecodedReel, DecompileError> {
         }
     }
     finish_video(
-        &mut video,
-        &mut video_frame,
+        &mut receiver,
         &mut sad,
         &mut ring,
         &mut pending,
@@ -258,6 +375,10 @@ pub(crate) fn decode_file(path: &Path) -> Result<DecodedReel, DecompileError> {
         width: picture.width,
         height: picture.height,
         format: picture.format,
+        decoder: match decoder {
+            Decoder::Hardware(_) => DecoderUsed::Hardware,
+            Decoder::Software(used) => used,
+        },
         frames: scores,
         colors,
         sample_rate: if pcm.is_empty() { 0 } else { SAMPLE_RATE },
@@ -284,7 +405,10 @@ fn ensure_ffmpeg() -> Result<(), DecompileError> {
     }
 }
 
-fn open_video(params: ffmpeg::codec::Parameters) -> Result<VideoDecoder, DecompileError> {
+fn open_video(
+    params: ffmpeg::codec::Parameters,
+    device: Option<&HardwareDevice>,
+) -> Result<VideoDecoder, DecompileError> {
     let threads = std::thread::available_parallelism()
         .map(|count| count.get())
         .unwrap_or(4);
@@ -293,9 +417,10 @@ fn open_video(params: ffmpeg::codec::Parameters) -> Result<VideoDecoder, Decompi
         kind: ffmpeg::threading::Type::Frame,
         count: threads,
     });
-    let mut video = context.decoder().video()?;
-    video.skip_loop_filter(Discard::NonReference);
-    Ok(video)
+    if let Some(device) = device {
+        hwdecode::attach(&mut context, device).map_err(DecompileError::Message)?;
+    }
+    Ok(context.decoder().video()?)
 }
 
 fn open_audio(params: ffmpeg::codec::Parameters) -> Result<AudioDecoder, DecompileError> {
@@ -324,8 +449,7 @@ fn send_audio(audio: &mut AudioDecoder, packet: &ffmpeg::Packet) -> Result<(), D
 }
 
 fn drain_video(
-    video: &mut VideoDecoder,
-    frame: &mut VideoFrame,
+    receiver: &mut Receiver,
     sad: &mut SadState,
     ring: &mut ThumbRing,
     pending: &mut Option<Pending>,
@@ -339,10 +463,10 @@ fn drain_video(
     fps: Rational,
 ) -> Result<(), DecompileError> {
     loop {
-        match video.receive_frame(frame) {
-            Ok(()) => {
+        match receiver.receive()? {
+            Received::Frame => {
                 observe_frame(
-                    frame,
+                    receiver.frame(),
                     sad,
                     ring,
                     pending,
@@ -356,16 +480,14 @@ fn drain_video(
                     fps,
                 )?;
             }
-            Err(err) if is_retry(&err) => break,
-            Err(err) => return Err(err.into()),
+            Received::Wait => break,
         }
     }
     Ok(())
 }
 
 fn finish_video(
-    video: &mut VideoDecoder,
-    frame: &mut VideoFrame,
+    receiver: &mut Receiver,
     sad: &mut SadState,
     ring: &mut ThumbRing,
     pending: &mut Option<Pending>,
@@ -378,14 +500,13 @@ fn finish_video(
     start_time: i64,
     fps: Rational,
 ) -> Result<(), DecompileError> {
-    match video.send_eof() {
+    match receiver.video.send_eof() {
         Ok(()) => {}
         Err(err) if is_retry(&err) => {}
         Err(err) => return Err(err.into()),
     }
     drain_video(
-        video,
-        frame,
+        receiver,
         sad,
         ring,
         pending,
@@ -426,6 +547,55 @@ fn drain_audio(
         }
     }
     Ok(())
+}
+
+/// The video decoder with the frames it fills. A hardware frame is copied into
+/// `staging` (a software frame) before it is sampled.
+struct Receiver {
+    video: VideoDecoder,
+    decoded: VideoFrame,
+    staging: VideoFrame,
+    hardware: bool,
+}
+
+enum Received {
+    /// `frame()` holds the next decoded frame.
+    Frame,
+    /// The decoder wants more packets, or is finished.
+    Wait,
+}
+
+impl Receiver {
+    fn new(video: VideoDecoder, hardware: bool) -> Self {
+        Self {
+            video,
+            decoded: VideoFrame::empty(),
+            staging: VideoFrame::empty(),
+            hardware,
+        }
+    }
+
+    fn receive(&mut self) -> Result<Received, DecompileError> {
+        match self.video.receive_frame(&mut self.decoded) {
+            Ok(()) => {}
+            Err(err) if is_retry(&err) => return Ok(Received::Wait),
+            Err(err) => return Err(err.into()),
+        }
+        if self.hardware {
+            hwdecode::download(&self.decoded, &mut self.staging)
+                .map_err(DecompileError::Message)?;
+        }
+        Ok(Received::Frame)
+    }
+
+    /// The frame to sample: in system memory whichever decoder made it.
+    fn frame(&self) -> &VideoFrame {
+        if self.hardware {
+            &self.staging
+        } else {
+            &self.decoded
+        }
+    }
 }
 
 /// The decoded picture: its size from the latest frame, its format from the first.
@@ -1224,28 +1394,40 @@ mod tests {
 
     #[test]
     fn eight_bit_sdr_keeps_the_decode_note() {
-        assert_eq!(decode_note(VideoFormat::default()), DECODE_NOTE);
+        assert_eq!(
+            decode_note(VideoFormat::default(), &DecoderUsed::Software),
+            DECODE_NOTE
+        );
     }
 
     #[test]
     fn the_decode_note_says_ten_bit_and_hdr() {
-        let hlg = decode_note(VideoFormat {
-            ten_bit: true,
-            hdr: Some(Hdr::Hlg),
-        });
+        let hlg = decode_note(
+            VideoFormat {
+                ten_bit: true,
+                hdr: Some(Hdr::Hlg),
+            },
+            &DecoderUsed::Software,
+        );
         assert!(hlg.starts_with(DECODE_NOTE), "{hlg}");
         assert!(hlg.contains("10-bit"), "{hlg}");
         assert!(hlg.contains("HLG"), "{hlg}");
         assert!(hlg.contains("not tone-mapped"), "{hlg}");
-        let pq = decode_note(VideoFormat {
-            ten_bit: true,
-            hdr: Some(Hdr::Pq),
-        });
+        let pq = decode_note(
+            VideoFormat {
+                ten_bit: true,
+                hdr: Some(Hdr::Pq),
+            },
+            &DecoderUsed::Software,
+        );
         assert!(pq.contains("PQ"), "{pq}");
-        let ten_sdr = decode_note(VideoFormat {
-            ten_bit: true,
-            hdr: None,
-        });
+        let ten_sdr = decode_note(
+            VideoFormat {
+                ten_bit: true,
+                hdr: None,
+            },
+            &DecoderUsed::Software,
+        );
         assert!(
             ten_sdr.contains("10-bit") && !ten_sdr.contains("tone"),
             "{ten_sdr}"
@@ -1384,5 +1566,172 @@ mod tests {
             yuv601_to_rgb(128, 128, 128, false)
         );
         assert!(VideoFormat::of(&limited).ten_bit);
+    }
+
+    #[test]
+    fn hevc_tries_hardware_and_everything_else_decodes_in_software() {
+        use ffmpeg::codec::Id;
+        let on_mac = cfg!(target_os = "macos");
+        assert_eq!(
+            choose_decoder(Id::HEVC, DecoderSetting::Auto),
+            if on_mac {
+                Plan::TryHardware
+            } else {
+                Plan::Software(DecoderUsed::Software)
+            }
+        );
+        for codec in [Id::H264, Id::VP9, Id::AV1, Id::MPEG4] {
+            assert_eq!(
+                choose_decoder(codec, DecoderSetting::Auto),
+                Plan::Software(DecoderUsed::Software),
+                "{codec:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn software_can_be_forced() {
+        use ffmpeg::codec::Id;
+        assert_eq!(
+            choose_decoder(Id::HEVC, DecoderSetting::Software),
+            Plan::Software(DecoderUsed::Forced)
+        );
+        assert_eq!(
+            choose_decoder(Id::H264, DecoderSetting::Software),
+            Plan::Software(DecoderUsed::Forced)
+        );
+    }
+
+    #[test]
+    fn the_decode_note_names_the_decoder_that_ran() {
+        let format = VideoFormat::default();
+        assert_eq!(decode_note(format, &DecoderUsed::Software), DECODE_NOTE);
+
+        let forced = decode_note(format, &DecoderUsed::Forced);
+        assert!(forced.starts_with(DECODE_NOTE), "{forced}");
+        assert!(forced.contains("--decoder software"), "{forced}");
+
+        let hardware = decode_note(format, &DecoderUsed::Hardware);
+        assert!(hardware.contains("VideoToolbox"), "{hardware}");
+        assert!(
+            !hardware.contains("frame-threaded software decode"),
+            "{hardware}"
+        );
+
+        let fallback = decode_note(format, &DecoderUsed::Fallback("no device".to_string()));
+        assert!(fallback.starts_with(DECODE_NOTE), "{fallback}");
+        assert!(
+            fallback.contains("was tried and not used: no device"),
+            "{fallback}"
+        );
+    }
+
+    #[test]
+    fn the_hardware_note_keeps_the_ten_bit_and_hdr_sentences() {
+        let note = decode_note(
+            VideoFormat {
+                ten_bit: true,
+                hdr: Some(Hdr::Hlg),
+            },
+            &DecoderUsed::Hardware,
+        );
+        assert!(note.contains("VideoToolbox"), "{note}");
+        assert!(note.contains("10-bit"), "{note}");
+        assert!(note.contains("HLG"), "{note}");
+    }
+
+    /// A one-second, 160x90 clip the media engine cannot decode (motion JPEG
+    /// has no VideoToolbox hardware path), made with the ffmpeg CLI.
+    fn mjpeg_clip(name: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!("reelctl-{name}-{}.mov", std::process::id()));
+        let status = std::process::Command::new("ffmpeg")
+            .args(["-y", "-hide_banner", "-loglevel", "error"])
+            .args(["-f", "lavfi", "-i", "testsrc2=s=160x90:r=24:d=1"])
+            .args(["-c:v", "mjpeg", "-q:v", "3"])
+            .arg(&path)
+            .status()
+            .expect("spawn ffmpeg");
+        assert!(status.success(), "ffmpeg could not make the clip");
+        path
+    }
+
+    #[test]
+    fn a_failed_hardware_attempt_decodes_again_in_software() {
+        ensure_ffmpeg().expect("ffmpeg");
+        let path = mjpeg_clip("fallback");
+        let forced = decode_planned(&path, Plan::Software(DecoderUsed::Forced)).expect("software");
+        let fell_back = decode_planned(&path, Plan::TryHardware).expect("fallback");
+        let _ = std::fs::remove_file(&path);
+
+        match &fell_back.decoder {
+            DecoderUsed::Fallback(reason) => assert!(!reason.is_empty()),
+            other => panic!("expected a fallback, got {other:?}"),
+        }
+        assert_eq!(fell_back.frames.len(), forced.frames.len());
+        assert_eq!(fell_back.frames.len(), 24);
+        assert_eq!(fell_back.duration_ms, forced.duration_ms);
+        for (a, b) in fell_back.frames.iter().zip(&forced.frames) {
+            assert_eq!(a.time_ms, b.time_ms);
+            assert_eq!(a.scene_score, b.scene_score);
+        }
+        let note = decode_note(fell_back.format, &fell_back.decoder);
+        assert!(note.contains("was tried and not used"), "{note}");
+    }
+
+    /// Resident memory of this process in KiB, from `ps`.
+    #[cfg(target_os = "macos")]
+    fn resident_kib() -> u64 {
+        let output = std::process::Command::new("ps")
+            .args(["-o", "rss=", "-p", &std::process::id().to_string()])
+            .output()
+            .expect("spawn ps");
+        String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .parse()
+            .expect("rss")
+    }
+
+    /// Each hardware decode creates a device and a pool of frames and releases
+    /// them with `unsafe` code, so decode one file many times and require the
+    /// process to stop growing. A leaked 640x360 frame per decode would add
+    /// over 40 MB across the second half of the runs.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn repeated_hardware_decodes_do_not_grow_memory() {
+        ensure_ffmpeg().expect("ffmpeg");
+        let path = std::env::temp_dir().join(format!("reelctl-leak-{}.mp4", std::process::id()));
+        let status = std::process::Command::new("ffmpeg")
+            .args(["-y", "-hide_banner", "-loglevel", "error"])
+            .args(["-f", "lavfi", "-i", "testsrc2=s=640x360:r=24:d=3"])
+            .args([
+                "-c:v",
+                "libx265",
+                "-preset",
+                "ultrafast",
+                "-pix_fmt",
+                "yuv420p10le",
+            ])
+            .args(["-tag:v", "hvc1", "-x265-params", "log-level=error"])
+            .arg(&path)
+            .status()
+            .expect("spawn ffmpeg");
+        assert!(status.success(), "ffmpeg could not make the clip");
+
+        let mut after_five = 0;
+        for run in 1..=50 {
+            let reel = decode_planned(&path, Plan::TryHardware).expect("decode");
+            assert_eq!(reel.decoder, DecoderUsed::Hardware, "run {run}");
+            assert_eq!(reel.frames.len(), 72);
+            if run == 5 {
+                after_five = resident_kib();
+            }
+        }
+        let after_fifty = resident_kib();
+        let _ = std::fs::remove_file(&path);
+        let growth_mib = after_fifty.saturating_sub(after_five) / 1024;
+        assert!(
+            growth_mib < 30,
+            "resident memory grew {growth_mib} MiB between run 5 and run 50"
+        );
     }
 }

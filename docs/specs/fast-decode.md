@@ -20,10 +20,10 @@ That is a hard limit on how fast `decompile` can get. This spec says how far exa
 Behavior:
 
 - **HEVC decodes on the Apple media engine (VideoToolbox) when it works,** because it is the one exact option that is clearly faster. On the real iPhone file: 4.0 s against 8.9 s in software, and 5.7 CPU-seconds against 62. H.264 stays on the software decoder, where hardware is slower (11.2 s against 3.0 s).
-- **Anything that goes wrong in hardware falls back to software,** with the same output: no device, an unsupported profile, an error on the first frame.
+- **Anything that goes wrong in hardware falls back to software,** with the same output: no device, an unsupported profile, an error at any frame. The fallback decodes the whole file again in software (a decode depends on nothing but the file), and if software fails too, its error is returned. *Changed from "first frame only" during planning.*
 - Frames from the hardware decoder come back as `nv12` (8-bit) or `p010` (10-bit), and are sampled at the same points as today. `p010` holds a 10-bit value in the top bits of 16, so its top 8 bits are the high byte, and the values equal the software decoder's `yuv420p10le >> 2`.
 - `decode_note` says which decoder ran, and why software ran when hardware was tried.
-- Software decoding skips all loop filtering instead of only non-reference frames, **only if** the known-cut corpus gives the same cuts and scores within 0.005. It saved 10–15% in the measurements below.
+- **Software decoding filters every frame.** *Changed during Task 3.* The plan was to skip all loop filtering if the corpus kept its cuts. Testing the hardware path showed that today's skip on non-reference frames already moves HEVC scene scores by up to 0.022 against the hardware decoder, which always filters; with every frame filtered the two are equal to four decimals. The skip saved 6% of decode time, so it is removed rather than widened.
 
 Out of scope: sampling or skipping frames, an approximate "preview" mode (see Resolved Questions), a different cut detector, other platforms' hardware decoders, the audio path (0.08 s), and the 10-bit tone-mapping question.
 
@@ -83,7 +83,7 @@ bash fixtures/generate.sh textured_cuts12 /tmp/textured_cuts12.mp4
 | `crates/decompile/src/hwdecode.rs` | New: VideoToolbox device, `get_format` callback, frame transfer, the only `unsafe` |
 | `crates/reelctl/src/main.rs`, `docs/cli.md` | A `--decoder <auto\|software>` option on `decompile`, so the software path can be forced for comparison and as an escape hatch (added in planning; `auto` is the default) |
 | `crates/decompile/src/decode.rs` | Choose hardware or software per codec; `p010` plane support; `decode_note` says which ran |
-| `fixtures/generate.sh` | `textured_cuts12`: 12 s, 640×360, hard cuts between textured sources, B-frames, scene-cut detection off. A small stand-in for the corpus |
+| `fixtures/generate.sh` | `textured_cuts12`: 12 s, 640×360, hard cuts between smoothly changing textured sources, B-frames, a keyframe every 25 frames, scene-cut detection off. A small stand-in for the corpus. `textured_cuts12_hevc` (Main 10) and `textured_cuts12_hevc8` (Main) are the same shots as HEVC, for the media engine |
 | `crates/reelctl/tests/p0_fixture.rs` | End-to-end tests |
 | Docs | `docs/status.md` (measurements, the revised statement of the target), `docs/cli.md`, `docs/edit-dna.md` (`decode_note`), ADR-012, ADR-001 superseded in part, README, CHANGELOG, the capability map |
 
@@ -119,10 +119,10 @@ Test-first.
 
 ## Success Criteria
 
-1. **Same results.** On the known-cut corpus in all four encodings, and on the original iPhone file, the hardware path gives the same `cuts` (same frame indices), scene scores within 0.005, and equal per-shot colors and thumbnails as the software path.
+1. **Same results.** On the known-cut corpus in all four encodings, and on the original iPhone file, the hardware path gives the same `cuts` (same frame indices and times), scene scores within 0.0001, and equal per-shot colors and thumbnails as the software path. (The software path filters every frame; see Behavior. The 0.005 first written here was loose because the old software shortcut differed by up to 0.022.)
 2. **Faster on HEVC.** On the original iPhone file, `signal_ms` is at least 40% lower than software (measured 8.9 s → 4.0 s, 55%), in three alternating runs.
 3. **Safe fallback.** With hardware forced off, and with a file the hardware decoder rejects, the output equals the software output, and `decode_note` says why software ran.
-4. **Nothing else moves.** All existing fixtures give identical `edit_dna.json` apart from timings, and the 60 s H.264 benchmark's median `signal_ms` stays within 242–262 ms.
+4. **Nothing else moves.** All existing fixtures give identical `edit_dna.json` apart from timings and `decode_note` (whose text changed with the loop filter and the decoder names), and byte-identical PNGs; the 60 s H.264 benchmark's median `signal_ms` stays within 242–262 ms.
 5. **`decode_note`** names the decoder used.
 6. **Tests and docs.** `cargo test` passes and the docs under Project Structure are updated, including the measured per-class cost in [status.md](../status.md), where the 500 ms target is recorded as unmet for real footage, with numbers.
 
@@ -133,11 +133,11 @@ Test-first.
    - **B:** you amend the metric in `planer.md` now (for example to a decode-time budget per 60 s of footage) and I mirror it in the docs.
    - **C:** add an opt-in `--preview` mode that samples frames and may miss cuts, labelled as approximate in the output. Not recommended: the evidence shows it misses cuts on exactly the footage the tool exists for, and it would ship as "fast" while hiding that.
 2. **Hardware decoding, with the first `unsafe` code in the repo.** The alternative is software only, which gives no speed-up. Recommended: yes, behind the fallback and the same-results check.
-3. **All loop filtering off in software.** Saves 10–15%. Recommended: adopt it only if criterion 1 holds with it; otherwise leave it as is.
+3. **All loop filtering off in software.** *Resolved: only if cuts stay identical (2026-10-26); the outcome is that no loop filtering is skipped at all, see Behavior.* Saves 10–15%. Recommended: adopt it only if criterion 1 holds with it; otherwise leave it as is.
 4. **`visual-motion`, the next module,** needs dense frames to see zooms and overlays. This spec keeps every frame available, which sampling would not. No action needed; recorded so the two modules stay compatible.
 
 ## Resolved Questions
 
 1. **The 500 ms metric (answered 2026-10-26): A.** Exactness is the contract. 500 ms is recorded in [status.md](../status.md) as unmet on real footage, with the measured numbers; `planer.md` stays unchanged for the user to revise. 
 2. **Hardware decoding (answered 2026-10-26): yes**, behind the software fallback and the same-results check.
-3. **Loop filtering (answered 2026-10-26): only if cuts stay identical.** Adopted only if criterion 1 holds with it.
+3. **Loop filtering (answered 2026-10-26): only if cuts stay identical.** It did not hold even for today's shortcut, so software now filters every frame (see Behavior and [ADR-012](../decisions/ADR-012-decode-hevc-in-hardware-and-every-frame-exactly.md)).

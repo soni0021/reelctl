@@ -9,7 +9,8 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use decompile::{
-    decompile_file, run_whisper_worker, CutDetectorChoice, DecompileRequest, WhisperRunner,
+    decompile_file, run_whisper_worker, CutDetectorChoice, DecoderSetting, DecompileRequest,
+    WhisperRunner,
 };
 use diff::compare;
 use edit_dna::EditDna;
@@ -112,6 +113,25 @@ struct SignalArgs {
     /// one, from voiced bursts.
     #[arg(long, env = "REELCTL_WHISPER_MODEL")]
     whisper_model: Option<PathBuf>,
+    /// Video decoder. `auto` decodes HEVC on the Apple media engine (VideoToolbox)
+    /// where it works, and everything else in software; `software` forces software.
+    #[arg(long, value_enum, default_value_t = DecoderArg::Auto)]
+    decoder: DecoderArg,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum DecoderArg {
+    Auto,
+    Software,
+}
+
+impl DecoderArg {
+    fn setting(self) -> DecoderSetting {
+        match self {
+            Self::Auto => DecoderSetting::Auto,
+            Self::Software => DecoderSetting::Software,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -173,6 +193,7 @@ fn decompile(args: DecompileArgs) -> Result<()> {
         whisper_model: args.signal.whisper_model,
         whisper_runner: whisper_runner(),
         cut_detector: args.signal.cut_detector.choice(),
+        decoder: args.signal.decoder.setting(),
     };
     let output = decompile_file(&request).context("decompile")?;
     let dir = filmstrip_dir(&args.out, args.filmstrip_dir);
@@ -204,6 +225,7 @@ fn diff(args: DiffArgs) -> Result<()> {
         whisper_model: args.signal.whisper_model,
         whisper_runner: whisper_runner(),
         cut_detector: args.signal.cut_detector.choice(),
+        decoder: args.signal.decoder.setting(),
     };
     let draft = decompile_file(&request).context("decompile draft")?;
     let file =

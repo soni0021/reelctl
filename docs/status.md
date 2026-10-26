@@ -59,6 +59,24 @@ Same machine, release builds of `main` and `feature/relative-silence` on the sam
 
 The real clip was re-cut from the original recording on 2026-10-25 with its audio copied, not re-encoded, so its word count (125) differs from the 2026-10-21 runs (183); see Known issues.
 
+## Fast decode, 2026-10-26
+
+Same machine, release builds, branch `feature/fast-decode` ([spec](specs/fast-decode.md), [ADR-012](decisions/ADR-012-decode-hevc-in-hardware-and-every-frame-exactly.md)). The direction for this module was quality over time, so nothing skips frames.
+
+| Check | Result |
+|---|---|
+| Cut detection from keyframes and packet sizes (rejected), on a 60 s corpus of 10 planted hard cuts, 1080×1920, B-frames, keyframe every 24 frames | Today's full decode finds 10 of 10 in all four encodings (x264 and x265, scene-cut keyframes on and off). A keyframe sits at 7 of 10 cuts with scene-cut keyframes on. With them off, the cut frame's packet size ranks 6th to 537th among non-keyframes (x264) and 38th to 354th (x265). The one cut in the iPhone recording is neither a keyframe nor a size outlier (84 KB against a median of 83 KB) |
+| Software decode: threads | 7 of 8 cores busy (62 CPU-seconds in 8.9 s); one thread takes 42.7 s. More parallelism cannot reach 500 ms |
+| Hardware against software, iPhone recording (87 s, HEVC Main 10, 1080×1920), `reelctl` `signal_ms`, alternating runs | Hardware 5,052, 5,327, 4,021, 4,599 ms; software 8,416, 8,618, 8,478, 8,507 ms. About 44% lower at the median. CPU time: 5.7 s against 62 s |
+| Same file as 8-bit H.264 (1080p reference) | Hardware 11.2 s, software 3.0 s, so H.264 stays in software |
+| Hardware has a fixed cost | `draft12_10bit` (12 s, 640×360): 183 ms with hardware, 23 ms in software. About 160 ms of start-up; at 1080p hardware wins from about 3–4 s of video |
+| Same results | Corpus HEVC encodings (x265, scene-cut on and off) and the iPhone recording: `decode_note` says the media engine ran, and cuts (frame, time, score), silence gaps, shot colors, loudness, and every `timeline_view` PNG are equal to a software decode. `textured_cuts12_hevc` and `_hevc8` and `draft12_10bit`: scores equal to 0.0001 in the default test suite |
+| The old software shortcut | With the loop filter skipped on non-reference frames, software and hardware scene scores differed by 0.006–0.022 on frames just after a cut (HEVC fixtures). With every frame filtered they are equal to four decimals. So the shortcut was removed; it had saved 6% of decode time |
+| Exact software decode, existing fixtures | `edit_dna.json` equal to the baseline apart from `decode_note`; PNGs byte-identical. 60 s H.264 benchmark, ten alternating runs: median 243.0 ms before, 242.5 ms after |
+| Fallback | A motion JPEG clip (no media engine path): hardware is tried, fails, and the file decodes in software with the same frames; `decode_note` gives the reason. In the default test suite |
+| Memory | 50 hardware decodes of one clip in one process: growth under 30 MiB between runs 5 and 50 (a deliberate per-frame leak shows 2,298 MiB, so the test can fail) |
+| Exact decode against the 500 ms target | Not met on real footage: the iPhone file takes 2.8–3.7 s per 60 s of video with the media engine (4.0–5.3 s for its 87 s, against 8.5 s in software), and 1080p H.264 is about 2.1 s per 60 s. `planer.md` is unchanged |
+
 ## 10-bit video and 44.1 kHz audio, 2026-10-26
 
 Same machine, release builds of `main` (before the merge) and `feature/decode-inputs` on the same inputs ([spec](specs/decode-inputs.md), [ADR-011](decisions/ADR-011-read-10-bit-video-from-its-top-8-bits.md)). The real iPhone recording is the last two rows. It is the 87 s file from [First real footage](#first-real-footage-2026-10-20), kept outside the repo.
@@ -156,6 +174,7 @@ Not yet listed in AGENTS.md:
 - The JSON value for TransNetV2 is `"trans_net_v2"`, but `CutDetectorKind::as_str()` returns `"transnet_v2"`. Nothing emits either until TransNetV2 is linked.
 - Colors are converted from YUV with BT.601 coefficients, while most HD video uses BT.709, so absolute RGB values are slightly off.
 - Audio sampled above 48 kHz (88.2 or 96 kHz) can alias, because the resampler is linear interpolation with no low-pass filter. Unmeasured; the rates seen so far (44.1 and 48 kHz) are not affected.
+- The extra detection on the frame after a cut: in an earlier version of `textured_cuts12_hevc` (sources that change drastically between frames, since replaced), both decoders reported a second cut one frame after a real one. The detector, not the decoder, does that, so it is a property of `scene_score` on footage whose first frame in a shot is coded coarsely. Not investigated further.
 - `nv12` frames are always read as limited range, whatever their metadata says. FFmpeg's software decoders never output `nv12`, so no measured input is affected; 8-bit `yuv420p` with full-range metadata is also read as limited, as before. 10-bit follows the metadata.
 - HDR video (HLG or PQ transfer, such as iPhone recordings) is not tone-mapped, so its per-shot colors and thumbnails are flatter and less saturated than the picture a viewer sees. `decode_note` says so ([ADR-011](decisions/ADR-011-read-10-bit-video-from-its-top-8-bits.md)).
 - whisper can silently drop up to a 30 s window of speech. Since 2026-10-26 such stretches are found and transcribed again, which recovered every measured loss ([Whisper coverage](#whisper-coverage-2026-10-25)). A stretch can still stay empty, and `asr_note` then lists it. Which of whisper.cpp's two skip rules fired in each case is not known.

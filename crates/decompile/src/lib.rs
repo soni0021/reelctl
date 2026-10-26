@@ -11,6 +11,7 @@ mod coverage;
 mod decode;
 mod error;
 mod histogram;
+mod hwdecode;
 mod linear_resample;
 mod loudness;
 mod payoff;
@@ -22,6 +23,7 @@ mod transnet;
 mod whisper;
 mod worker;
 
+pub use decode::DecoderSetting;
 pub use error::DecompileError;
 pub use pipeline::{decompile_file, DecompileOutput, DecompileRequest, StageProfile};
 pub use scene::{CutDetector, SCENE_SCORE_THRESHOLD};
