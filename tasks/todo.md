@@ -7,14 +7,14 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/quiet-audio.md](../docs/specs/
 **Description:** Save every existing fixture's `edit_dna.json` and the real iPhone recording's silence figures from the current release build, outside the repo. Add the `quiet12` fixture. Write the unit and end-to-end tests that the spec lists, and watch them fail.
 
 **Acceptance criteria:**
-- [ ] Baselines saved for all fixtures and for `IMG_1435.MOV`; the Reels file's current result noted (one gap, threshold −40.0)
-- [ ] `quiet12` in `fixtures/generate.sh` (`quiet12` kind and in `all`): a 440 Hz tone with `volume=-28dB` (−46 dB peak, about −49 dB RMS) and a 0.5 s mute; byte-reproducible; its window level checked with ffmpeg `astats`
-- [ ] Unit tests in `silence.rs`, failing for the right reason: the Reels-shaped levels, the quiet tone with a pause, the two mostly-silent shapes (must stay −40; they pass today and must keep passing), the under-1% shape (995 at −120 plus 5 at −14: −70, with the silence still a gap), a recording of only −120 (−70, one gap), and a silent recording never giving `−inf` or NaN
-- [ ] End-to-end test in `p0_fixture.rs`: `quiet12`'s gaps of 180 ms or more are the planted pause (±20 ms) and `diff` flags it; failing today
-- [ ] The existing tests still pass
+- [x] Baselines saved for all fixtures and for `IMG_1435.MOV`; the Reels file's current result noted (one gap, threshold −40.0)
+- [x] `quiet12` in `fixtures/generate.sh` (`quiet12` kind and in `all`): a 440 Hz tone with `volume=-28dB` (−46 dB peak, about −49 dB RMS) and a 0.5 s mute; byte-reproducible; its window level checked with ffmpeg `astats`
+- [x] Unit tests in `silence.rs`, failing for the right reason: the Reels-shaped levels, the quiet tone with a pause, the two mostly-silent shapes (must stay −40; they pass today and must keep passing), the under-1% shape (995 at −120 plus 5 at −14: −70, with the silence still a gap), a recording of only −120 (−70, one gap), and a silent recording never giving `−inf` or NaN
+- [x] End-to-end test in `p0_fixture.rs`: `quiet12`'s gaps of 180 ms or more are the planted pause (±20 ms) and `diff` flags it; failing today
+- [x] The existing tests still pass
 
 **Verification:**
-- [ ] `cargo test` shows exactly the new quiet-recording tests failing
+- [x] `cargo test` shows exactly the new quiet-recording tests failing (4 unit tests and the end-to-end test; the mostly-silent test passes today, as it must)
 
 **Dependencies:** None
 

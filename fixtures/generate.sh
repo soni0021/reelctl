@@ -176,6 +176,18 @@ bench60() {
     -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=60"
 }
 
+# 12 s of a 440 Hz tone at -46 dB peak (about -49 dB RMS, the level of a very
+# quiet download or a low-gain microphone) with a planted 0.5 s mute at
+# 5.0-5.5 s. Everything is under the old -40 dB silence floor. lavfi's sine has
+# a fixed peak of -18 dBFS, so volume lowers it by 28 dB.
+quiet12() {
+  local out="$1"
+  encode "$out" \
+    "[0:v]null[v];[1:a]volume=-28dB,volume=volume=0:enable='between(t,5.0,5.5)'[a]" \
+    -f lavfi -i "color=c=black:s=640x360:r=30:d=12" \
+    -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=12"
+}
+
 # 12 s of solid blue with synthesized speech from 0.5 s and a planted 1 s pause
 # after "air.". Digital silence everywhere else, so silence_gaps finds the pause.
 speech12() {
@@ -247,6 +259,9 @@ case "$cmd" in
   bench60)
     bench60 "$out"
     ;;
+  quiet12)
+    quiet12 "$out"
+    ;;
   noisy12)
     noisy12 "$out"
     ;;
@@ -272,10 +287,11 @@ case "$cmd" in
     depth12_hevc "${dir}/depth_6s.hevc"
     outlier12 "${dir}/outlier_12s.mp4"
     noisy12 "${dir}/noisy_12s.mp4"
+    quiet12 "${dir}/quiet_12s.mp4"
     bench60 "${dir}/bench_60s.mp4"
     ;;
   *)
-    echo "usage: generate.sh draft12|draft12_10bit|draft12_44k|textured_cuts12|textured_cuts12_hevc|textured_cuts12_hevc8|textured_cuts12_hevc_full|resize12_hevc|shrink12_hevc|depth12_hevc|outlier12|noisy12|bench60|speech12|tonespeech|all [out.mp4]" >&2
+    echo "usage: generate.sh draft12|draft12_10bit|draft12_44k|textured_cuts12|textured_cuts12_hevc|textured_cuts12_hevc8|textured_cuts12_hevc_full|resize12_hevc|shrink12_hevc|depth12_hevc|outlier12|noisy12|quiet12|bench60|speech12|tonespeech|all [out.mp4]" >&2
     exit 2
     ;;
 esac

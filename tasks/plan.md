@@ -18,7 +18,7 @@ Let the silence threshold's −40 dB floor come down to `p99 − 12` when a reco
 ## Task List
 
 ### Phase 1: The rule
-- [ ] Task 1: Baselines, `quiet12`, and the failing tests
+- [x] Task 1: Baselines, `quiet12`, and the failing tests
 - [ ] Task 2: The new threshold
 
 ### Checkpoint A
