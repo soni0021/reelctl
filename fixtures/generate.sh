@@ -59,6 +59,88 @@ draft12_44k() (
     -f lavfi -i "sine=frequency=440:sample_rate=44100:duration=60"
 )
 
+# 12 s of four 3 s shots with hard cuts at 3, 6, and 9 s (frames 72, 144, 216
+# at 24 fps), between textured sources: two test patterns and two Mandelbrot
+# zooms. Each changes smoothly from frame to frame, so a second detection on the
+# frame after a cut means the decoder is wrong, not the source. (Not `gradients`,
+# which differs from run to run even with a seed, nor `life` and `cellauto`,
+# which change drastically between frames.) The encode has B-frames, scene-cut
+# detection off, and a keyframe every 25 frames, not 24, so none lands on a
+# cut. The encoder places no keyframe at a cut and packet sizes do not mark
+# one (measured on a longer corpus, status.md): a decoder that skips frames
+# would lose these cuts.
+textured_cuts12() (
+  video_codec=(-c:v libx264 -preset fast -crf 22 -profile:v high -g 25 -bf 3 -sc_threshold 0 -pix_fmt yuv420p)
+  textured_cuts_shots "$1"
+)
+
+# The four shots, encoded with whatever video_codec is set.
+textured_cuts_shots() {
+  local cut="trim=duration=3,setpts=PTS-STARTPTS,format=yuv420p"
+  encode "$1" \
+    "[0:v]${cut}[a0];[1:v]${cut}[a1];[2:v]${cut}[a2];[3:v]${cut}[a3];[a0][a1][a2][a3]concat=n=4:v=1:a=0[v];[4:a]anull[a]" \
+    -f lavfi -i "testsrc2=s=640x360:r=24" \
+    -f lavfi -i "mandelbrot=s=640x360:r=24" \
+    -f lavfi -i "testsrc=s=640x360:r=24" \
+    -f lavfi -i "mandelbrot=s=640x360:r=24:start_x=-0.743643887037:start_y=0.131825904205:start_scale=0.01:end_scale=0.003:end_pts=300" \
+    -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=12"
+}
+
+# textured_cuts12 as HEVC, for the media-engine decoder: 10-bit Main 10 (what an
+# iPhone records) and 8-bit Main. Keyframes every 25 frames, scene cuts off.
+textured_cuts12_hevc() (
+  video_codec=(-c:v libx265 -preset fast -crf 24 -pix_fmt "${2:-yuv420p10le}" -tag:v hvc1
+    -x265-params "keyint=25:min-keyint=25:scenecut=0:bframes=3:log-level=error")
+  textured_cuts_shots "$1"
+)
+
+# textured_cuts12_hevc8 (the 8-bit variant) flagged as full range (0-255), as some Android and
+# screen-recording exports are. FFmpeg's software decoder reads it as yuvj420p;
+# the media engine returns nv12 and only the frame metadata says "full".
+textured_cuts12_hevc_full() (
+  video_codec=(-c:v libx265 -preset fast -crf 24 -pix_fmt yuv420p -color_range pc -tag:v hvc1
+    -x265-params "keyint=25:min-keyint=25:scenecut=0:bframes=3:range=full:log-level=error")
+  textured_cuts_shots "$1"
+)
+
+# 6 s of HEVC that grows from 320x180 to 640x360 after 3 s, as raw Annex B: a
+# new SPS and a keyframe, with no container to hold one frame size. Only the
+# frame size changes. Video only, so it has no silence and no words. Given
+# "shrink" it goes the other way, from 640x360 to 320x180.
+resize12_hevc() {
+  local out="$1" dir
+  local sizes=(320x180 640x360)
+  [ "${2:-}" = shrink ] && sizes=(640x360 320x180)
+  dir="$(mktemp -d -t reelctl-resize)"
+  for size in "${sizes[@]}"; do
+    ffmpeg -y -hide_banner -loglevel error \
+      -f lavfi -i "testsrc2=s=${size}:r=24:d=3" \
+      -c:v libx265 -preset fast -crf 24 -pix_fmt yuv420p \
+      -x265-params "keyint=25:min-keyint=25:scenecut=0:bframes=3:log-level=error" \
+      -f hevc "${dir}/${size}.hevc"
+  done
+  mkdir -p "$(dirname "$out")"
+  cat "${dir}/${sizes[0]}.hevc" "${dir}/${sizes[1]}.hevc" > "$out"
+  rm -rf "$dir"
+}
+
+# 6 s of HEVC that changes from 8-bit Main to 10-bit Main 10 after 3 s, as raw
+# Annex B, at one frame size. Video only.
+depth12_hevc() {
+  local out="$1" dir format
+  dir="$(mktemp -d -t reelctl-depth)"
+  for format in yuv420p yuv420p10le; do
+    ffmpeg -y -hide_banner -loglevel error \
+      -f lavfi -i "testsrc2=s=640x360:r=24:d=3" \
+      -c:v libx265 -preset fast -crf 24 -pix_fmt "$format" \
+      -x265-params "keyint=25:min-keyint=25:scenecut=0:bframes=3:log-level=error" \
+      -f hevc "${dir}/${format}.hevc"
+  done
+  mkdir -p "$(dirname "$out")"
+  cat "${dir}/yuv420p.hevc" "${dir}/yuv420p10le.hevc" > "$out"
+  rm -rf "$dir"
+}
+
 outlier12() {
   local out="$1"
   local size="${2:-640x360}"
@@ -138,6 +220,27 @@ case "$cmd" in
   draft12_44k)
     draft12_44k "$out"
     ;;
+  textured_cuts12)
+    textured_cuts12 "$out"
+    ;;
+  textured_cuts12_hevc)
+    textured_cuts12_hevc "$out"
+    ;;
+  textured_cuts12_hevc8)
+    textured_cuts12_hevc "$out" yuv420p
+    ;;
+  textured_cuts12_hevc_full)
+    textured_cuts12_hevc_full "$out"
+    ;;
+  resize12_hevc)
+    resize12_hevc "$out"
+    ;;
+  shrink12_hevc)
+    resize12_hevc "$out" shrink
+    ;;
+  depth12_hevc)
+    depth12_hevc "$out"
+    ;;
   outlier12)
     outlier12 "$out"
     ;;
@@ -160,12 +263,19 @@ case "$cmd" in
     draft12 "${dir}/draft_12s.mp4"
     draft12_10bit "${dir}/draft_12s_10bit.mp4"
     draft12_44k "${dir}/draft_12s_44k.mp4"
+    textured_cuts12 "${dir}/textured_cuts_12s.mp4"
+    textured_cuts12_hevc "${dir}/textured_cuts_12s_hevc.mp4"
+    textured_cuts12_hevc "${dir}/textured_cuts_12s_hevc8.mp4" yuv420p
+    textured_cuts12_hevc_full "${dir}/textured_cuts_12s_hevc_full.mp4"
+    resize12_hevc "${dir}/resize_6s.hevc"
+    resize12_hevc "${dir}/shrink_6s.hevc" shrink
+    depth12_hevc "${dir}/depth_6s.hevc"
     outlier12 "${dir}/outlier_12s.mp4"
     noisy12 "${dir}/noisy_12s.mp4"
     bench60 "${dir}/bench_60s.mp4"
     ;;
   *)
-    echo "usage: generate.sh draft12|draft12_10bit|draft12_44k|outlier12|noisy12|bench60|speech12|tonespeech|all [out.mp4]" >&2
+    echo "usage: generate.sh draft12|draft12_10bit|draft12_44k|textured_cuts12|textured_cuts12_hevc|textured_cuts12_hevc8|textured_cuts12_hevc_full|resize12_hevc|shrink12_hevc|depth12_hevc|outlier12|noisy12|bench60|speech12|tonespeech|all [out.mp4]" >&2
     exit 2
     ;;
 esac

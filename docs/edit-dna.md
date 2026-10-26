@@ -13,7 +13,7 @@ Every field is always present. Times are whole milliseconds. Video times count f
 | `fps` | number | The stream's average frame rate, else its base rate, else 30 |
 | `frame_size` | object | `width` and `height` of the decoded frames, in pixels |
 | `frame_count` | integer | Number of frames decoded |
-| `decode_note` | string | How the video was decoded. For 10-bit video it adds that the top 8 bits of each sample were read, and for an HLG or PQ transfer that the input was HDR and colors were not tone-mapped |
+| `decode_note` | string | How the video was decoded: in software, or on the Apple media engine (HEVC on macOS), or in software after the media engine failed (with the reason), or in software because `--decoder software` asked for it. For 10-bit video it adds that the top 8 bits of each sample were read, and for an HLG or PQ transfer that the input was HDR and colors were not tone-mapped |
 
 ## Cuts
 
@@ -26,7 +26,7 @@ Every field is always present. Times are whole milliseconds. Video times count f
 | `interval_ms` | Time since the previous cut, or since 0 for the first cut |
 | `scene_score` | Detector score from 0 to 1, rounded to 4 decimals |
 
-The scene-score detector applies the formula behind FFmpeg's `scene` value (from the `select` filter) to a grid of roughly 160×90 luma samples, and records a cut wherever the score is above 0.30. It has been tested only on hard cuts between solid colors; dissolves, whip pans, flashes, and speed ramps are untested. See [ADR-002](decisions/ADR-002-scene-score-cut-detector.md).
+The scene-score detector applies the formula behind FFmpeg's `scene` value (from the `select` filter) to a grid of roughly 160×90 luma samples (spread over the whole picture, also when the frame size changes part-way through the video), and records a cut wherever the score is above 0.30. It has been tested only on hard cuts between solid colors; dissolves, whip pans, flashes, and speed ramps are untested. See [ADR-002](decisions/ADR-002-scene-score-cut-detector.md).
 
 `cut_detector` names the detector that produced the list: `"ffmpeg_scene_score"` today, with `"trans_net_v2"` reserved for TransNetV2. `cut_detector_note` says why that detector ran, including the reason for any fallback.
 
@@ -65,7 +65,7 @@ With `"silence_bursts"`, each word is a stretch of 10 ms windows at or above the
 | `mean_r`, `mean_g`, `mean_b` | Mean 8-bit RGB value over the shot, rounded to 2 decimals |
 | `bins_r`, `bins_g`, `bins_b` | 8 bins per channel (0–31, 32–63, …, 224–255); each value is the fraction of samples in that bin, rounded to 4 decimals |
 
-Each frame contributes a grid of roughly 32×18 samples, converted from YUV to RGB with BT.601 coefficients (full range only for `yuvj420p`). Most HD video uses BT.709, so absolute colors are slightly off; use the histograms to compare shots rather than as exact color.
+Each frame contributes a grid of roughly 32×18 samples, converted from YUV to RGB with BT.601 coefficients (full range for `yuvj420p` and for frames whose metadata says full range). Most HD video uses BT.709, so absolute colors are slightly off; use the histograms to compare shots rather than as exact color.
 
 ## Payoff window
 

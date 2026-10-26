@@ -372,3 +372,270 @@ fn a_pause_at_50_seconds_in_44k_audio_is_found_on_time() {
 
     let _ = fs::remove_dir_all(&root);
 }
+
+#[test]
+fn hard_cuts_between_textured_shots_without_keyframes_are_all_found() {
+    let root = std::env::temp_dir().join(format!("reelctl-textured-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("temp dir");
+    let mp4 = root.join("textured.mp4");
+    let json = root.join("textured.edit_dna.json");
+    generate("textured_cuts12", &mp4);
+
+    let output = reelctl()
+        .args(["decompile", "--input"])
+        .arg(&mp4)
+        .arg("--out")
+        .arg(&json)
+        .arg("--filmstrip-dir")
+        .arg(root.join("timeline"))
+        .output()
+        .expect("spawn reelctl");
+    assert!(
+        output.status.success(),
+        "decompile failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let dna: EditDna = serde_json::from_slice(&fs::read(&json).expect("json")).expect("dna");
+
+    assert_no_keyframe_on_the_cuts(&mp4);
+
+    // Four 3 s shots at 24 fps, so cuts at frames 72, 144, and 216. The encoder
+    // has scene-cut detection off and keyframes every 25 frames.
+    let found: Vec<u64> = dna.cuts.iter().map(|cut| cut.frame_index).collect();
+    assert_eq!(found.len(), 3, "cuts {:?}", dna.cuts);
+    for (cut, planted) in found.iter().zip([72u64, 144, 216]) {
+        assert!(cut.abs_diff(planted) <= 1, "cuts {found:?}");
+    }
+    assert_eq!(dna.shot_histograms.len(), 4);
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// The fixture is only worth having if the encoder put no keyframe within a
+/// frame of a cut at frames 72, 144, or 216, so check the file's own packets.
+fn assert_no_keyframe_on_the_cuts(mp4: &std::path::Path) {
+    let probe = Command::new("ffprobe")
+        .args(["-v", "error", "-select_streams", "v:0"])
+        .args(["-show_entries", "packet=pts_time,flags", "-of", "csv=p=0"])
+        .arg(mp4)
+        .output()
+        .expect("spawn ffprobe");
+    assert!(probe.status.success(), "ffprobe failed");
+    let keyframes: Vec<u64> = String::from_utf8_lossy(&probe.stdout)
+        .lines()
+        .filter_map(|line| {
+            let (time, flags) = line.split_once(',')?;
+            let frame = (time.parse::<f64>().ok()? * 24.0).round() as u64;
+            flags.contains('K').then_some(frame)
+        })
+        .collect();
+    assert!(keyframes.len() >= 10, "keyframes {keyframes:?}");
+    for planted in [72u64, 144, 216] {
+        assert!(
+            keyframes.iter().all(|key| key.abs_diff(planted) > 1),
+            "a keyframe sits on the cut at frame {planted}: {keyframes:?}"
+        );
+    }
+}
+
+/// Decompile `mp4` with the given `--decoder`; returns the parsed output and
+/// the directory holding its timeline PNGs.
+fn decompile_with(
+    root: &std::path::Path,
+    mp4: &std::path::Path,
+    name: &str,
+    decoder: &str,
+) -> (EditDna, PathBuf) {
+    let json = root.join(format!("{name}.edit_dna.json"));
+    let views = root.join(format!("{name}_timeline"));
+    let output = reelctl()
+        .args(["decompile", "--decoder", decoder, "--input"])
+        .arg(mp4)
+        .arg("--out")
+        .arg(&json)
+        .arg("--filmstrip-dir")
+        .arg(&views)
+        .output()
+        .expect("spawn reelctl");
+    assert!(
+        output.status.success(),
+        "decompile --decoder {decoder} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let dna = serde_json::from_slice(&fs::read(&json).expect("json")).expect("dna");
+    (dna, views)
+}
+
+fn pngs(dir: &std::path::Path) -> Vec<(String, Vec<u8>)> {
+    let mut files: Vec<(String, Vec<u8>)> = fs::read_dir(dir)
+        .expect("timeline dir")
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "png"))
+        .map(|entry| {
+            (
+                entry.file_name().to_string_lossy().into_owned(),
+                fs::read(entry.path()).expect("png"),
+            )
+        })
+        .collect();
+    files.sort();
+    files
+}
+
+/// HEVC goes to the media engine. The results must equal the software
+/// decoder's, and the note must say which decoder ran: a silent fallback would
+/// make the two equal by construction.
+#[test]
+fn hevc_on_the_media_engine_gives_the_same_results_as_software() {
+    let root = std::env::temp_dir().join(format!("reelctl-hw-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("temp dir");
+    let on_mac = cfg!(target_os = "macos");
+
+    for kind in [
+        "draft12_10bit",
+        "textured_cuts12_hevc",
+        "textured_cuts12_hevc8",
+        "textured_cuts12_hevc_full",
+    ] {
+        let mp4 = root.join(format!("{kind}.mp4"));
+        generate(kind, &mp4);
+        if kind.starts_with("textured") {
+            assert_no_keyframe_on_the_cuts(&mp4);
+        }
+        let (auto, auto_views) = decompile_with(&root, &mp4, &format!("{kind}_auto"), "auto");
+        let (soft, soft_views) = decompile_with(&root, &mp4, &format!("{kind}_soft"), "software");
+
+        assert!(
+            soft.decode_note.contains("--decoder software"),
+            "{kind}: {}",
+            soft.decode_note
+        );
+        if on_mac {
+            assert!(
+                auto.decode_note.contains("Apple media engine"),
+                "{kind}: the hardware path did not run: {}",
+                auto.decode_note
+            );
+        } else {
+            assert!(!auto.decode_note.contains("Apple media engine"), "{kind}");
+        }
+
+        if kind.starts_with("textured") {
+            let found: Vec<u64> = auto.cuts.iter().map(|cut| cut.frame_index).collect();
+            assert_eq!(found.len(), 3, "{kind}: {found:?}");
+            for (frame, planted) in found.iter().zip([72u64, 144, 216]) {
+                assert!(frame.abs_diff(planted) <= 1, "{kind}: {found:?}");
+            }
+        }
+        assert_eq!(auto.cuts.len(), soft.cuts.len(), "{kind}: {:?}", auto.cuts);
+        for (a, s) in auto.cuts.iter().zip(&soft.cuts) {
+            assert_eq!(a.frame_index, s.frame_index, "{kind}");
+            assert_eq!(a.time_ms, s.time_ms, "{kind}");
+            // Both decoders filter every frame, so the pictures are the same.
+            assert!(
+                (a.scene_score - s.scene_score).abs() <= 0.0001,
+                "{kind}: {a:?} vs {s:?}"
+            );
+        }
+        assert_eq!(auto.frame_count, soft.frame_count, "{kind}");
+        assert_eq!(auto.duration_ms, soft.duration_ms, "{kind}");
+        assert_eq!(auto.fps, soft.fps, "{kind}");
+        assert_eq!(auto.frame_size, soft.frame_size, "{kind}");
+        assert_eq!(auto.silence_gaps, soft.silence_gaps, "{kind}");
+        assert_eq!(auto.shot_histograms, soft.shot_histograms, "{kind}");
+        assert_eq!(auto.payoff_window, soft.payoff_window, "{kind}");
+        // The 10-bit and HDR sentences come from the first frame's metadata,
+        // so they must survive the copy out of the media engine.
+        for sentence in ["10-bit", "HLG"] {
+            assert_eq!(
+                auto.decode_note.contains(sentence),
+                soft.decode_note.contains(sentence),
+                "{kind}: {sentence}"
+            );
+        }
+        assert_eq!(
+            pngs(&auto_views),
+            pngs(&soft_views),
+            "{kind}: thumbnails differ"
+        );
+    }
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// A stream that changes size is one the media engine's frame copy can get
+/// wrong without an error: the copy reuses its buffers, which are the old size.
+/// The software decoder reads the new frames, so the media engine must too.
+#[test]
+fn a_hevc_stream_that_changes_size_decodes_the_same_on_both_decoders() {
+    let root = std::env::temp_dir().join(format!("reelctl-size-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("temp dir");
+
+    for (kind, last_width) in [("resize12_hevc", 640), ("shrink12_hevc", 320)] {
+        let hevc = root.join(format!("{kind}.hevc"));
+        generate(kind, &hevc);
+
+        let (auto, auto_views) = decompile_with(&root, &hevc, &format!("{kind}_auto"), "auto");
+        let (soft, soft_views) = decompile_with(&root, &hevc, &format!("{kind}_soft"), "software");
+
+        if cfg!(target_os = "macos") {
+            assert!(
+                auto.decode_note.contains("Apple media engine"),
+                "{kind}: the hardware path did not run: {}",
+                auto.decode_note
+            );
+        }
+        assert_eq!(soft.frame_size, auto.frame_size, "{kind}");
+        assert_eq!(auto.frame_size.width, last_width, "{kind}");
+        assert_eq!(auto.frame_count, soft.frame_count, "{kind}");
+        assert_eq!(auto.cuts.len(), soft.cuts.len(), "{kind}: {:?}", auto.cuts);
+        for (a, s) in auto.cuts.iter().zip(&soft.cuts) {
+            assert_eq!(a.frame_index, s.frame_index, "{kind}");
+            assert!(
+                (a.scene_score - s.scene_score).abs() <= 0.0001,
+                "{kind}: {a:?} vs {s:?}"
+            );
+        }
+        assert_eq!(auto.shot_histograms, soft.shot_histograms, "{kind}");
+        assert_eq!(
+            pngs(&auto_views),
+            pngs(&soft_views),
+            "{kind}: thumbnails differ"
+        );
+    }
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// A stream that changes from 8-bit to 10-bit part-way through needs its frame
+/// copy remade in the new pixel format. The media engine must decode it, with
+/// the same results as software.
+#[test]
+fn a_hevc_stream_that_changes_bit_depth_decodes_the_same_on_both_decoders() {
+    let root = std::env::temp_dir().join(format!("reelctl-depth-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("temp dir");
+    let hevc = root.join("depth12_hevc.hevc");
+    generate("depth12_hevc", &hevc);
+
+    let (auto, auto_views) = decompile_with(&root, &hevc, "auto", "auto");
+    let (soft, soft_views) = decompile_with(&root, &hevc, "soft", "software");
+
+    if cfg!(target_os = "macos") {
+        assert!(
+            auto.decode_note.contains("Apple media engine"),
+            "the hardware path did not run: {}",
+            auto.decode_note
+        );
+    }
+    assert_eq!(auto.frame_size, soft.frame_size);
+    assert_eq!(auto.frame_count, soft.frame_count);
+    assert_eq!(auto.cuts.len(), soft.cuts.len(), "{:?}", auto.cuts);
+    assert_eq!(auto.shot_histograms, soft.shot_histograms);
+    assert_eq!(pngs(&auto_views), pngs(&soft_views), "thumbnails differ");
+
+    let _ = fs::remove_dir_all(&root);
+}

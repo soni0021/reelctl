@@ -17,6 +17,7 @@ reelctl decompile --input <reel.mp4> --out <edit_dna.json> [options]
 | `--filmstrip-dir <dir>` | | `<out stem>_timeline` beside `--out` | Where to write the `timeline_view` PNGs |
 | `--cut-detector <auto\|scene\|transnet>` | | `auto` | Which cut detector to run; see below |
 | `--transnet-weights <path>` | `REELCTL_TRANSNET_WEIGHTS` | none | TransNetV2 ONNX weights |
+| `--decoder <auto\|software>` | | `auto` | Video decoder. `auto` decodes HEVC on the Apple media engine (VideoToolbox) on macOS and everything else in software; if the media engine fails at any point, the file is decoded again in software and `decode_note` says why. `software` forces software. Both give the same cuts, scores, colors, and thumbnails ([ADR-012](decisions/ADR-012-decode-hevc-in-hardware-and-every-frame-exactly.md)). Also accepted by `diff` |
 | `--whisper-model <path>` | `REELCTL_WHISPER_MODEL` | none | ggml whisper.cpp model. With one, `words` come from whisper.cpp; without one, from the silence-burst estimator. A path that is missing, is not a ggml whisper model, or has a shape no DTW preset matches exits with code 1. See [Word timing](#word-timing) |
 
 `<out stem>` is the output file name minus its last extension, so `--out a/clip.edit_dna.json` puts the PNGs in `a/clip.edit_dna_timeline/`.
@@ -146,7 +147,9 @@ Flags come in that order: all dead air, then all static windows, then the payoff
 
 ## Input requirements
 
+- HEVC decodes on the media engine on macOS. It has a fixed cost of about 160 ms, so a short, small HEVC clip is faster with `--decoder software`; a 1080p recording is faster with `auto` (87 s: 4.0–5.3 s against 8.5 s).
 - The file needs a video stream. If there are several video or audio streams, the one FFmpeg ranks best is used.
-- Video must decode to 4:2:0: 8-bit (`yuv420p`, `yuvj420p`, or `nv12`) or 10-bit (`yuv420p10le`, as iPhone HEVC Main 10 recordings do). 10-bit samples are read as their top 8 bits, and HDR (HLG or PQ) is not tone-mapped; `decode_note` says when either applies ([ADR-011](decisions/ADR-011-read-10-bit-video-from-its-top-8-bits.md)). Anything else, such as 4:2:2, 4:4:4, or 12-bit, stops with an error that names the format, for example `error: decompile: decode video frame: unsupported pixel format yuv422p; decompile reads 4:2:0 video as yuv420p, yuvj420p, nv12, or yuv420p10le`.
+- Video must decode to 4:2:0: 8-bit (`yuv420p`, `yuvj420p`, or `nv12`) or 10-bit (`yuv420p10le`, as iPhone HEVC Main 10 recordings do, or `p010le`, which a hardware decoder returns). 10-bit samples are read as their top 8 bits, a frame is read as full range if it is `yuvj420p` or its metadata says so, and HDR (HLG or PQ) is not tone-mapped; `decode_note` says when either applies ([ADR-011](decisions/ADR-011-read-10-bit-video-from-its-top-8-bits.md)). Anything else, such as 4:2:2, 4:4:4, or 12-bit, stops with an error that names the format, for example `error: decompile: decode video frame: unsupported pixel format yuv422p; decompile reads 4:2:0 video as yuv420p, yuvj420p, nv12, yuv420p10le, or p010le`.
+- The frame size may change part-way through a stream. `frame_size` is the last frame's, and the scene score compares frames of different sizes by position in the picture.
 - Audio must decode to 16-bit integer or 32-bit float samples, as AAC and 16-bit PCM do. It is mixed to mono and, if it is not 48 kHz, resampled to 48 kHz by linear interpolation as one stream, so a moment at time t in the input is at t in the output. There is no low-pass filter, so audio sampled above 48 kHz (88.2 or 96 kHz) can alias.
 - Without audio, `silence_gaps` and `words` are empty, `integrated_lufs` is −70, and `words_per_minute` is 0.
