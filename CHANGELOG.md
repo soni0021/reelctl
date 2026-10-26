@@ -6,6 +6,7 @@ Notable changes to `reelctl`. Add an entry under Unreleased in the same commit a
 
 ### Added
 
+- `reelctl diff` takes `--outlier` one to three times and prints a `comparison` next to `flags`: per-reel metrics (shots, pauses per minute, silent share, speaking rate, loudness), cut counts in 5 s windows, and two relative findings, `rhythm_gap` (the draft has no cut where most outliers do) and `pause_density`. `--format text` prints a readable table. `flags` is unchanged for one outlier; with several, the missing-payoff flag needs a cue in more than half of them.
 - `reelctl decompile` writes `edit_dna.json` (cuts, silence gaps, loudness, per-shot color, the 9-second payoff cue, and the measured `signal_ms`) and one `timeline_view` PNG per cut.
 - `reelctl diff` flags dead air over 180 ms, more than 2.5 s without a cut, and a missing payoff cue compared with an outlier's `edit_dna.json`.
 - A JSON Schema for `edit_dna.json`.

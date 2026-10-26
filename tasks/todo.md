@@ -32,16 +32,16 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/comparative-diff.md](../docs/s
 **Description:** Make `--outlier` repeatable (one to three) and add `--format <json|text>`. JSON gains `comparison` after `flags`. The text report is a pure function tested on its own. Test-first, with fixtures.
 
 **Acceptance criteria:**
-- [ ] `draft12` against `outlier12`: `flags` exactly as today, plus `comparison` with both reels' metrics and a `rhythm_gap` for 0–5 s
-- [ ] `draft12` against `outlier12` and `textured_cuts12`: per-outlier metrics and window rows, and `rhythm_gap` only where both outliers cut and the draft does not
-- [ ] Four `--outlier` arguments exit with code 2 (through clap's error path, not `main`'s exit 1) and a message naming the limit of three; zero still exits with code 2 from clap
-- [ ] Each reel carries a `name` in the metrics (file name without directory or `.edit_dna.json`), and the text report's column headings use it
-- [ ] `--format text` has the table header, the window rows, and the flag lines; `--format json` parses and is the default
-- [ ] The existing diff end-to-end tests pass unchanged, including the version 1 outlier test
-- [ ] `flags` equals the Task 1 baselines for every fixture pair
+- [x] `draft12` against `outlier12`: `flags` exactly as today, plus `comparison` with both reels' metrics and a `rhythm_gap` for 0–5 s
+- [x] `draft12` against `outlier12` and `textured_cuts12`: per-outlier metrics and window rows, and `rhythm_gap` only where both outliers cut and the draft does not
+- [x] Four `--outlier` arguments exit with code 2 (through clap's error path, not `main`'s exit 1) and a message naming the limit of three; zero still exits with code 2 from clap
+- [x] Each reel carries a `name` in the metrics (file name without directory or `.edit_dna.json`), and the text report's column headings use it
+- [x] `--format text` has the table header, the window rows, and the flag lines; `--format json` parses and is the default
+- [x] The existing diff end-to-end tests pass unchanged, including the version 1 outlier test
+- [x] `flags` equals the Task 1 baselines for every fixture pair
 
 **Verification:**
-- [ ] `cargo test` once (new tests red first); `cargo fmt`; no warnings; baseline comparison with a release build
+- [x] `cargo test` once (new tests red first); `cargo fmt`; no warnings; baseline comparison with a release build
 
 **Dependencies:** Task 1
 
@@ -50,7 +50,7 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/comparative-diff.md](../docs/s
 **Estimated scope:** Medium
 
 ### Checkpoint B
-- [ ] `cargo test` passes; baselines match
+- [x] `cargo test` passes; baselines match
 
 ## Task 3: Docs, ADR-014, the helper script, and the real reels
 

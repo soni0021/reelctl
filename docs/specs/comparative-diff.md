@@ -1,6 +1,6 @@
 # Spec: Comparative diff against one to three outliers
 
-Status: draft, awaiting approval. Branch: `feature/comparative-diff`. Module `comparative-diff` in the [P0 capability map](p0-capability-map.md). Follows [planer.md](../../planer.md) Pass 2 ("aligns a draft against 1–3 competitor outlier blueprints") and closes the main gap in [status.md](../status.md#gaps).
+Status: approved 2026-10-26 with the five recommended answers; built on `feature/comparative-diff` (Tasks 1 and 2 done; real-reel numbers and the audit are in Task 3). Branch: `feature/comparative-diff`. Module `comparative-diff` in the [P0 capability map](p0-capability-map.md). Follows [planer.md](../../planer.md) Pass 2 ("aligns a draft against 1–3 competitor outlier blueprints") and closes the main gap in [status.md](../status.md#gaps).
 
 ## Objective
 

@@ -282,11 +282,185 @@ pub fn compare_many(draft: NamedReel<'_>, outliers: &[NamedReel<'_>]) -> Report 
     }
 }
 
+/// Seconds with one decimal, for lengths.
+fn seconds(ms: u64) -> String {
+    format!("{:.1} s", ms as f64 / 1_000.0)
+}
+
+/// Seconds without a trailing `.0`, for window labels.
+fn short_seconds(ms: u64) -> String {
+    if ms % 1_000 == 0 {
+        (ms / 1_000).to_string()
+    } else {
+        format!("{:.1}", ms as f64 / 1_000.0)
+    }
+}
+
+/// One row of a table: a label, then one cell per column.
+fn row(label: &str, width: usize, cells: &[String]) -> String {
+    let mut line = format!("{label:<20}");
+    for cell in cells {
+        line.push_str(&format!("{cell:<width$}"));
+    }
+    line.trim_end().to_string()
+}
+
+fn metric_rows(reels: &[&ReelMetrics], width: usize) -> Vec<String> {
+    let each = |cell: &dyn Fn(&ReelMetrics) -> String| -> Vec<String> {
+        reels.iter().map(|m| cell(m)).collect()
+    };
+    vec![
+        row("length", width, &each(&|m| seconds(m.duration_ms))),
+        row("cuts", width, &each(&|m| m.cut_count.to_string())),
+        row("mean shot", width, &each(&|m| seconds(m.mean_shot_ms))),
+        row(
+            "longest shot",
+            width,
+            &each(&|m| seconds(m.longest_shot_ms)),
+        ),
+        row(
+            "pauses over 180 ms",
+            width,
+            &each(&|m| format!("{} ({:.0}/min)", m.dead_air_count, m.dead_air_per_minute)),
+        ),
+        row(
+            "silent time",
+            width,
+            &each(&|m| format!("{:.0} %", m.silent_share * 100.0)),
+        ),
+        row(
+            "words/min (est.)",
+            width,
+            &each(&|m| {
+                let estimate = if m.words_source == "whisper_cpp" {
+                    ""
+                } else {
+                    " est."
+                };
+                format!("{:.1}{estimate}", m.words_per_minute)
+            }),
+        ),
+        row(
+            "loudness",
+            width,
+            &each(&|m| format!("{:.1} LUFS", m.integrated_lufs)),
+        ),
+    ]
+}
+
+fn flag_line(flag: &DiffFlag) -> String {
+    match flag {
+        DiffFlag::DeadAir {
+            start_ms,
+            end_ms,
+            duration_ms,
+        } => format!(
+            "DEAD AIR {:.2}-{:.2} s ({duration_ms} ms)",
+            *start_ms as f64 / 1_000.0,
+            *end_ms as f64 / 1_000.0
+        ),
+        DiffFlag::StaticWindow {
+            start_ms,
+            end_ms,
+            duration_ms,
+        } => format!(
+            "NO CUT {:.1}-{:.1} s ({})",
+            *start_ms as f64 / 1_000.0,
+            *end_ms as f64 / 1_000.0,
+            seconds(*duration_ms)
+        ),
+        DiffFlag::MissingPayoffCue {
+            window_start_ms,
+            window_end_ms,
+        } => format!(
+            "NO PAYOFF {}-{} s: the outliers have a cut here, the draft does not",
+            short_seconds(*window_start_ms),
+            short_seconds(*window_end_ms)
+        ),
+    }
+}
+
+fn relative_line(flag: &RelativeFlag) -> String {
+    match flag {
+        RelativeFlag::RhythmGap {
+            window_start_ms,
+            window_end_ms,
+            outliers_with_cut,
+            outliers_counted,
+        } => format!(
+            "NO CUT {:.1}-{:.1} s: {outliers_with_cut} of {outliers_counted} outliers cut here, the draft does not",
+            *window_start_ms as f64 / 1_000.0,
+            *window_end_ms as f64 / 1_000.0
+        ),
+        RelativeFlag::PauseDensity {
+            draft_per_minute,
+            outlier_per_minute,
+        } => format!(
+            "PAUSES {draft_per_minute:.1} per minute against {outlier_per_minute:.1} in the outliers"
+        ),
+    }
+}
+
 /// The report as plain text: the metrics side by side, the cut counts per
 /// window, and every finding on its own line.
 pub fn render_text(report: &Report) -> String {
-    let _ = report;
-    String::new()
+    let comparison = &report.comparison;
+    let reels: Vec<&ReelMetrics> = std::iter::once(&comparison.draft)
+        .chain(comparison.outliers.iter())
+        .collect();
+    let width = reels
+        .iter()
+        .map(|m| m.name.chars().count())
+        .max()
+        .unwrap_or(0)
+        .max(14)
+        + 2;
+    let names: Vec<String> = reels.iter().map(|m| m.name.clone()).collect();
+
+    let mut lines = vec![row("", width, &names)];
+    lines.extend(metric_rows(&reels, width));
+
+    lines.push(String::new());
+    lines.push("cuts per 5 s window".to_string());
+    let labels: Vec<String> = comparison
+        .windows
+        .iter()
+        .map(|w| format!("{}-{}", short_seconds(w.start_ms), short_seconds(w.end_ms)))
+        .collect();
+    let cell = 9;
+    lines.push(row("", cell, &labels));
+    let counts = |pick: &dyn Fn(&RhythmWindow) -> Option<usize>| -> Vec<String> {
+        comparison
+            .windows
+            .iter()
+            .map(|w| pick(w).map_or("-".to_string(), |n| n.to_string()))
+            .collect()
+    };
+    lines.push(row(
+        &comparison.draft.name,
+        cell,
+        &counts(&|w| Some(w.draft_cuts)),
+    ));
+    for (index, outlier) in comparison.outliers.iter().enumerate() {
+        lines.push(row(
+            &outlier.name,
+            cell,
+            &counts(&|w| w.outlier_cuts.get(index).copied().flatten()),
+        ));
+    }
+
+    lines.push(String::new());
+    let findings: Vec<String> = report
+        .flags
+        .iter()
+        .map(flag_line)
+        .chain(comparison.flags.iter().map(relative_line))
+        .collect();
+    if findings.is_empty() {
+        lines.push("No flags.".to_string());
+    }
+    lines.extend(findings);
+    lines.join("\n") + "\n"
 }
 
 #[cfg(test)]
@@ -593,10 +767,17 @@ mod tests {
 
     fn real_pair_report() -> Report {
         // The milk clip as the draft and the NEET explainer as the outlier.
-        let mut draft = with_gaps(reel(15_092, &[]), &[990, 270, 90]);
+        let mut draft = reel(15_092, &[]);
+        for (start_ms, end_ms) in [(0, 990), (1_370, 1_640), (1_760, 1_850)] {
+            draft.silence_gaps.push(SilenceGap {
+                start_ms,
+                end_ms,
+                duration_ms: end_ms - start_ms,
+            });
+        }
         draft.words_per_minute = 19.88;
         draft.integrated_lufs = -48.59;
-        let mut outlier = with_gaps(reel(38_498, &[8_466]), &[560, 590, 540, 520]);
+        let mut outlier = with_cue(with_gaps(reel(38_498, &[8_466]), &[560, 590, 540, 520]));
         outlier.words_per_minute = 144.94;
         outlier.integrated_lufs = -22.44;
         compare_many(

@@ -764,11 +764,15 @@ fn diff_with_one_outlier_keeps_its_flags_and_adds_a_comparison() {
     assert_eq!(comparison["draft"]["cut_count"], 1);
     assert_eq!(comparison["outliers"][0]["cut_count"], 2);
     // The draft cuts at 6 s; the outlier at 3 s and 9 s.
-    let gaps = comparison["flags"].as_array().expect("relative flags");
-    assert_eq!(gaps.len(), 1, "{gaps:?}");
-    assert_eq!(gaps[0]["kind"], "rhythm_gap");
-    assert_eq!(gaps[0]["window_start_ms"], 0);
-    assert_eq!(gaps[0]["window_end_ms"], 5_000);
+    // The draft also pauses 5 times a minute (one 0.5 s mute in 12 s) where the
+    // outlier never does.
+    let found = comparison["flags"].as_array().expect("relative flags");
+    let kinds: Vec<&str> = found.iter().filter_map(|f| f["kind"].as_str()).collect();
+    assert_eq!(kinds, ["rhythm_gap", "pause_density"], "{found:?}");
+    assert_eq!(found[0]["window_start_ms"], 0);
+    assert_eq!(found[0]["window_end_ms"], 5_000);
+    assert_eq!(found[1]["draft_per_minute"], 5.0);
+    assert_eq!(found[1]["outlier_per_minute"], 0.0);
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -794,10 +798,11 @@ fn diff_with_two_outliers_compares_each_and_votes() {
     assert_eq!(windows[0]["draft_cuts"], 0);
     assert_eq!(windows[0]["outlier_cuts"], serde_json::json!([1, 1]));
     assert_eq!(windows[1]["draft_cuts"], 1);
-    let gaps = comparison["flags"].as_array().expect("relative flags");
-    assert_eq!(gaps.len(), 1, "{gaps:?}");
-    assert_eq!(gaps[0]["outliers_with_cut"], 2);
-    assert_eq!(gaps[0]["outliers_counted"], 2);
+    let found = comparison["flags"].as_array().expect("relative flags");
+    let kinds: Vec<&str> = found.iter().filter_map(|f| f["kind"].as_str()).collect();
+    assert_eq!(kinds, ["rhythm_gap", "pause_density"], "{found:?}");
+    assert_eq!(found[0]["outliers_with_cut"], 2);
+    assert_eq!(found[0]["outliers_counted"], 2);
     let _ = fs::remove_dir_all(&root);
 }
 

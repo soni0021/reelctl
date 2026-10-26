@@ -29,10 +29,10 @@ Let `reelctl diff` compare a draft with one to three outliers: per-reel metrics,
 - [x] `cargo test -p diff` passes; `compare` and its existing tests are untouched
 
 ### Phase 2: Command line
-- [ ] Task 2: `--outlier` up to three times, `comparison` in the JSON, and `--format text`
+- [x] Task 2: `--outlier` up to three times, `comparison` in the JSON, and `--format text`
 
 ### Checkpoint B
-- [ ] `cargo test` passes; `flags` identical to the baselines for every fixture pair and both real reels
+- [x] `cargo test` passes; `flags` identical to the baselines for every fixture pair and both real reels
 
 ### Phase 3: Close-out
 - [ ] Task 3: Docs, ADR-014, the helper script, and the real reels
