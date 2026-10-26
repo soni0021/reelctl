@@ -1,6 +1,6 @@
 # Spec: whisper coverage
 
-Status: implemented 2026-10-25 on `feature/whisper-coverage`; success criteria verified as recorded in [docs/status.md](../status.md#whisper-coverage-2026-10-25), with criterion 5 met on the within-run measure (re-runs 8.4% of the first pass; 11.0% against the earlier 401.6 s reference); awaiting review and merge. Approved 2026-10-25, with the recommended answer to each open question (see Resolved Questions). Plan: [tasks/plan.md](../../tasks/plan.md). Module `whisper-coverage` in the [P0 capability map](p0-capability-map.md). Branch: `feature/whisper-coverage`.
+Status: implemented 2026-10-25 on `feature/whisper-coverage`; success criteria verified as recorded in [docs/status.md](../status.md#whisper-coverage-2026-10-25), except criterion 5, which the user waived on 2026-10-26 (re-runs took 8.4% of the first pass in the same run, and 11.0% against the earlier 401.6 s reference); reviewed by the user and merged into `main` on 2026-10-26. Approved 2026-10-25, with the recommended answer to each open question (see Resolved Questions). Plan: [tasks/archive/whisper-coverage/plan.md](../../tasks/archive/whisper-coverage/plan.md). Module `whisper-coverage` in the [P0 capability map](p0-capability-map.md). Branch: `feature/whisper-coverage`.
 
 ## Objective
 
@@ -95,7 +95,7 @@ Test-first.
 2. iPhone clip, first 60 s with copied audio: at least 180 words, and words in both 9.9–15.6 and 16.0–30.9 s.
 3. No word starts at or after the end of the audio, on either recording or `speech12`.
 4. Runs without holes give identical `words`: `speech12` with both models, and the five NEET and iPhone cuts that had no holes.
-5. Extra `asr_ms` for the NEET video is under 10% of its first pass (401.6 s).
+5. Extra `asr_ms` for the NEET video is under 10% of its first pass (401.6 s). Waived by the user on 2026-10-26: measured at 8.4% within one run and 11.0% against the reference, on a machine whose load varies run to run.
 6. A whisper.cpp abort in the child process does not end `reelctl`: the pass is retried without DTW, `asr_note` says so, and a test covers it.
 7. `cargo test` passes, and the docs listed under Project Structure are updated.
 

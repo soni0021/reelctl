@@ -39,7 +39,7 @@ Make whisper's output cover the speech that is there, and keep a whisper.cpp abo
 - [x] Task 4: Measure and close out
 
 ### Checkpoint B
-- [ ] All seven spec success criteria verified, reviewed with the user, merged into `main`
+- [x] All seven spec success criteria verified (criterion 5 waived by the user), reviewed with the user, merged into `main`
 
 ## Risks and Mitigations
 

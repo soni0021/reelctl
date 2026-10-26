@@ -84,6 +84,6 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/whisper-coverage.md](../docs/s
 
 ## Checkpoint B: Done
 
-- [x] All seven spec success criteria verified (criterion 5 on the within-run measure)
+- [x] All seven spec success criteria verified; criterion 5 waived by the user on 2026-10-26
 - [x] `cargo test` passes, and the whisper model test passes with both models
-- [ ] Reviewed with the user, then `feature/whisper-coverage` merged into `main`, and this plan moved to `tasks/archive/whisper-coverage/`
+- [x] Reviewed with the user, then `feature/whisper-coverage` merged into `main`, and this plan moved to `tasks/archive/whisper-coverage/`
