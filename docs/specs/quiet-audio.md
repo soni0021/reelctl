@@ -14,7 +14,7 @@ This change applies the loud-part cap last, so the threshold can never sit above
 
 For every recording whose p90 is −28 dB or higher the result is unchanged, because there `p90 − 12` is at or above −40. That includes every synthetic fixture and the real iPhone recording (p90 −22.6). For quieter recordings the threshold drops below −40 to stay 12 dB under the loud part, so pauses are measured against the sound that is there.
 
-On the Reels file the threshold becomes −54.5 dB, below its p10 of −52.0. There is then no gap shorter than the audio, and `diff` stops reporting dead air for it. That is the honest result: the file has no pause to trim, and its audio is very quiet.
+On the Reels file the threshold becomes −54.5 dB. A Python model of `silence.rs` (10 ms windows, 80 ms minimum gap, 30 ms sound rule; to be confirmed with the real binary) gives 3 short gaps of 470, 80, and 110 ms in the first 0.9 s, 660 ms in all, instead of a gap over the whole clip. `diff` would flag none of them as dead air (the limit is 180 ms, and the 470 ms one at the start is the quiet opening of the file). The file has no pause to trim; its audio is just very quiet.
 
 Out of scope: a new `edit_dna.json` field for "audio too quiet" (see Resolved Questions), voice activity detection, loudness normalization, and any change to the 180 ms dead-air limit, the 80 ms minimum gap, or the 30 ms sound rule.
 
@@ -53,7 +53,7 @@ Test-first.
 
 ## Success Criteria
 
-1. The Reels file gives no whole-clip silence gap, and `diff` raises no dead-air flag for it.
+1. The Reels file gives no whole-clip silence gap, and `diff` raises no dead-air flag for anything but, at most, the opening 470 ms.
 2. `quiet12` gives the planted pause only, as a gap, and the rest of the clip is not silence.
 3. All existing fixtures and the real iPhone recording give identical `silence_gaps` and `silence_threshold_db`.
 4. The existing silence unit tests pass unchanged; new tests failed before the change.
@@ -62,4 +62,4 @@ Test-first.
 ## Resolved Questions (recommended answers; please confirm)
 
 1. **Should `edit_dna.json` say "audio too quiet to judge"?** Recommended: no. The threshold fix removes the false dead air, and a new field is a schema change (version 3). If the audio is almost absent, `integrated_lufs` already shows it (−48.6 here). Revisit if `comparative-diff` needs it.
-2. **Should the threshold ever go below the noise floor?** On this file it does (−54.5 against p10 −52.0), which means almost nothing counts as silence. Recommended: accept it; a recording with no quiet stretch should have no gaps, which is the same reasoning as the existing cap.
+2. **Should the threshold ever go below the noise floor?** On this file it does (−54.5 against p10 −52.0), which means almost nothing counts as silence (the model finds 660 ms of it). Recommended: accept it; a recording with no quiet stretch should have no gaps, which is the same reasoning as the existing cap.
