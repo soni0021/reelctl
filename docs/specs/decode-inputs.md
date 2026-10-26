@@ -77,7 +77,7 @@ Test-first.
 - **End-to-end, default suite:**
   - `draft12_10bit` gives the same cut (± 1 frame), the same silence gaps, and the same payoff result as `draft12`, and per-shot mean RGB within 3 of it. `decode_note` mentions 10-bit and HLG.
   - `draft12_44k` finds the planted pause within 10 ms of 50,016–50,503 ms. (The mute is planted at 50.0–50.5 s, but ffmpeg's `volume enable=` switches on 1,024-sample frames, so the signal mutes at 50.0159 s and unmutes at 50.5034 s; the 50,000 in the first draft of this spec was wrong.)
-  - Every existing fixture's `edit_dna.json` is unchanged apart from timings.
+  - Every existing fixture's `edit_dna.json` is unchanged apart from timings. Not automated: it is a manual comparison of release-build outputs and `timeline_view` PNGs against a baseline saved before each task, recorded in [status.md](../status.md#10-bit-video-and-441-khz-audio-2026-10-26). The default suite checks the planted values in the three older fixtures instead.
 - **Manual, real footage outside the repo:** the original `IMG_1435.MOV` decompiles, and its cuts and silence gaps equal those of an 8-bit H.264 conversion of the whole file with the audio stream copied. The whole file, because the silence threshold is computed over the whole recording.
 
 ## Boundaries
