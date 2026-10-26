@@ -1,6 +1,6 @@
 # Spec: decode inputs
 
-Status: draft, 2026-10-26, awaiting the user's approval. Module `decode-inputs` in the [P0 capability map](p0-capability-map.md). Branch: `feature/decode-inputs`.
+Status: approved 2026-10-26, with the recommended answer to each open question (see Resolved Questions). Plan: [tasks/plan.md](../../tasks/plan.md). Module `decode-inputs` in the [P0 capability map](p0-capability-map.md). Branch: `feature/decode-inputs`.
 
 ## Objective
 
@@ -17,7 +17,7 @@ Behavior:
 - **HDR is not tone-mapped.** Colors are computed from the coded values with the existing BT.601 conversion, as for SDR input (a known inaccuracy listed in status.md). For HLG and PQ footage, the per-shot colors and thumbnails are therefore flatter and less saturated than the picture a viewer sees. Cuts, silence, loudness, and words do not depend on color.
 - `decode_note` says when the input was 10-bit and when it was HDR (HLG or PQ transfer), and that colors were not tone-mapped. No schema change.
 - **Audio resampling keeps its position across frames,** so the output has `round(input samples × 48,000 / input rate)` samples within one, and a moment at time t in the input lands at t in the output. Audio already at 48 kHz is untouched.
-- Other pixel formats (4:2:2, 4:4:4, 12-bit, P010) still stop with a clear error that names the format. See Open Question 1.
+- Other pixel formats (4:2:2, 4:4:4, 12-bit, P010) still stop with a clear error that names the format (Resolved Question 1).
 
 Out of scope: tone mapping and BT.2020 or BT.709 color matrices, decode speed (module `fast-decode`), hardware decoding, and audio channel layouts beyond today's channel average.
 
@@ -51,7 +51,7 @@ target/release/reelctl decompile --input ~/Downloads/IMG_1435.MOV --out /tmp/img
 | `crates/decompile/src/decode.rs` | A sample accessor over 8-bit or 10-bit planes, used by luma sampling, color, and thumbnails; a stateful resampler; the `decode_note` text |
 | `fixtures/generate.sh` | `draft12_10bit` (`draft12` encoded as 10-bit HEVC) and `draft12_44k` (`draft12` with 44.1 kHz AAC audio and its mute moved to 50.0 s, 60 s long) |
 | `crates/reelctl/tests/p0_fixture.rs` | End-to-end tests for both clips |
-| Docs | `docs/cli.md` (input requirements), `docs/edit-dna.md` (`decode_note`), `docs/status.md`, CHANGELOG, ADR-011 if the resampler choice is significant (Open Question 2) |
+| Docs | `docs/cli.md` (input requirements), `docs/edit-dna.md` (`decode_note`), `docs/status.md`, CHANGELOG, and ADR-011 for reading 10-bit video from its top 8 bits without tone mapping |
 
 ## Code Style
 
@@ -94,10 +94,12 @@ Test-first.
 5. `decode_note` says 10-bit and HDR when they apply.
 6. `cargo test` passes, and the docs listed under Project Structure are updated.
 
-## Open Questions
+## Resolved Questions
 
-1. **Other pixel formats.** 8-bit 4:2:2 and 4:4:4 (some screen recorders and exports) and 10-bit 4:2:2 (ProRes) would need chroma sampling by format rather than a fixed half-size grid. Recommended: not now. No recording measured so far uses them; they keep a clear error naming the format.
+Answered 2026-10-26 with the recommended options:
+
+1. **Other pixel formats.** 8-bit 4:2:2 and 4:4:4 (some screen recorders and exports) and 10-bit 4:2:2 (ProRes) would need chroma sampling by format rather than a fixed half-size grid. No recording measured so far uses them; they keep a clear error naming the format. Not now.
 2. **How to resample.**
-   - **A (recommended):** keep linear interpolation, but carry the position and last sample across frames. It fixes the drift, leaves the interpolation unchanged, and is a small, unit-testable change.
+   - **A (chosen):** keep linear interpolation, but carry the position and last sample across frames. It fixes the drift, leaves the interpolation unchanged, and is a small, unit-testable change.
    - **B:** libswresample through `ffmpeg-next`. Higher quality filtering and well tested, but it changes the samples of every resampled input, and so their silence gaps and levels, by small amounts.
-3. **HDR colors.** Recommended: say in `decode_note` that they were not tone-mapped, and leave color correction to a later module together with the BT.601/BT.709 known issue.
+3. **HDR colors.** Say in `decode_note` that they were not tone-mapped, and leave color correction to a later module together with the BT.601/BT.709 known issue.
