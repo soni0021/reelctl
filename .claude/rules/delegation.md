@@ -2,7 +2,7 @@
 
 Keep the main context small. Hand broad, mechanical work to the Haiku 5.5 subagents in `.claude/agents/`, and keep work that needs exact output in the main session.
 
-- **search**: questions that sweep many files or directories, where only the conclusion matters. Use it instead of the built-in Explore agent.
+- **search**: questions that sweep many files or directories, where only the conclusion matters. `Explore` does the same job: `.claude/agents/explore.md` replaces the built-in one so that plan mode's searches also run on Haiku 5.5.
 - **grep**: every definition, caller, and mention of a symbol, field, key, or string before changing it.
 - **audit**: after a task's commit, before declaring the task done or merging. It sees only committed work, so commit first. The main session still runs `cargo test` once before that commit, as AGENTS.md says, because the commit records the result.
 

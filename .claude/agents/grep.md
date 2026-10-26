@@ -3,6 +3,7 @@ name: grep
 description: Read-only call-site finder on Haiku 5.5. Use before changing a symbol, struct field, JSON key, CLI flag, or string, to get every definition, caller, re-export, test, and doc mention across the workspace.
 tools: Read, Grep, Glob
 model: claude-haiku-5-5
+effort: high
 omitClaudeMd: true
 color: yellow
 ---

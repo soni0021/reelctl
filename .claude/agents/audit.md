@@ -3,6 +3,7 @@ name: audit
 description: Audits committed work on Haiku 5.5 in its own git worktree, without touching the working checkout. Use after a task's commit and before declaring the task done or merging. It reviews the branch diff against AGENTS.md and CONSTRAINTS.md and runs format, check, and test from a clean checkout. It sees only committed work.
 tools: Read, Grep, Glob, Bash
 model: claude-haiku-5-5
+effort: high
 isolation: worktree
 color: red
 ---
