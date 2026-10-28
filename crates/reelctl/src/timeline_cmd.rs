@@ -1,12 +1,14 @@
 //! `reelctl timeline|transform|funnel|render|qa`: edit an OpenTimelineIO project and
 //! render it.
 //!
-//! Exit codes: 2 for a bad argument, an unreadable or invalid project or DNA, or a
-//! span outside the timeline; 1 for a failed ffmpeg (or a missing one). The project
+//! Exit codes: 2 for a bad argument, an unreadable or invalid project or DNA, a media
+//! path that is not a plain local file, or a span outside the timeline; 1 for a
+//! failed ffmpeg (or a missing one) or an output that cannot be written. The project
 //! is read before anything is written, and written atomically (a temporary file in
 //! the same directory, then a rename), so `--out` may be `--project`. `render` and
 //! `init` run the `ffmpeg` and `ffprobe` command line tools; no command uses the
-//! network or a model.
+//! network or a model: a media path is checked to be a regular file and handed to
+//! them as an absolute path with only the `file` protocol allowed.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -19,9 +21,10 @@ use decompile::{decode_frames_at, DecoderSetting};
 use edit_dna::{BoundaryView, EditDna};
 use serde_json::Value;
 use timeline::{
-    attach_bridge, bridge_of, build_render_plan, cut_silence, dna_ref, init, joins, media_info,
-    punch_in, set_dna_ref, words_on_timeline, BridgeRequest, CutOptions, DnaRef, InitSpec,
-    PunchRequest, RenderPlan, RenderSize, Timeline, TimelineError,
+    attach_bridge, bridge_of, build_render_plan, check_dna_length as check_project_dna,
+    cut_silence, dna_ref, init, joins, media_info, punch_in, set_dna_ref, single_media,
+    words_on_timeline, BridgeRequest, CutOptions, DnaRef, InitSpec, PunchRequest, RenderPlan,
+    RenderSize, Timeline, TimelineError, MAX_PIXELS, MAX_SIDE,
 };
 
 use crate::card::{draw_card, parse_color};
@@ -29,6 +32,9 @@ use crate::understand_cmd::ExitWith;
 
 /// The DNA and the media may differ by this much in length (see `timeline::cut_silence`).
 const DNA_TOLERANCE_MS: u64 = 100;
+/// Only this protocol may be opened by `ffmpeg` and `ffprobe`: a media file that is a
+/// playlist or a concat script cannot make them fetch anything.
+const PROTOCOLS: &str = "file";
 /// Width of the thumbnails in `qa inspect-boundaries`.
 const THUMB_WIDTH: u32 = 160;
 /// Audio on each side of a join in `qa inspect-boundaries`.
@@ -185,10 +191,19 @@ fn parse_size(text: &str) -> std::result::Result<RenderSize, String> {
             .filter(|side| *side > 0 && side % 2 == 0)
             .ok_or_else(|| format!("\"{text}\": {value} is not an even, positive number"))
     };
-    Ok(RenderSize {
+    let size = RenderSize {
         width: side(width)?,
         height: side(height)?,
-    })
+    };
+    if size.width > MAX_SIDE
+        || size.height > MAX_SIDE
+        || u64::from(size.width) * u64::from(size.height) > MAX_PIXELS
+    {
+        return Err(format!(
+            "\"{text}\" is too big: at most {MAX_SIDE} pixels on a side and {MAX_PIXELS} in all"
+        ));
+    }
+    Ok(size)
 }
 
 pub fn timeline(command: TimelineCommand) -> Result<()> {
@@ -247,10 +262,63 @@ fn absolute(path: &Path, what: &str) -> Result<PathBuf> {
         .map_err(|error| usage(format!("cannot find {what} {}: {error}", path.display())))
 }
 
+/// A media path from the command line or a project, as the absolute path of a
+/// regular file. A URL, a `concat:` or `pipe:` string, a missing file, a directory
+/// and a device all exit 2, so `ffmpeg` is never handed anything but a file (and the
+/// absolute path cannot be read as a protocol or an option, even if it began with a
+/// dash).
+fn local_media_file(media: &str) -> Result<PathBuf> {
+    if media.contains("://") {
+        return Err(usage(format!(
+            "\"{media}\" is a URL; reelctl reads local files only"
+        )));
+    }
+    let path = fs::canonicalize(media)
+        .map_err(|error| usage(format!("cannot find the media file \"{media}\": {error}")))?;
+    if !fs::metadata(&path).is_ok_and(|meta| meta.is_file()) {
+        return Err(usage(format!(
+            "\"{media}\" is not a regular file; reelctl reads local media files only"
+        )));
+    }
+    Ok(path)
+}
+
 fn utf8(path: &Path) -> Result<String> {
     path.to_str()
         .map(str::to_string)
         .ok_or_else(|| usage(format!("{} is not valid UTF-8", path.display())))
+}
+
+/// A file that is removed when the guard drops, unless it was disarmed: a failed
+/// write, rename or ffmpeg run leaves nothing behind.
+struct TempFile {
+    path: PathBuf,
+    armed: bool,
+}
+
+impl TempFile {
+    fn new(path: PathBuf) -> Self {
+        Self { path, armed: true }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for TempFile {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
+/// Move `temporary` over `path`; on failure the temporary file is removed.
+fn replace_file(mut temporary: TempFile, path: &Path) -> Result<()> {
+    fs::rename(&temporary.path, path).with_context(|| format!("replace {}", path.display()))?;
+    temporary.disarm();
+    Ok(())
 }
 
 /// Write `bytes` to `path` through a temporary file in the same directory.
@@ -264,13 +332,10 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or_else(|| anyhow!("{} has no file name", path.display()))?;
-    let temporary = dir.join(format!(".{name}.{}.tmp", std::process::id()));
-    fs::write(&temporary, bytes).with_context(|| format!("write {}", temporary.display()))?;
-    if let Err(error) = fs::rename(&temporary, path) {
-        let _ = fs::remove_file(&temporary);
-        return Err(error).with_context(|| format!("replace {}", path.display()));
-    }
-    Ok(())
+    let temporary = TempFile::new(dir.join(format!(".{name}.{}.tmp", std::process::id())));
+    fs::write(&temporary.path, bytes)
+        .with_context(|| format!("write {}", temporary.path.display()))?;
+    replace_file(temporary, path)
 }
 
 fn save_project(timeline: &Timeline, out: &Path) -> Result<()> {
@@ -374,6 +439,8 @@ fn probe_media(path: &Path) -> Result<Probe> {
         .args([
             "-v",
             "error",
+            "-protocol_whitelist",
+            PROTOCOLS,
             "-print_format",
             "json",
             "-show_streams",
@@ -407,7 +474,7 @@ fn check_dna_length(dna: &EditDna, dna_path: &Path, probe: &Probe) -> Result<()>
 }
 
 fn init_cmd(args: InitArgs) -> Result<()> {
-    let media = absolute(&args.input, "input")?;
+    let media = local_media_file(&utf8(&args.input)?)?;
     let probe = probe_media(&media)?;
     let dna = match &args.dna {
         Some(path) => {
@@ -511,6 +578,12 @@ fn punch_in_cmd(args: PunchInArgs) -> Result<()> {
 
 fn attach_bridge_cmd(args: AttachBridgeArgs) -> Result<()> {
     let mut project = load_project(&args.project)?;
+    // The project's media must be a local file even though this command only reads
+    // the project: a bridge on a project that points elsewhere is not one to keep.
+    let media = single_media(&project)
+        .map_err(|error| usage(format!("{}: {error}", args.project.display())))?;
+    local_media_file(media)
+        .map_err(|error| usage(format!("{}: {error}", args.project.display())))?;
     // A project that already has a bridge does not look at pauses again.
     let pauses: Vec<(u64, u64)> = if bridge_of(&project).is_some() {
         Vec::new()
@@ -521,11 +594,15 @@ fn attach_bridge_cmd(args: AttachBridgeArgs) -> Result<()> {
             (None, None) => None,
         };
         match dna_path {
-            Some(path) => load_dna(&path)?
-                .silence_gaps
-                .iter()
-                .map(|gap| (gap.start_ms, gap.end_ms))
-                .collect(),
+            Some(path) => {
+                let dna = load_dna(&path)?;
+                check_project_dna(&project, dna.duration_ms)
+                    .map_err(|error| usage(format!("{}: {error}", path.display())))?;
+                dna.silence_gaps
+                    .iter()
+                    .map(|gap| (gap.start_ms, gap.end_ms))
+                    .collect()
+            }
             None => Vec::new(),
         }
     };
@@ -578,10 +655,11 @@ fn seconds(frames: i64, fps: f64) -> String {
     format!("{:.6}", frames as f64 / fps)
 }
 
-/// The `ffmpeg` argument list that renders `plan` to `output`, with card images
-/// at `card_paths`.
+/// The `ffmpeg` argument list that renders `plan` to `output`, with the media files
+/// at `media` (absolute paths, in the plan's order) and card images at `card_paths`.
 fn ffmpeg_args(
     plan: &RenderPlan,
+    media: &[PathBuf],
     card_paths: &[PathBuf],
     output: &Path,
 ) -> Vec<std::ffi::OsString> {
@@ -590,12 +668,16 @@ fn ffmpeg_args(
             .iter()
             .map(Into::into)
             .collect();
-    for media in &plan.media {
-        args.push("-i".into());
-        args.push(media.into());
+    for path in media {
+        for part in ["-protocol_whitelist", PROTOCOLS, "-i"] {
+            args.push(part.into());
+        }
+        args.push(path.into());
     }
     for (card, path) in plan.cards.iter().zip(card_paths) {
         for part in [
+            "-protocol_whitelist",
+            PROTOCOLS,
             "-loop",
             "1",
             "-framerate",
@@ -632,61 +714,87 @@ fn ffmpeg_args(
     args
 }
 
+/// The name of the temporary file `render` writes before it renames: the output's
+/// own name with the process id, and the extension last, because `ffmpeg` picks the
+/// container from it.
+fn render_temp_name(out: &Path) -> Result<String> {
+    let stem = out.file_stem().and_then(|name| name.to_str());
+    let extension = out.extension().and_then(|ext| ext.to_str());
+    match (stem, extension) {
+        (Some(stem), Some(extension)) => {
+            Ok(format!(".{stem}.{}.tmp.{extension}", std::process::id()))
+        }
+        _ => Err(usage(format!(
+            "--out {} needs a file name with an extension (for example out.mp4): ffmpeg picks the container from it",
+            out.display()
+        ))),
+    }
+}
+
 pub fn render(args: RenderArgs) -> Result<()> {
     let project = load_project(&args.project)?;
     let plan = build_render_plan(&project, args.size)
         .map_err(|error| usage(format!("{}: {error}", args.project.display())))?;
-    for media in &plan.media {
-        if !Path::new(media).is_file() {
-            return Err(usage(format!(
-                "{}: the media file {media} does not exist",
-                args.project.display()
-            )));
-        }
+    let mut media = Vec::with_capacity(plan.media.len());
+    for url in &plan.media {
+        media.push(
+            local_media_file(url)
+                .map_err(|error| usage(format!("{}: {error}", args.project.display())))?,
+        );
     }
+    // The output is checked before anything is made.
+    if args.out.is_dir() {
+        return Err(usage(format!(
+            "--out {} is a directory; name the file to write",
+            args.out.display()
+        )));
+    }
+    let temporary_name = render_temp_name(&args.out)?;
+
     let scratch = TempDir::create()?;
     let mut card_paths = Vec::with_capacity(plan.cards.len());
+    let mut notes = Vec::new();
     for (index, card) in plan.cards.iter().enumerate() {
-        let image = draw_card(
+        let drawn = draw_card(
             &card.text,
             parse_color(&card.background)?,
             parse_color(&card.foreground)?,
             plan.size.width,
             plan.size.height,
         );
+        if drawn.truncated() {
+            notes.push(format!(
+                "render: the card text was too long for the frame; it shows {} of {} characters and ends in ...",
+                drawn.shown.chars().count(),
+                drawn.total
+            ));
+        }
         let path = scratch.0.join(format!("card{index}.png"));
-        image
+        drawn
+            .image
             .save(&path)
             .with_context(|| format!("write {}", path.display()))?;
         card_paths.push(path);
     }
 
-    // Render beside the output, then rename, so a failed run leaves nothing behind.
+    // Render beside the output, then rename. The temporary file is removed on every
+    // way out but a kill, so a failed run leaves nothing behind. Its directory is
+    // made absolute, so the path cannot be read as an option.
     let dir = match args.out.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
         _ => PathBuf::from("."),
     };
     fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
-    let name = args
-        .out
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| usage(format!("{} has no file name", args.out.display())))?;
-    let temporary = dir.join(format!(".{}.{name}.tmp", std::process::id()));
-    // Keep the extension last so ffmpeg picks the container from it.
-    let temporary = match args.out.extension().and_then(|ext| ext.to_str()) {
-        Some(extension) => temporary.with_extension(extension),
-        None => temporary,
-    };
+    let dir = fs::canonicalize(&dir).with_context(|| format!("find {}", dir.display()))?;
+    let temporary = TempFile::new(dir.join(temporary_name));
 
     let started = Instant::now();
     let output = Command::new("ffmpeg")
-        .args(ffmpeg_args(&plan, &card_paths, &temporary))
+        .args(ffmpeg_args(&plan, &media, &card_paths, &temporary.path))
         .stdin(Stdio::null())
         .output()
         .map_err(|error| spawn_error("ffmpeg", error))?;
     if !output.status.success() {
-        let _ = fs::remove_file(&temporary);
         let log = String::from_utf8_lossy(&output.stderr);
         let tail: Vec<&str> = log.lines().rev().take(12).collect();
         return Err(anyhow!(
@@ -696,7 +804,7 @@ pub fn render(args: RenderArgs) -> Result<()> {
             tail.into_iter().rev().collect::<Vec<_>>().join("\n")
         ));
     }
-    fs::rename(&temporary, &args.out).with_context(|| format!("replace {}", args.out.display()))?;
+    replace_file(temporary, &args.out)?;
     println!(
         "render: out={} frames={} duration_ms={} size={}x{} ffmpeg_ms={}",
         args.out.display(),
@@ -706,13 +814,23 @@ pub fn render(args: RenderArgs) -> Result<()> {
         plan.size.height,
         started.elapsed().as_millis()
     );
+    for note in notes {
+        println!("{note}");
+    }
     Ok(())
 }
 
 /// Mono f32 audio of `media` from `from_ms` for `length_ms`, at `PCM_RATE`.
-fn decode_pcm(media: &str, from_ms: u64, length_ms: u64) -> Result<Vec<f32>> {
+fn decode_pcm(media: &Path, from_ms: u64, length_ms: u64) -> Result<Vec<f32>> {
     let output = Command::new("ffmpeg")
-        .args(["-v", "error", "-nostdin", "-ss"])
+        .args([
+            "-v",
+            "error",
+            "-nostdin",
+            "-protocol_whitelist",
+            PROTOCOLS,
+            "-ss",
+        ])
         .arg(format!("{:.3}", from_ms as f64 / 1000.0))
         .arg("-t")
         .arg(format!("{:.3}", length_ms as f64 / 1000.0))
@@ -726,7 +844,8 @@ fn decode_pcm(media: &str, from_ms: u64, length_ms: u64) -> Result<Vec<f32>> {
         .map_err(|error| spawn_error("ffmpeg", error))?;
     if !output.status.success() {
         return Err(anyhow!(
-            "ffmpeg cannot read the audio of {media}: {}",
+            "ffmpeg cannot read the audio of {}: {}",
+            media.display(),
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
@@ -742,6 +861,10 @@ fn decode_pcm(media: &str, from_ms: u64, length_ms: u64) -> Result<Vec<f32>> {
 fn inspect_cmd(args: InspectArgs) -> Result<()> {
     let project = load_project(&args.project)?;
     let info = media_info(&project)
+        .map_err(|error| usage(format!("{}: {error}", args.project.display())))?;
+    // The one media file of the project, checked before any join is decoded: it is
+    // the only file opened below (`media_info` refuses a project with several).
+    let media_path = local_media_file(&info.path)
         .map_err(|error| usage(format!("{}: {error}", args.project.display())))?;
     let rate = timeline::project_rate(&project).map_err(invalid)?;
     let all = joins(&project).map_err(invalid)?;
@@ -760,22 +883,18 @@ fn inspect_cmd(args: InspectArgs) -> Result<()> {
         let before = join
             .before
             .as_ref()
-            .map(|(media, last)| (media.as_str(), [(*last - 1).max(0), *last]));
-        let after = join
-            .after
-            .as_ref()
-            .map(|(media, first)| (media.as_str(), [*first, *first + 1]));
+            .map(|(_, last)| [(*last - 1).max(0), *last]);
+        let after = join.after.as_ref().map(|(_, first)| [*first, *first + 1]);
         let mut sides: Vec<Option<Vec<Vec<u8>>>> = Vec::with_capacity(2);
         let mut size: Option<(u32, u32)> = None;
         for side in [before, after] {
-            let Some((media, frames)) = side else {
+            let Some(frames) = side else {
                 sides.push(None);
                 continue;
             };
             let times = frames.map(frame_time);
-            let decoded =
-                decode_frames_at(Path::new(media), &times, THUMB_WIDTH, DecoderSetting::Auto)
-                    .with_context(|| format!("decode frames of {media}"))?;
+            let decoded = decode_frames_at(&media_path, &times, THUMB_WIDTH, DecoderSetting::Auto)
+                .with_context(|| format!("decode frames of {}", media_path.display()))?;
             if let Some(first) = decoded.first() {
                 size = Some((first.width, first.height));
             }
@@ -787,7 +906,16 @@ fn inspect_cmd(args: InspectArgs) -> Result<()> {
             (THUMB_WIDTH, (height + height % 2) as u32)
         });
         // A side that is not footage (a card) is shown as a dark frame.
-        let blank = vec![0x14u8; (thumb_width * thumb_height * 3) as usize];
+        let blank_len = (thumb_width as usize)
+            .checked_mul(thumb_height as usize)
+            .and_then(|pixels| pixels.checked_mul(3))
+            .ok_or_else(|| {
+                usage(format!(
+                    "{}: the thumbnail size overflows",
+                    args.project.display()
+                ))
+            })?;
+        let blank = vec![0x14u8; blank_len];
         let mut thumbs: Vec<Vec<u8>> = Vec::with_capacity(4);
         for side in sides {
             match side {
@@ -801,18 +929,18 @@ fn inspect_cmd(args: InspectArgs) -> Result<()> {
         // waveform lines up with the two halves of the filmstrip.
         let silence = || vec![0.0f32; (u64::from(PCM_RATE) * PCM_WINDOW_MS / 1000) as usize];
         let mut pcm: Vec<f32> = match (&join.before, info.has_audio) {
-            (Some((media, last)), true) => {
-                let end = timeline::frame_ms(last + 1, rate);
+            (Some((_, last)), true) => {
+                let end = timeline::frame_ms(last.saturating_add(1), rate);
                 let from = end.saturating_sub(PCM_WINDOW_MS);
-                decode_pcm(media, from, end - from)?
+                decode_pcm(&media_path, from, end - from)?
             }
             _ => silence(),
         };
         let before_len = pcm.len() as u64 * 1000 / u64::from(PCM_RATE);
         match (&join.after, info.has_audio) {
-            (Some((media, first)), true) => {
+            (Some((_, first)), true) => {
                 let from = timeline::frame_ms(*first, rate);
-                pcm.extend(decode_pcm(media, from, PCM_WINDOW_MS)?);
+                pcm.extend(decode_pcm(&media_path, from, PCM_WINDOW_MS)?);
             }
             _ => pcm.extend(silence()),
         }
@@ -918,5 +1046,118 @@ mod tests {
             .collect();
         assert_eq!(names.len(), 1, "{names:?}");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn exit_code(error: &anyhow::Error) -> Option<i32> {
+        error.downcast_ref::<ExitWith>().map(|exit| exit.code)
+    }
+
+    fn scratch_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("reelctl-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("temp dir");
+        dir
+    }
+
+    #[test]
+    fn only_a_plain_existing_file_is_media() {
+        let dir = scratch_dir("media-path");
+        let file = dir.join("a.mp4");
+        fs::write(&file, b"x").expect("write");
+        let found = local_media_file(file.to_str().expect("utf8")).expect("a file");
+        assert!(found.is_absolute() && found.is_file());
+        let missing = dir.join("missing.mp4");
+        for bad in [
+            "http://127.0.0.1:1/x.mp4",
+            "https://example.com/a.mp4",
+            "file:///etc/hosts",
+            "concat:http://127.0.0.1:1/a|b",
+            "concat:/etc/hosts|/etc/hosts",
+            "pipe:0",
+            "subfile,,start,0,end,0,,:/etc/hosts",
+            "",
+            dir.to_str().expect("utf8"),
+            missing.to_str().expect("utf8"),
+        ] {
+            let error = local_media_file(bad).expect_err(bad);
+            assert_eq!(exit_code(&error), Some(2), "{bad}: {error}");
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_render_temporary_keeps_the_extension_last() {
+        let name = render_temp_name(Path::new("/some/dir/out.mp4")).expect("name");
+        assert_eq!(name, format!(".out.{}.tmp.mp4", std::process::id()));
+        let name = render_temp_name(Path::new("take.v2.mov")).expect("name");
+        assert_eq!(name, format!(".take.v2.{}.tmp.mov", std::process::id()));
+    }
+
+    #[test]
+    fn an_output_without_an_extension_is_a_usage_error() {
+        let error = render_temp_name(Path::new("/some/dir/out")).expect_err("no extension");
+        assert_eq!(exit_code(&error), Some(2));
+        assert!(error.to_string().contains("extension"), "{error}");
+    }
+
+    fn leftovers(dir: &Path) -> Vec<String> {
+        fs::read_dir(dir)
+            .expect("dir")
+            .map(|entry| {
+                entry
+                    .expect("entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_failed_replace_removes_the_temporary_file() {
+        let dir = scratch_dir("replace-fails");
+        // The destination is a directory, so the rename cannot replace it.
+        let target = dir.join("p.otio");
+        fs::create_dir(&target).expect("dir");
+        let error = write_atomic(&target, b"one").expect_err("a directory");
+        assert!(error.to_string().contains("p.otio"), "{error}");
+        assert_eq!(leftovers(&dir), vec!["p.otio".to_string()]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_guard_removes_its_file_unless_it_is_disarmed() {
+        let dir = scratch_dir("guard");
+        let kept = dir.join("kept");
+        let dropped = dir.join("dropped");
+        fs::write(&kept, b"x").expect("write");
+        fs::write(&dropped, b"x").expect("write");
+        let mut guard = TempFile::new(kept.clone());
+        guard.disarm();
+        drop(guard);
+        drop(TempFile::new(dropped.clone()));
+        assert!(kept.exists());
+        assert!(!dropped.exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_size_has_a_cap_on_each_side_and_on_the_pixels() {
+        assert!(parse_size("7680x4320").is_ok());
+        assert!(parse_size("8192x2").is_ok());
+        for text in [
+            "8194x2",
+            "2x8194",
+            "8192x4096",
+            "4096x8192",
+            "99999999999x2",
+        ] {
+            assert!(parse_size(text).is_err(), "{text}");
+        }
+        let message = parse_size("8192x4096").expect_err("too big");
+        assert!(
+            message.contains("8192") && message.contains("33177600"),
+            "{message}"
+        );
     }
 }

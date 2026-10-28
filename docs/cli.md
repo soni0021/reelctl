@@ -229,7 +229,7 @@ Deterministic edits over an OpenTimelineIO project. Each command reads one `.oti
 reelctl timeline init --input take.mp4 [--dna take.edit_dna.json] --out edit.otio
 reelctl timeline cut-silence --project edit.otio --dna take.edit_dna.json [--min-gap-ms 180] [--fade-ms 30] [--fillers um,uh] --out edit.otio
 reelctl transform punch-in --project edit.otio --start-ms T1 --end-ms T2 --scale 1.18 --out edit.otio
-reelctl funnel attach-bridge --project edit.otio --target-url URL [--cutoff-pct 0.72] [--card-ms 2500] [--dna take.edit_dna.json] --out edit.otio
+reelctl funnel attach-bridge --project edit.otio --target-url URL [--cutoff-pct 0.72] [--card-ms 2500, at most 60000] [--dna take.edit_dna.json] --out edit.otio
 reelctl render --project edit.otio --out out.mp4 [--size 1080x1920]
 reelctl qa inspect-boundaries --project edit.otio --out-dir views/
 ```
@@ -245,9 +245,10 @@ reelctl qa inspect-boundaries --project edit.otio --out-dir views/
 
 - `cut-silence` removes every silence gap of at least `--min-gap-ms` and, with whisper words in the DNA, whole words that equal a `--fillers` entry. Times come from the DNA and snap to the frame grid into the pause, never into a word. The audio gets a `--fade-ms` dip at each join (a fade-out and a fade-in, not an overlapping crossfade, so the audio keeps pace with the picture).
 - `punch-in` needs `1 < --scale <= 2` and a span of at least 12 frames: a centred zoom ramping in over 6 frames, held, and ramping out. A second punch-in over the same pieces replaces the first.
-- `attach-bridge` cuts at `--cutoff-pct` of the timeline (in a pause if the DNA has one within 400 ms after) and appends a card showing the URL, drawn with a built-in bitmap font (capitals, digits and a few symbols; other characters show as a box), because this ffmpeg build may lack `drawtext`. A different bridge on a project that already has one is refused.
-- `render` writes H.264 + AAC and scales and crops to `--size` (even sides; default the source size).
-- Exit 2: a bad argument, an unreadable or invalid project or DNA, a span outside the timeline, or a DNA that is not the media's. Exit 1: `ffmpeg` or `ffprobe` missing or failing.
+- `attach-bridge` cuts at `--cutoff-pct` of the timeline (in a pause if the DNA has one within 400 ms after, or if `cut-silence` left a join there; the DNA must be the media's length within 100 ms) and appends a card showing the URL, drawn with a built-in bitmap font (capitals, digits and a few symbols; other characters show as a box), because this ffmpeg build may lack `drawtext`. A different bridge on a project that already has one is refused.
+- `render` writes H.264 + AAC and scales and crops to `--size` (even sides, at most 8192 each and 33177600 pixels in all; default the source size). `--out` needs an extension and may not be a directory. It writes `.<name>.<pid>.tmp.<ext>` beside `--out`, renames it, and removes it on any failure. A card URL too long for the frame is cut with `...` and a second stdout line says how many characters show.
+- Media paths must be plain local files (no `://`, `concat:` or `pipe:`; a directory or device is refused); `ffmpeg` and `ffprobe` run with only the `file` protocol allowed.
+- Exit 2: a bad argument, an unreadable or invalid project or DNA, a media file that is missing, not a regular file or not a local path, a file `ffprobe` cannot read, a span outside the timeline, a project with no frames or with values out of range, an oversize `--size` or `--card-ms`, or a DNA that is not the media's. Exit 1: `ffmpeg` or `ffprobe` missing, `ffmpeg` failing, or an `--out` that cannot be written.
 
 ## Exit codes
 

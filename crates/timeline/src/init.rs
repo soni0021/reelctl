@@ -64,6 +64,13 @@ pub fn init(spec: &InitSpec) -> Result<Timeline> {
             "the media has no video frames to edit",
         ));
     }
+    if spec.frames > crate::tracks::MAX_FRAMES {
+        return Err(TimelineError::invalid(format!(
+            "the media has {} video frames; at most {} can be edited",
+            spec.frames,
+            crate::tracks::MAX_FRAMES
+        )));
+    }
     let stem = std::path::Path::new(&spec.media_path)
         .file_stem()
         .and_then(|name| name.to_str())
@@ -260,6 +267,10 @@ mod tests {
         let mut bad = spec(true);
         bad.fps = 0.0;
         assert!(init(&bad).is_err());
+        let mut bad = spec(true);
+        bad.frames = crate::tracks::MAX_FRAMES + 1;
+        let error = init(&bad).expect_err("too long");
+        assert!(error.to_string().contains("2147483647"), "{error}");
     }
 
     #[test]
