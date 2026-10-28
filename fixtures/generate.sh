@@ -423,15 +423,6 @@ bench60_textured() {
   motion_clip "$1" 540x960 60 "${args[@]}" box:480:720:lower:dark box:960:1080:upper:light box:1300:end:lower:dark
 }
 
-# motion_clip wants its events in time order; this sorts them by start frame.
-motion_clip_sorted() {
-  local out="$1" size="$2" seconds="$3"
-  shift 3
-  local sorted=()
-  while IFS= read -r line; do sorted+=("$line"); done < <(printf '%s\n' "$@" | awk -F: '{ print $2, $0 }' | sort -n -k1,1 -s | cut -d' ' -f2-)
-  motion_clip "$out" "$size" "$seconds" "${sorted[@]}"
-}
-
 cmd="${1:-}"
 out="${2:-}"
 case "$cmd" in
