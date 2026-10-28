@@ -11,7 +11,7 @@
 
 - `reelctl understand` takes a 20–60 minute video and its whisper-timed `edit_dna.json`, sends sampled frames and numbered transcript segments to a hosted vision-language model (OpenRouter; needs `OPENROUTER_API_KEY`), and writes `understanding.json`: Reel-sized clips picked by segment ID and checked by code (hook, cliffhanger, length; a clip that breaks a rule is kept with a flag naming it), and a label for what each cut really was. Every quote is whisper's text and every time is measured. See [docs/understanding.md](docs/understanding.md).
 
-This repository is P0 of the plan in [planer.md](planer.md). P1–P3 (trend watchtower, timeline editor, specialist video model) are specified there and not built. Current state, measurements, and known gaps are in [docs/status.md](docs/status.md).
+This repository is P0 of the plan in [planer.md](planer.md). P1 has a first slice (the Go watchtower, reading recorded data) and P2 has a first slice (OpenTimelineIO edits and an ffmpeg render); the rest of P2 (Smelter, manimgx, RobustVideoMatting, reframe, captions, voice) and P3 (a fine-tuned vision-language model, deferred by the user) are specified there and not built. Current state, measurements, and known gaps are in [docs/status.md](docs/status.md).
 
 ## Quick start
 
@@ -58,7 +58,7 @@ Add `--whisper-model <model.bin>` to `decompile` for real words instead of voice
 
 ## Architecture
 
-The Cargo workspace has six crates:
+The Cargo workspace has these crates (the Go watchtower is a separate module in `watchtower/`):
 
 | Crate | Role |
 |---|---|
@@ -67,6 +67,7 @@ The Cargo workspace has six crates:
 | `diff` | Pacing flags, and a comparison, for a draft against one to three outliers |
 | `filmstrip` | `timeline_view` PNGs at cut boundaries |
 | `understand` | Long-video understanding: transcript segments, frame plan, the model request and cost bound, clip rules, and `understanding.json` (no ffmpeg or whisper dependency) |
+| `timeline` | The OpenTimelineIO subset, edit operations and the ffmpeg filter-graph builder (pure) |
 | `reelctl` | The command-line tool |
 
 ```
