@@ -1,6 +1,6 @@
 # edit_dna.json reference
 
-`reelctl decompile` writes one JSON object per video. The Rust types are in [crates/edit-dna/src/lib.rs](../crates/edit-dna/src/lib.rs), and the JSON Schema generated from them is [crates/edit-dna/schema/edit_dna.schema.json](../crates/edit-dna/schema/edit_dna.schema.json). After changing the types, regenerate the schema with `cargo run -p edit-dna --example schema`, and bump `SCHEMA_VERSION` when the format changes. Version 2 (2026-10-25) added `silence_threshold_db` and `noise_floor_db`. Version 1 files still parse: a missing `silence_threshold_db` reads as −40, the fixed threshold version 1 used, and a missing `noise_floor_db` reads as `null`. So `diff` accepts outlier files from either version.
+`reelctl decompile` writes one JSON object per video. The Rust types are in [crates/edit-dna/src/lib.rs](../crates/edit-dna/src/lib.rs), and the JSON Schema generated from them is [crates/edit-dna/schema/edit_dna.schema.json](../crates/edit-dna/schema/edit_dna.schema.json). After changing the types, regenerate the schema with `cargo run -p edit-dna --example schema`, and bump `SCHEMA_VERSION` when the format changes. Version 2 (2026-10-25) added `silence_threshold_db` and `noise_floor_db`. Version 1 files still parse: a missing `silence_threshold_db` reads as −40, the fixed threshold version 1 used, and a missing `noise_floor_db` reads as `null`. Version 3 added `visual_events`; a version 1 or 2 file has none and reads as an empty list. So `diff` accepts outlier files from any version.
 
 Every field is always present. Times are whole milliseconds. Video times count from the video stream's start time and audio times from the first decoded audio sample; these usually line up, but the code does not align them.
 
@@ -8,7 +8,7 @@ Every field is always present. Times are whole milliseconds. Video times count f
 
 | Field | Type | Meaning |
 |---|---|---|
-| `schema_version` | integer | Currently `2` |
+| `schema_version` | integer | Currently `3` |
 | `duration_ms` | integer | The longer of the container's duration and the last frame's time plus one frame |
 | `fps` | number | The stream's average frame rate, else its base rate, else 30 |
 | `frame_size` | object | `width` and `height` of the decoded frames, in pixels |
@@ -29,6 +29,21 @@ Every field is always present. Times are whole milliseconds. Video times count f
 The scene-score detector applies the formula behind FFmpeg's `scene` value (from the `select` filter) to a grid of roughly 160×90 luma samples (spread over the whole picture, also when the frame size changes part-way through the video), and records a cut wherever the score is above 0.30. It has been tested only on hard cuts between solid colors; dissolves, whip pans, flashes, and speed ramps are untested. See [ADR-002](decisions/ADR-002-scene-score-cut-detector.md).
 
 `cut_detector` names the detector that produced the list: `"ffmpeg_scene_score"` today, with `"trans_net_v2"` reserved for TransNetV2. `cut_detector_note` says why that detector ran, including the reason for any fallback.
+
+## Visual events
+
+`visual_events` lists changes inside a shot that are not cuts, in time order. It is `[]` when there are none, and in a version 1 or 2 file, which did not look for them.
+
+| Field | Meaning |
+|---|---|
+| `time_ms` | Presentation time of the first frame that shows the change in full, as for a cut |
+| `frame_index` | That frame's index |
+| `kind` | `"punch_in"` (the picture scales up quickly), `"zoom_out"` (it scales down quickly), or `"overlay_change"` (a block of the frame changed and stayed changed, such as a caption or a graphic) |
+| `scale` | Factor between the picture before and after the move: above 1 for `punch_in`, below 1 for `zoom_out`. `null` for `overlay_change` |
+| `center_x`, `center_y` | The fixed point of the move as a share of the frame width and height, from 0 to 1. `null` for `overlay_change` |
+| `area` | The changed share of the frame, from 0 to 1. `null` for `punch_in` and `zoom_out` |
+
+A field that does not apply to the kind is `null`, never omitted. An event never lies on a frame that is also a cut. `diff` splits a `static_window` at every event time as it does at a cut; the cut rhythm in `comparison` counts cuts only. The detection is specified in [the visual-motion spec](specs/visual-motion.md).
 
 ## Audio
 
