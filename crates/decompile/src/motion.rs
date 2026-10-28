@@ -476,25 +476,17 @@ impl MotionDetector {
         let end_pos = pos_at_or_before(&self.ring, pending.track_until).unwrap_or(anchor_pos);
         let stride = geom.fine_stride();
         let centre = (pending.cx, pending.cy);
-        let (mut prev, mut prev2) = (0.0f32, 0.0f32);
+        let mut prev = 0.0f32;
         for pos in anchor_pos + 1..=end_pos {
             let Some(frame) = self.ring.get(pos) else {
                 break;
             };
-            let seed = (2.0 * prev - prev2).clamp(-LN_MAX - 0.02, LN_MAX + 0.02);
-            let ln = track_ln(
-                &anchor.luma,
-                &frame.luma,
-                geom,
-                centre,
-                stride,
-                [prev, seed],
-            );
+            let ln = track_ln(&anchor.luma, &frame.luma, geom, centre, stride, prev);
             track.push(ScalePoint {
                 time_ms: frame.time_ms,
                 scale: f64::from(ln).exp(),
             });
-            (prev2, prev) = (prev, ln);
+            prev = ln;
         }
         track
     }
@@ -947,21 +939,10 @@ const TRACK_STEPS: [f32; 4] = [0.02, 0.01, 0.005, 0.0025];
 const TRACK_REPEATS: usize = 8;
 
 /// The ln scale of `b` against `a` at a fixed centre, found by descending from
-/// the best of `seeds`.
-fn track_ln(
-    a: &[u8],
-    b: &[u8],
-    geom: Geom,
-    centre: (f32, f32),
-    stride: usize,
-    seeds: [f32; 2],
-) -> f32 {
+/// `start` (the frame before's scale).
+fn track_ln(a: &[u8], b: &[u8], geom: Geom, centre: (f32, f32), stride: usize, start: f32) -> f32 {
     let limit = LN_MAX + 0.02;
-    let mut best = (seeds[0], cost(a, b, geom, seeds[0], centre, stride));
-    let c = cost(a, b, geom, seeds[1], centre, stride);
-    if c < best.1 {
-        best = (seeds[1], c);
-    }
+    let mut best = (start, cost(a, b, geom, start, centre, stride));
     for step in TRACK_STEPS {
         for _ in 0..TRACK_REPEATS {
             let mut next = best;
@@ -2158,6 +2139,17 @@ mod tests {
     }
 
     // ---- the scale at each frame of a move ----
+
+    #[test]
+    fn the_track_scale_is_good_to_a_fraction_of_the_search_step() {
+        // ln 0.0512 lies between the search grid's 0.05 and 0.0525.
+        let (cols, rows) = (160, 90);
+        let geom = Geom { cols, rows };
+        let a = render(cols, rows, 1.0, 0.5, 0.5);
+        let b = render(cols, rows, 0.0512f32.exp(), 0.5, 0.5);
+        let ln = track_ln(&a, &b, geom, (0.5, 0.5), geom.fine_stride(), 0.0);
+        assert!((ln - 0.0512).abs() < 0.0006, "ln {ln}");
+    }
 
     /// The planted scale (relative to the frame before the move) of the frame
     /// at `index`, given the scales from `first` on.
