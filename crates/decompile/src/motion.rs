@@ -2112,8 +2112,8 @@ mod tests {
             for (name, pick) in &cases {
                 let mut det = MotionDetector::new(cols, rows);
                 let start = Instant::now();
-                for i in 0..1800usize {
-                    det.push(i as u64, time_of(i), pick[i], false);
+                for (i, frame) in pick.iter().enumerate() {
+                    det.push(i as u64, time_of(i), frame, false);
                 }
                 let events = det.finish();
                 let total = start.elapsed();
