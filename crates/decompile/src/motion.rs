@@ -767,8 +767,8 @@ struct Fit {
     base: f32,
 }
 
-/// Times the pattern search ran (tests check that the cheap gate keeps it off
-/// motion that is no scale).
+// Times the pattern search ran (tests check that the cheap gate keeps it off
+// motion that is no scale).
 #[cfg(test)]
 thread_local! {
     static REFINES: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
