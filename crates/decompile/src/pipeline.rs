@@ -183,6 +183,7 @@ fn assemble(
     );
     dna.schema_version = SCHEMA_VERSION;
     dna.frame_count = decoded.frames.len() as u64;
+    dna.visual_events = visual_events(&decoded.motion_events, &cuts);
     dna.cuts = cuts;
     dna.silence_gaps = silence.gaps;
     dna.silence_threshold_db = round2(silence.threshold_db);
@@ -283,4 +284,38 @@ fn round2(value: f64) -> f64 {
 
 fn duration_ms(duration: Duration) -> u64 {
     u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+}
+
+/// The measured events as `edit_dna.json` records. An event never lies on a frame that
+/// is also a resolved cut (the detector was told about the scene-score cuts; a different
+/// cut detector can disagree), and the list stays sorted by time.
+fn visual_events(
+    events: &[crate::motion::DetectedEvent],
+    cuts: &[edit_dna::Cut],
+) -> Vec<edit_dna::VisualEvent> {
+    use crate::motion::MotionKind;
+    use edit_dna::VisualEventKind;
+    let mut out: Vec<edit_dna::VisualEvent> = events
+        .iter()
+        .filter(|event| !cuts.iter().any(|cut| cut.frame_index == event.frame_index))
+        .map(|event| edit_dna::VisualEvent {
+            time_ms: event.time_ms,
+            frame_index: event.frame_index,
+            kind: match event.kind {
+                MotionKind::PunchIn => VisualEventKind::PunchIn,
+                MotionKind::ZoomOut => VisualEventKind::ZoomOut,
+                MotionKind::OverlayChange => VisualEventKind::OverlayChange,
+            },
+            scale: event.scale.map(round4),
+            center_x: event.center_x.map(round4),
+            center_y: event.center_y.map(round4),
+            area: event.area.map(round4),
+        })
+        .collect();
+    out.sort_by_key(|event| (event.time_ms, event.frame_index));
+    out
+}
+
+fn round4(value: f64) -> f64 {
+    (value * 10_000.0).round() / 10_000.0
 }

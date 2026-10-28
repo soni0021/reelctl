@@ -30,7 +30,7 @@ Cut detectors:
 
 ### Output
 
-One line on stdout:
+One line on stdout (the punch-ins, zoom-outs and overlay changes it found are in the JSON's `visual_events`, see [edit-dna.md](edit-dna.md)):
 
 ```
 signal_ms=11 asr_ms=0 asr_us=333 structural_under_500ms=true cuts=1 silence_gaps=1 duration_ms=12000

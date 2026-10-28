@@ -2,7 +2,7 @@
 
 `reelctl` measures how a short vertical video is edited and compares a creator's draft against a top-performing reel (an "outlier") in the same niche.
 
-- `reelctl decompile` turns an MP4 into `edit_dna.json`: cut times, silence gaps, loudness, per-shot color, whether there is a cut near the 9-second payoff mark, and, given a whisper model, timed words. It also writes a `timeline_view` PNG at each cut, so an agent can inspect cuts without opening the video.
+- `reelctl decompile` turns an MP4 into `edit_dna.json`: cut times, punch-ins, zoom-outs and overlay changes measured in pixels (`visual_events`), silence gaps, loudness, per-shot color, whether there is a cut near the 9-second payoff mark, and, given a whisper model, timed words. It also writes a `timeline_view` PNG at each cut, so an agent can inspect cuts without opening the video.
 - `reelctl diff` decompiles a draft and flags dead air, long stretches with no cut, and a missing payoff cue. With one to three outliers (`--outlier` up to three times) it also compares cut rhythm in 5 s windows, pause density, speaking rate, and loudness, as JSON or as a text table (`--format text`).
 
 - `reelctl understand` takes a 20–60 minute video and its whisper-timed `edit_dna.json`, sends sampled frames and numbered transcript segments to a hosted vision-language model (OpenRouter; needs `OPENROUTER_API_KEY`), and writes `understanding.json`: Reel-sized clips picked by segment ID and checked by code (hook, cliffhanger, length; a clip that breaks a rule is kept with a flag naming it), and a label for what each cut really was. Every quote is whisper's text and every time is measured. See [docs/understanding.md](docs/understanding.md).
@@ -59,7 +59,7 @@ The Cargo workspace has six crates:
 | Crate | Role |
 |---|---|
 | `edit-dna` | Serde types and JSON Schema for `edit_dna.json` |
-| `decompile` | Decode with ffmpeg-next, then find cuts, silence, loudness, per-shot color, and the payoff cue |
+| `decompile` | Decode with ffmpeg-next, then find cuts, punch-ins and overlay changes, silence, loudness, per-shot color, and the payoff cue |
 | `diff` | Pacing flags, and a comparison, for a draft against one to three outliers |
 | `filmstrip` | `timeline_view` PNGs at cut boundaries |
 | `understand` | Long-video understanding: transcript segments, frame plan, the model request and cost bound, clip rules, and `understanding.json` (no ffmpeg or whisper dependency) |
@@ -75,7 +75,7 @@ outlier edit_dna.json ────────────────┴──�
 long.mp4 + edit_dna.json (whisper) ──► understand ──► understanding.json (clips, labelled cuts)
 ```
 
-`decompile` makes one pass over the file, in-process, with no `ffmpeg` subprocess. Cut scores, color samples, and boundary thumbnails are taken from each video frame as it is decoded. Silence, loudness, and word timing then run on the audio, mixed to mono at 48 kHz. `signal_ms` in the output is the measured time of this structural work; word timing is measured separately as `asr_ms`.
+`decompile` makes one pass over the file, in-process, with no `ffmpeg` subprocess. Cut scores, color samples, boundary thumbnails, and the punch-in and overlay events are taken from each video frame as it is decoded. Silence, loudness, and word timing then run on the audio, mixed to mono at 48 kHz. `signal_ms` in the output is the measured time of this structural work; word timing is measured separately as `asr_ms`.
 
 The reasons behind these choices are in [docs/decisions/](docs/decisions/).
 

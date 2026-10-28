@@ -42,6 +42,7 @@ use crate::error::DecompileError;
 use crate::histogram::{yuv601_to_rgb, FrameColor};
 use crate::hwdecode::{self, HardwareDevice};
 use crate::linear_resample::LinearResampler;
+use crate::motion::{DetectedEvent, MotionDetector};
 use crate::scene::{ffmpeg_scene_score, ScoredFrame, SCENE_SCORE_THRESHOLD};
 
 pub(crate) const SAMPLE_RATE: u32 = 48_000;
@@ -188,6 +189,8 @@ pub(crate) struct DecodedReel {
     pub pcm: Vec<f32>,
     pub sample_rate: u32,
     pub boundaries: Vec<RawBoundary>,
+    /// Punch-ins, zoom-outs and overlay changes measured on the luma grids.
+    pub motion_events: Vec<DetectedEvent>,
 }
 
 pub(crate) struct RawBoundary {
@@ -385,6 +388,7 @@ fn decode_with(path: &Path, decoder: Decoder<'_>) -> Result<DecodedReel, Decompi
         sample_rate: if pcm.is_empty() { 0 } else { SAMPLE_RATE },
         pcm,
         boundaries,
+        motion_events: sad.finish_motion(),
     })
 }
 
@@ -629,7 +633,7 @@ fn observe_frame(
     }
     let time_ms = frame_time_ms(frame, index, time_base, start_time, fps);
     *last_time_ms = time_ms;
-    let scene_score = sad.push(&view)?;
+    let scene_score = sad.observe(index, time_ms, &view)?;
     let mut color = FrameColor::new(index, time_ms);
     accumulate_histogram(&view, &mut color);
     note_boundary(
@@ -754,6 +758,8 @@ struct SadState {
     curr: Vec<u8>,
     prev_mafd: f64,
     primed: bool,
+    /// Reads the same grids for punch-ins and overlays (`motion.rs`).
+    motion: Option<MotionDetector>,
 }
 
 impl SadState {
@@ -769,7 +775,36 @@ impl SadState {
             curr: Vec::new(),
             prev_mafd: 0.0,
             primed: false,
+            motion: None,
         }
+    }
+
+    /// The scene score of a frame, and the frame's grid to the motion detector. A
+    /// frame the scene score calls a cut is told to it as one, so no event lies on a cut.
+    fn observe(
+        &mut self,
+        index: u64,
+        time_ms: u64,
+        view: &YuvView<'_>,
+    ) -> Result<f64, DecompileError> {
+        let score = self.push(view)?;
+        let is_cut = index > 0 && score > SCENE_SCORE_THRESHOLD;
+        if self.motion.is_none() {
+            self.motion = Some(MotionDetector::new(self.cols as usize, self.rows as usize));
+        }
+        if let Some(motion) = self.motion.as_mut() {
+            // After `push` the current grid is in `prev` (the buffers were swapped).
+            motion.push(index, time_ms, &self.prev, is_cut);
+        }
+        Ok(score)
+    }
+
+    /// The events found over the whole clip, sorted by time.
+    fn finish_motion(&mut self) -> Vec<DetectedEvent> {
+        self.motion
+            .take()
+            .map(MotionDetector::finish)
+            .unwrap_or_default()
     }
 
     fn push(&mut self, view: &YuvView<'_>) -> Result<f64, DecompileError> {

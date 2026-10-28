@@ -59,6 +59,26 @@ Same machine, release builds of `main` and `feature/relative-silence` on the sam
 
 The real clip was re-cut from the original recording on 2026-10-25 with its audio copied, not re-encoded, so its word count (125) differs from the 2026-10-21 runs (183); see Known issues.
 
+## Visual motion, 2026-10-28
+
+Apple M3 MacBook Air, release build of `feature/visual-motion` ([spec](specs/visual-motion.md)). Real footage is kept outside the repo.
+
+| Check | Result |
+|---|---|
+| `motion12` (540×960 portrait, still texture, planted punch-in 1.18 at frame 102, zoom-out at frame 150, box covering 12.0% at frame 192) | Exactly three events at frames 102, 150 and 192, no cut: `punch_in` scale 1.1794 (planted 1.18, centre 0.5, 0.5), `zoom_out` scale 0.8479 (0.8475), `overlay_change` area 0.1162 (0.1204) |
+| `motion12_wide` (640×360 landscape copy) | The same three events at the same frames, scales 1.1794 and 0.8479, area 0.1161 |
+| `still12`, `draft12` (solid colour, one planted cut) | No event; the cut stays a cut |
+| `textured_cuts12` (probe the spec asked for: one shot zooms by itself over 300 frames, one has moving elements) | Cuts 3, 6, 9 s as before, no event: the slow source zoom is not a move that completes within 12 frames, which is the rule |
+| `signal_ms` with the module against without it (release, median of 10 runs, 5 for the real files) | 60 s solid-colour `bench60`: 247 against 252 ms. `bench60_textured` (a punch-in every 5 s, where the scale fit runs): 397 against 370 ms (+7%). `motion12`: 160 against 158. The 180 s lecture proxy: 104 against 98. The 38.5 s NEET reel: 490 against 489 |
+| The 38.5 s NEET reel | The cut at 8.47 s as before and one `overlay_change` at 14.1 s covering 25% of the frame: checked by eye, the question card is swapped and the face shrinks above it |
+| The milk clip (15 s) | No event |
+| The 28.6-minute lecture at 1280×720 | 20 events in 28.6 minutes, all `overlay_change` (areas 11–33%), `signal_ms` 10,311 (not measured without the module on this file; the 500 ms target already misses on real footage). Eight checked by eye against frames: a pop-up card at 50 s, a pen panel going at 741 s and board text appearing or changing at 468, 580 and 1,444 s are right by pixels (a board change cannot be told from an overlay); three (185, 310 and 997 s) are the speaker walking across the board, which the detector takes for an overlay. About five of eight are what the name says, and the lecture's own 614 s pop-up cut is not repeated as an event. The low-resolution proxy of the same lecture gives none |
+| Mutation checks on the detector (agent that built it) | Many threshold changes survived the first run; tests were added until each constant was pinned, and a margin check no test shape could reach was removed |
+| Mutation check on the wiring | Pointing `visual_events` at an empty list fails the planted-event and the `diff` tests |
+| `cargo test --workspace` | 436 pass, 2 ignored (the whisper model tests); the detector adds 51 unit tests, `p0_fixture.rs` three end-to-end tests, and `edit-dna` and `diff` five and five |
+
+Known limits: the thresholds are tuned on the planted clips and these four recordings and are untested on fast-cut footage; a speaker walking across a static background can be read as an overlay; a board that is written on reads as `overlay_change`, not as a slide change; a move slower than 12 frames is not an event (zoom curves); `punch_in` is reported once at the frame where the move completes, so its start is not recorded.
+
 ## Long-to-short clipper, 2026-10-28
 
 Merged into `main` 2026-10-28 from `feature/long-to-short-clipper` ([spec](specs/long-to-short-clipper.md), [ADR-015](decisions/ADR-015-combine-measured-time-with-a-model-that-answers-by-segment-id.md); plan and checklist in `tasks/archive/long-to-short-clipper/`). The first live run shows the pipeline works and the rules do their job; the 9B model does not respect the 30–60 s length, so a prompt or model change is the next lever (Muse 1.2 was not run). Billing check from the same run: 87 sheets plus the transcript billed 65,852 input tokens against 139,077 estimated, so the bound overestimates by about 2× and does not underestimate sheets.

@@ -1,6 +1,6 @@
 # Spec: Visual motion events (`visual-motion`)
 
-Status: written 2026-10-28 under the user's blanket "Do all of them" (after a list of remaining work that named `visual-motion`); the user has not reviewed it line by line. The four answers at the end are the recommended ones, shown to the user in the same message. Branch: `feature/visual-motion`. Module `visual-motion` in the [P0 capability map](p0-capability-map.md), limited to edit events by its decision 1. Follows [planer.md](../../planer.md) Pass 1 ("optical-flow ... camera punch-in ratios") and Pass 2 ("static visual windows (>2.5s without B-roll, zoom, or graphic callout)").
+Status: written 2026-10-28 under the user's blanket "Do all of them" (after a list of remaining work that named `visual-motion`); the user has not reviewed it line by line. The four answers at the end are the recommended ones, shown to the user in the same message. Built on `feature/visual-motion`; evidence in [status.md](../status.md#visual-motion-2026-10-28). Plan: `tasks/plan.md` (archived with this branch's merge). Branch: `feature/visual-motion`. Module `visual-motion` in the [P0 capability map](p0-capability-map.md), limited to edit events by its decision 1. Follows [planer.md](../../planer.md) Pass 1 ("optical-flow ... camera punch-in ratios") and Pass 2 ("static visual windows (>2.5s without B-roll, zoom, or graphic callout)").
 
 ## Objective
 
