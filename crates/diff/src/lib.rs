@@ -88,14 +88,19 @@ pub(crate) fn push_dead_air(flags: &mut Vec<DiffFlag>, draft: &EditDna) {
     }
 }
 
+/// Splits the draft at every cut and every visual event (a punch-in, zoom-out
+/// or overlay change shows the picture moving, so it ends a static stretch).
 pub(crate) fn push_static_windows(flags: &mut Vec<DiffFlag>, draft: &EditDna) {
-    let mut bounds = Vec::with_capacity(draft.cuts.len() + 2);
+    let mut bounds = Vec::with_capacity(draft.cuts.len() + draft.visual_events.len() + 2);
     bounds.push(0);
-    for cut in &draft.cuts {
-        if cut.time_ms > 0 && cut.time_ms < draft.duration_ms {
-            bounds.push(cut.time_ms);
-        }
-    }
+    let inside = |time_ms: u64| time_ms > 0 && time_ms < draft.duration_ms;
+    let cut_times = draft.cuts.iter().map(|cut| cut.time_ms);
+    let event_times = draft.visual_events.iter().map(|event| event.time_ms);
+    bounds.extend(
+        cut_times
+            .chain(event_times)
+            .filter(|time_ms| inside(*time_ms)),
+    );
     if draft.duration_ms > 0 {
         bounds.push(draft.duration_ms);
     }
@@ -127,7 +132,42 @@ fn push_missing_payoff(flags: &mut Vec<DiffFlag>, draft: &EditDna, outlier: &Edi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use edit_dna::{Cut, SilenceGap};
+    use edit_dna::{Cut, SilenceGap, VisualEvent, VisualEventKind};
+
+    fn event(time_ms: u64) -> VisualEvent {
+        VisualEvent {
+            time_ms,
+            frame_index: time_ms * 30 / 1_000,
+            kind: VisualEventKind::PunchIn,
+            scale: Some(1.18),
+            center_x: Some(0.5),
+            center_y: Some(0.5),
+            area: None,
+        }
+    }
+
+    fn cut(time_ms: u64) -> Cut {
+        Cut {
+            frame_index: time_ms * 30 / 1_000,
+            time_ms,
+            interval_ms: time_ms,
+            scene_score: 1.0,
+        }
+    }
+
+    fn static_windows(draft: &EditDna) -> Vec<(u64, u64)> {
+        let mut flags = Vec::new();
+        push_static_windows(&mut flags, draft);
+        flags
+            .iter()
+            .filter_map(|flag| match flag {
+                DiffFlag::StaticWindow {
+                    start_ms, end_ms, ..
+                } => Some((*start_ms, *end_ms)),
+                _ => None,
+            })
+            .collect()
+    }
 
     fn dna(duration_ms: u64) -> EditDna {
         EditDna::empty(duration_ms, 30.0, 640, 360)
@@ -199,5 +239,55 @@ mod tests {
         outlier.payoff_window.has_cue = true;
         let report = compare(&draft, &outlier);
         assert!(!report.has_kind("missing_payoff_cue"));
+    }
+
+    #[test]
+    fn with_no_events_a_stretch_without_a_cut_is_one_static_window() {
+        assert_eq!(static_windows(&dna(12_000)), vec![(0, 12_000)]);
+        let mut draft = dna(12_000);
+        draft.cuts.push(cut(6_000));
+        assert_eq!(static_windows(&draft), vec![(0, 6_000), (6_000, 12_000)]);
+    }
+
+    #[test]
+    fn events_split_a_static_window_like_cuts_do() {
+        let mut draft = dna(12_000);
+        draft.visual_events = [2_000, 4_000, 6_000, 8_000, 10_000]
+            .into_iter()
+            .map(event)
+            .collect();
+        assert!(static_windows(&draft).is_empty());
+        assert!(!compare(&draft, &dna(12_000)).has_kind("static_window"));
+
+        let mut coarse = dna(12_000);
+        coarse.visual_events = vec![event(3_000)];
+        assert_eq!(static_windows(&coarse), vec![(0, 3_000), (3_000, 12_000)]);
+    }
+
+    #[test]
+    fn an_event_on_a_cut_adds_no_boundary() {
+        let mut with_cut = dna(12_000);
+        with_cut.cuts.push(cut(6_000));
+        let mut both = with_cut.clone();
+        both.visual_events = vec![event(6_000)];
+        assert_eq!(static_windows(&both), static_windows(&with_cut));
+        assert_eq!(static_windows(&both), vec![(0, 6_000), (6_000, 12_000)]);
+    }
+
+    #[test]
+    fn events_outside_the_duration_are_ignored() {
+        let mut draft = dna(12_000);
+        draft.visual_events = vec![event(0), event(12_000), event(15_000)];
+        assert_eq!(static_windows(&draft), vec![(0, 12_000)]);
+    }
+
+    #[test]
+    fn unsorted_and_repeated_events_still_give_sorted_windows() {
+        let mut draft = dna(12_000);
+        draft.visual_events = vec![event(9_000), event(3_000), event(9_000)];
+        assert_eq!(
+            static_windows(&draft),
+            vec![(0, 3_000), (3_000, 9_000), (9_000, 12_000)]
+        );
     }
 }

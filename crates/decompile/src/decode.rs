@@ -42,6 +42,7 @@ use crate::error::DecompileError;
 use crate::histogram::{yuv601_to_rgb, FrameColor};
 use crate::hwdecode::{self, HardwareDevice};
 use crate::linear_resample::LinearResampler;
+use crate::motion::{DetectedEvent, MotionDetector};
 use crate::scene::{ffmpeg_scene_score, ScoredFrame, SCENE_SCORE_THRESHOLD};
 
 pub(crate) const SAMPLE_RATE: u32 = 48_000;
@@ -188,6 +189,8 @@ pub(crate) struct DecodedReel {
     pub pcm: Vec<f32>,
     pub sample_rate: u32,
     pub boundaries: Vec<RawBoundary>,
+    /// Punch-ins, zoom-outs and overlay changes measured on the luma grids.
+    pub motion_events: Vec<DetectedEvent>,
 }
 
 pub(crate) struct RawBoundary {
@@ -385,6 +388,7 @@ fn decode_with(path: &Path, decoder: Decoder<'_>) -> Result<DecodedReel, Decompi
         sample_rate: if pcm.is_empty() { 0 } else { SAMPLE_RATE },
         pcm,
         boundaries,
+        motion_events: sad.finish_motion(),
     })
 }
 
@@ -629,7 +633,7 @@ fn observe_frame(
     }
     let time_ms = frame_time_ms(frame, index, time_base, start_time, fps);
     *last_time_ms = time_ms;
-    let scene_score = sad.push(&view)?;
+    let scene_score = sad.observe(index, time_ms, &view)?;
     let mut color = FrameColor::new(index, time_ms);
     accumulate_histogram(&view, &mut color);
     note_boundary(
@@ -754,6 +758,8 @@ struct SadState {
     curr: Vec<u8>,
     prev_mafd: f64,
     primed: bool,
+    /// Reads the same grids for punch-ins and overlays (`motion.rs`).
+    motion: Option<MotionDetector>,
 }
 
 impl SadState {
@@ -769,7 +775,36 @@ impl SadState {
             curr: Vec::new(),
             prev_mafd: 0.0,
             primed: false,
+            motion: None,
         }
+    }
+
+    /// The scene score of a frame, and the frame's grid to the motion detector. A
+    /// frame the scene score calls a cut is told to it as one, so no event lies on a cut.
+    fn observe(
+        &mut self,
+        index: u64,
+        time_ms: u64,
+        view: &YuvView<'_>,
+    ) -> Result<f64, DecompileError> {
+        let score = self.push(view)?;
+        let is_cut = index > 0 && score > SCENE_SCORE_THRESHOLD;
+        if self.motion.is_none() {
+            self.motion = Some(MotionDetector::new(self.cols as usize, self.rows as usize));
+        }
+        if let Some(motion) = self.motion.as_mut() {
+            // After `push` the current grid is in `prev` (the buffers were swapped).
+            motion.push(index, time_ms, &self.prev, is_cut);
+        }
+        Ok(score)
+    }
+
+    /// The events found over the whole clip, sorted by time.
+    fn finish_motion(&mut self) -> Vec<DetectedEvent> {
+        self.motion
+            .take()
+            .map(MotionDetector::finish)
+            .unwrap_or_default()
     }
 
     fn push(&mut self, view: &YuvView<'_>) -> Result<f64, DecompileError> {
@@ -1652,6 +1687,58 @@ mod tests {
         };
         let view = luma_view(y, width as u32, height as u32, &[128]);
         sad.push(&view).expect("score")
+    }
+
+    /// A 160x90 flat grey scene for 30 frames, then `strip` columns of it 100
+    /// levels brighter for 50 more, fed through `observe` as a clip. Returns
+    /// the score of the frame that changes and the events found.
+    fn observe_strip(strip: usize) -> (f64, Vec<DetectedEvent>) {
+        let (width, height) = (160usize, 90usize);
+        let flat = vec![60u8; width * height];
+        let mut changed = flat.clone();
+        for row in changed.chunks_exact_mut(width) {
+            for sample in &mut row[..strip] {
+                *sample = 160;
+            }
+        }
+        let mut sad = SadState::new();
+        let mut change_score = 0.0;
+        for index in 0..80u64 {
+            let data = if index < 30 { &flat } else { &changed };
+            let y = Plane::Eight {
+                data,
+                stride: width,
+            };
+            let view = luma_view(y, width as u32, height as u32, &[128]);
+            let score = sad
+                .observe(index, index * 1000 / 24, &view)
+                .expect("observe");
+            if index == 30 {
+                change_score = score;
+            }
+        }
+        (change_score, sad.finish_motion())
+    }
+
+    /// The detector is told which frames the scene score calls cuts: a change
+    /// that the scene score calls a cut is no event, and the same kind of
+    /// change just under the threshold is one.
+    #[test]
+    fn a_frame_the_scene_score_calls_a_cut_reaches_the_motion_detector_as_one() {
+        let (score, events) = observe_strip(56);
+        assert!(score > SCENE_SCORE_THRESHOLD, "score {score}");
+        assert!(events.is_empty(), "an event on a cut frame: {events:?}");
+
+        let (score, events) = observe_strip(32);
+        assert!(score < SCENE_SCORE_THRESHOLD, "score {score}");
+        // (A strip of a flat scene can also fit a scale; the overlay is the point.)
+        let overlays: Vec<&DetectedEvent> = events
+            .iter()
+            .filter(|e| e.kind == crate::motion::MotionKind::OverlayChange)
+            .collect();
+        assert_eq!(overlays.len(), 1, "{events:?}");
+        assert_eq!(overlays[0].frame_index, 30);
+        assert_eq!(overlays[0].time_ms, 30 * 1000 / 24);
     }
 
     /// The same picture at another size is the same picture, and a change in
