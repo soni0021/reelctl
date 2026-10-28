@@ -213,7 +213,7 @@ frames=346 images=87 sheet=2x2 segments=535 context_tokens=262144 input_tokens_e
 clips=3 rejected=1 model=qwen/qwen3.5-9b provider=Parasail cost_usd=0.0082 out=Reels/out/understand_runs/qwen35-9b.understanding.json
 ```
 
-`cost_upper_bound_usd` is an upper bound: it prices every input token at the highest eligible price and counts 1,445 tokens per image or sheet. Both lines above are real output for the 28.6-minute lecture (Qwen3.5-9B, 2026-10-28): the bound was $0.0276 and the response reported $0.0082, with 65,852 input tokens against the 139,077 estimated, so the bound overestimates by about 2×. The 87 sheets and the transcript together billed 65,852 tokens, so a 2×2 sheet billed at most 757, well under 1,445.
+`cost_upper_bound_usd` is an upper bound: it prices every input token at the highest eligible price and counts 1,445 tokens per image or sheet. Both lines above are real output for the 28.6-minute lecture (Qwen3.5-9B, 2026-10-28; the run wrote its file under `Reels/out/`): the bound was $0.0276 and the response reported $0.0082, with 65,852 input tokens against the 139,077 estimated, so the bound overestimates by about 2×. The 87 sheets and the transcript together billed 65,852 tokens, so a 2×2 sheet billed at most 757, well under 1,445.
 
 What is sent to the model: the sampled frames (448 px JPEGs, each preceded by its time) and the transcript as numbered segments. Every request carries `data_collection: deny` and `require_parameters: true`. The API key is read only from the environment, sent only as a header, and never printed or written.
 

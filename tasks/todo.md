@@ -66,7 +66,8 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/long-to-short-clipper.md](../d
 
 ## Task 9: Live run (needs the user's yes)
 
-- [ ] Qwen3.5-9B on the lecture: cost at most $0.02, at least 3 valid clips; the pop-up cut labelled; Muse 1.2 for comparison; rule pass rates in `docs/status.md`
+- [x] Qwen3.5-9B on the lecture, run 2026-10-28 with the user's yes: cost $0.0082 (under $0.02), rule results in `docs/status.md`
+- [ ] **Not met:** at least 3 valid clips (3 clips, none met every rule: the 9B model ignored the 30–60 s length); the pop-up cut labelled (the lecture's one cut got no label); Muse 1.2 not run (not requested)
 
 ### Checkpoint C
 - [ ] Criteria 1–4 and 6 verified, 5 verified or marked pending; audit run; reviewed with the user, merged into `main`, and this plan moved to `tasks/archive/long-to-short-clipper/`
