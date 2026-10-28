@@ -10,9 +10,34 @@ use crate::IMAGE_TOKEN_ESTIMATE;
 const SYSTEM_PROMPT: &str = include_str!("prompt.md");
 const REPLY_SCHEMA: &str = include_str!("reply_schema.json");
 
-/// The system prompt (the Component 3 rubric).
-pub fn system_prompt() -> &'static str {
+/// The system prompt (the Component 3 rubric). The length guidance is counted in
+/// segments, because a model can count IDs but cannot add up times over thousands of
+/// tokens: it uses this video's mean segment length (first start to last end over the
+/// number of segments, pauses included). With no usable segments it assumes 3 s.
+pub fn system_prompt(segments: &[Segment]) -> String {
+    let mean_s = mean_segment_seconds(segments);
+    let count = |seconds: f64| format!("{}", (seconds / mean_s).round().max(1.0));
     SYSTEM_PROMPT
+        .replace("{SEGMENT_SECONDS}", &format!("{mean_s:.1}"))
+        .replace("{SEGMENTS_AT_50S}", &count(50.0))
+        .replace(
+            "{SEGMENTS_AT_60S}",
+            &format!("{}", (60.0 / mean_s).floor().max(1.0)),
+        )
+        .replace("{PAYOFF_OFFSET}", &count(9.0))
+}
+
+fn mean_segment_seconds(segments: &[Segment]) -> f64 {
+    let (Some(first), Some(last)) = (segments.first(), segments.last()) else {
+        return 3.0;
+    };
+    let span_ms = last.end_ms.saturating_sub(first.start_ms);
+    let mean = span_ms as f64 / 1000.0 / segments.len() as f64;
+    if mean.is_finite() && mean >= 0.5 {
+        mean.min(30.0)
+    } else {
+        3.0
+    }
 }
 
 /// The strict JSON schema of the model's reply.
@@ -371,7 +396,47 @@ mod tests {
 
     #[test]
     fn the_system_prompt_is_not_empty() {
-        assert!(system_prompt().contains("segment"));
+        assert!(system_prompt(&[]).contains("segment"));
+    }
+
+    fn timed(count: u32, each_ms: u64) -> Vec<Segment> {
+        (0..count)
+            .map(|i| Segment {
+                id: i + 1,
+                start_ms: u64::from(i) * each_ms,
+                end_ms: u64::from(i + 1) * each_ms,
+                text: "word".into(),
+                ends_sentence: true,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_prompt_counts_the_length_limit_in_this_videos_segments() {
+        let prompt = system_prompt(&timed(100, 3_000));
+        assert!(prompt.contains("about 3.0 s each"), "{prompt}");
+        assert!(
+            prompt.contains("a 50 s span is about 17 segments"),
+            "{prompt}"
+        );
+        assert!(prompt.contains("never more than 20"), "{prompt}");
+        assert!(
+            prompt.contains("about 3 segments after start_segment"),
+            "{prompt}"
+        );
+        let long = system_prompt(&timed(100, 10_000));
+        assert!(long.contains("a 50 s span is about 5 segments"), "{long}");
+        assert!(long.contains("never more than 6"), "{long}");
+    }
+
+    #[test]
+    fn no_placeholder_survives_and_odd_input_falls_back_to_three_seconds() {
+        for segments in [timed(0, 0), timed(5, 0), timed(5, 100), timed(100, 3_000)] {
+            let prompt = system_prompt(&segments);
+            assert!(!prompt.contains('{'), "{prompt}");
+        }
+        assert!(system_prompt(&[]).contains("about 3.0 s each"));
+        assert!(system_prompt(&timed(5, 100)).contains("about 3.0 s each"));
     }
 
     // Labels and parts.
