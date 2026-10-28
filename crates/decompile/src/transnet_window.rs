@@ -121,7 +121,25 @@ pub(crate) fn predict(
         probabilities.extend_from_slice(&output[CONTEXT..CONTEXT + STRIDE]);
     }
     probabilities.truncate(count);
+    check_probabilities(&probabilities)?;
     Ok(probabilities)
+}
+
+/// Every probability must be a number from 0 to 1 (the graph ends in a sigmoid,
+/// which can reach exactly 0 or 1). A NaN would otherwise end a run of frames
+/// above the threshold without being one, and an infinity would become a cut's
+/// `scene_score`.
+fn check_probabilities(probabilities: &[f32]) -> Result<(), DecompileError> {
+    match probabilities
+        .iter()
+        .enumerate()
+        .find(|(_, value)| !(0.0..=1.0).contains(*value))
+    {
+        None => Ok(()),
+        Some((frame, value)) => Err(DecompileError::Message(format!(
+            "TransNetV2 gave {value:?} for frame {frame}; a transition probability is a number from 0 to 1"
+        ))),
+    }
 }
 
 /// A maximal stretch of frames above the threshold.
@@ -322,6 +340,76 @@ mod tests {
         .expect_err("model failed");
         assert_eq!(calls, 1);
         assert!(err.to_string().contains("model failed"));
+    }
+
+    /// A window function that answers 0.01 everywhere except `value` at output `at`.
+    fn with_value(at: usize, value: f32) -> impl FnMut(&[f32]) -> Result<Vec<f32>, DecompileError> {
+        move |_| {
+            let mut out = vec![0.01f32; WINDOW];
+            out[at] = value;
+            Ok(out)
+        }
+    }
+
+    #[test]
+    fn a_nan_in_the_middle_of_a_run_is_an_error_naming_the_frame() {
+        // Output 40 of the first window is the probability of frame 15.
+        let probs = vec![0.9f32; WINDOW];
+        let err = predict(&numbered(100), |_| {
+            let mut out = probs.clone();
+            out[40] = f32::NAN;
+            Ok(out)
+        })
+        .expect_err("NaN");
+        let text = err.to_string();
+        assert!(text.contains("NaN"), "{text}");
+        assert!(text.contains("frame 15"), "{text}");
+    }
+
+    #[test]
+    fn infinite_negative_and_too_large_probabilities_are_errors() {
+        for (value, word) in [
+            (f32::INFINITY, "inf"),
+            (f32::NEG_INFINITY, "-inf"),
+            (1e30, "1e30"),
+            (-0.01, "-0.01"),
+            (1.000_1, "1.0001"),
+        ] {
+            let err = predict(&numbered(100), with_value(30, value)).expect_err(word);
+            let text = err.to_string();
+            assert!(text.contains(word), "{word}: {text}");
+            assert!(text.contains("frame 5"), "{word}: {text}");
+            assert!(text.contains("0 to 1"), "{word}: {text}");
+        }
+    }
+
+    #[test]
+    fn an_all_nan_output_is_an_error_not_no_cuts() {
+        let err = predict(&numbered(120), |_| Ok(vec![f32::NAN; WINDOW])).expect_err("all NaN");
+        assert!(err.to_string().contains("NaN"), "{err}");
+    }
+
+    #[test]
+    fn probabilities_of_exactly_zero_and_one_are_valid() {
+        let out = predict(&numbered(100), |_| {
+            let mut out = vec![0.0f32; WINDOW];
+            out[40] = 1.0;
+            Ok(out)
+        })
+        .expect("0 and 1 are probabilities");
+        assert_eq!(out[15], 1.0);
+    }
+
+    #[test]
+    fn a_bad_value_outside_the_kept_part_of_a_window_is_ignored() {
+        // Outputs 0..25 and 75..100 are context the official code drops.
+        predict(&numbered(100), |_| {
+            let mut out = vec![0.0f32; WINDOW];
+            out[3] = f32::NAN;
+            out[90] = 7.0;
+            Ok(out)
+        })
+        .expect("context outputs are not read");
     }
 
     #[test]
