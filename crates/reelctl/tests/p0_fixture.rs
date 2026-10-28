@@ -1041,6 +1041,36 @@ fn transnet_without_the_onnx_runtime_library_fails_before_decoding() {
 }
 
 #[test]
+fn transnet_with_a_relative_library_path_exits_1_even_when_the_file_exists() {
+    let root = std::env::temp_dir().join(format!("reelctl-tn-rellib-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("temp dir");
+    let json = root.join("out.edit_dna.json");
+    // The working directory is the repository root, so this relative path names a real file.
+    let output = reelctl()
+        .current_dir(repo_root())
+        .args([
+            "decompile",
+            "--cut-detector",
+            "transnet",
+            "--transnet-weights",
+        ])
+        .arg(stand_in_weights())
+        .arg("--input")
+        .arg(root.join("no-such-video.mp4"))
+        .arg("--out")
+        .arg(&json)
+        .env("ORT_DYLIB_PATH", "Cargo.toml")
+        .output()
+        .expect("spawn reelctl");
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("absolute path"), "{stderr}");
+    assert!(!json.exists(), "nothing is written");
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
 fn transnet_without_weights_exits_1_and_says_how_to_pass_them() {
     let root = std::env::temp_dir().join(format!("reelctl-tn-noweights-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);

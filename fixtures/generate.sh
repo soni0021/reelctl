@@ -543,7 +543,7 @@ case "$cmd" in
     bench60_textured "${dir}/bench60_textured.mp4"
     ;;
   *)
-    echo "usage: generate.sh draft12|draft12_10bit|draft12_44k|textured_cuts12|textured_cuts12_hevc|textured_cuts12_hevc8|textured_cuts12_hevc_full|resize12_hevc|shrink12_hevc|depth12_hevc|outlier12|noisy12|quiet12|lecture70|bench60|motion12|still12|motion12_wide|bench60_textured|speech12|tonespeech|all [out.mp4]" >&2
+    echo "usage: generate.sh draft12|draft12_10bit|draft12_44k|textured_cuts12|dissolve12|textured_cuts12_hevc|textured_cuts12_hevc8|textured_cuts12_hevc_full|resize12_hevc|shrink12_hevc|depth12_hevc|outlier12|noisy12|quiet12|lecture70|bench60|motion12|still12|motion12_wide|bench60_textured|speech12|tonespeech|all [out.mp4]" >&2
     exit 2
     ;;
 esac
