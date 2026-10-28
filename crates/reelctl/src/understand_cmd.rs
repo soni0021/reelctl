@@ -296,6 +296,20 @@ pub fn understand(args: UnderstandArgs) -> Result<()> {
     if args.every_s == 0 {
         usage_error("--every-s must be at least 1".to_string());
     }
+    // Both are checked before the key, the catalog, or anything else that can touch the
+    // network: a DNA with nothing to segment or no length cannot make a useful request.
+    if dna.words.is_empty() {
+        usage_error(format!(
+            "{} has no words to segment; a transcript is needed",
+            args.dna.display()
+        ));
+    }
+    if dna.duration_ms == 0 {
+        usage_error(format!(
+            "{} has a duration of 0 ms; there is no video to understand",
+            args.dna.display()
+        ));
+    }
 
     // The key is needed only to call the model: not for --dry-run, and not for a replay.
     let calls_the_model = !args.dry_run && args.replay.is_none();
@@ -320,13 +334,8 @@ pub fn understand(args: UnderstandArgs) -> Result<()> {
         Some(path) => Box::new(read_json::<FixedCatalog>(path, "model catalog")?),
         None => Box::new(OpenRouterCatalog::default()),
     };
+    // `segment_words` gives at least one segment for any word, so the plan has segments.
     let plan = plan(&args, &dna, catalog.as_ref())?;
-    if plan.segments.is_empty() {
-        usage_error(format!(
-            "{} has no words to segment; a transcript is needed",
-            args.dna.display()
-        ));
-    }
 
     println!(
         "frames={} images={} sheet={} segments={} context_tokens={} input_tokens_estimate={} cost_upper_bound_usd={:.4} max_cost_usd={:.2}",

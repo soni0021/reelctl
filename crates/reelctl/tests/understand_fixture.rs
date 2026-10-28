@@ -408,10 +408,235 @@ fn the_api_key_never_appears_in_any_output() {
         .arg(&out)
         .arg("--catalog")
         .arg(&lecture.catalog)
+        // --replay keeps this run off the network even if the cap check were lost.
+        .args(["--replay", &lecture.replay.to_string_lossy()])
         .args(["--max-cost-usd", "0.0000001"])
         .output()
         .expect("spawn understand");
     assert_eq!(failed.status.code(), Some(4));
     assert!(!text(&failed.stderr).contains(DUMMY_KEY));
+    let _ = fs::remove_dir_all(&lecture.root);
+}
+
+/// Rewrites the lecture's edit DNA with `change` applied to its JSON.
+fn edit_dna(lecture: &Lecture, change: impl FnOnce(&mut Value)) {
+    let mut value: Value =
+        serde_json::from_slice(&fs::read(&lecture.dna).expect("dna")).expect("json");
+    change(&mut value);
+    fs::write(&lecture.dna, value.to_string()).expect("write");
+}
+
+/// A catalog path that does not exist: a run that reads it exits 1. A check that must
+/// come before the model listing is therefore shown by exit code 2, and no fetch of the
+/// public price listing can have happened first.
+fn missing_catalog(lecture: &Lecture) -> PathBuf {
+    lecture.root.join("no-such-catalog.json")
+}
+
+fn understand_with_catalog(lecture: &Lecture, out: &Path, catalog: &Path) -> Output {
+    reelctl()
+        .args(["understand", "--input"])
+        .arg(&lecture.video)
+        .arg("--dna")
+        .arg(&lecture.dna)
+        .arg("--out")
+        .arg(out)
+        .arg("--catalog")
+        .arg(catalog)
+        .args(["--replay", &lecture.replay.to_string_lossy()])
+        .output()
+        .expect("spawn understand")
+}
+
+#[test]
+fn an_every_s_of_zero_is_an_argument_error() {
+    let lecture = lecture("und-every0");
+    let out = lecture.root.join("understanding.json");
+    let output = understand(
+        &lecture,
+        &out,
+        &[
+            "--replay",
+            &lecture.replay.to_string_lossy(),
+            "--every-s",
+            "0",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(2), "{}", text(&output.stderr));
+    assert!(
+        text(&output.stderr).contains("--every-s"),
+        "{}",
+        text(&output.stderr)
+    );
+    assert!(!out.exists());
+    let _ = fs::remove_dir_all(&lecture.root);
+}
+
+#[test]
+fn a_transcript_with_no_words_is_an_argument_error_before_any_model_listing() {
+    let lecture = lecture("und-nowordlist");
+    edit_dna(&lecture, |value| {
+        value["words"] = json!([]);
+    });
+    let out = lecture.root.join("understanding.json");
+    let output = understand_with_catalog(&lecture, &out, &missing_catalog(&lecture));
+    assert_eq!(output.status.code(), Some(2), "{}", text(&output.stderr));
+    assert!(
+        text(&output.stderr).contains("no words"),
+        "{}",
+        text(&output.stderr)
+    );
+    assert!(!out.exists());
+    let _ = fs::remove_dir_all(&lecture.root);
+}
+
+#[test]
+fn a_dna_with_a_duration_of_zero_is_an_argument_error_before_any_model_listing() {
+    let lecture = lecture("und-dur0");
+    edit_dna(&lecture, |value| {
+        value["duration_ms"] = json!(0);
+    });
+    let out = lecture.root.join("understanding.json");
+    let output = understand_with_catalog(&lecture, &out, &missing_catalog(&lecture));
+    assert_eq!(output.status.code(), Some(2), "{}", text(&output.stderr));
+    assert!(
+        text(&output.stderr).contains("duration"),
+        "{}",
+        text(&output.stderr)
+    );
+    assert!(!out.exists());
+    let _ = fs::remove_dir_all(&lecture.root);
+}
+
+/// Checks `value` against the subset of JSON Schema that `understanding.schema.json`
+/// uses (`$ref` into `$defs`, `anyOf`, `type` as a name or a list, `required`,
+/// `properties`, `items`, `enum`, `minimum`, `maximum`). Nothing here knows about
+/// `Understanding`; the schema decides. Returns the first violation.
+fn validate(root: &Value, schema: &Value, value: &Value, path: &str) -> Result<(), String> {
+    if let Some(reference) = schema.get("$ref").and_then(Value::as_str) {
+        let name = reference
+            .strip_prefix("#/$defs/")
+            .ok_or_else(|| format!("{path}: unsupported $ref {reference}"))?;
+        let target = root
+            .get("$defs")
+            .and_then(|defs| defs.get(name))
+            .ok_or_else(|| format!("{path}: no definition {name}"))?;
+        return validate(root, target, value, path);
+    }
+    if let Some(options) = schema.get("anyOf").and_then(Value::as_array) {
+        let mut errors = Vec::new();
+        for option in options {
+            match validate(root, option, value, path) {
+                Ok(()) => return Ok(()),
+                Err(error) => errors.push(error),
+            }
+        }
+        return Err(format!(
+            "{path}: matches no anyOf option ({})",
+            errors.join("; ")
+        ));
+    }
+    if let Some(allowed) = schema.get("enum").and_then(Value::as_array) {
+        if !allowed.contains(value) {
+            return Err(format!("{path}: {value} is not in the enum"));
+        }
+    }
+    let names: Vec<&str> = match schema.get("type") {
+        Some(Value::String(name)) => vec![name.as_str()],
+        Some(Value::Array(list)) => list.iter().filter_map(Value::as_str).collect(),
+        _ => return Err(format!("{path}: the schema states no type")),
+    };
+    let matches = |name: &str| match name {
+        "null" => value.is_null(),
+        "boolean" => value.is_boolean(),
+        "string" => value.is_string(),
+        "integer" => value.is_i64() || value.is_u64(),
+        "number" => value.is_number(),
+        "array" => value.is_array(),
+        "object" => value.is_object(),
+        _ => false,
+    };
+    if !names.iter().any(|name| matches(name)) {
+        return Err(format!("{path}: {value} is not of type {names:?}"));
+    }
+    if let Some(number) = value.as_f64() {
+        if let Some(minimum) = schema.get("minimum").and_then(Value::as_f64) {
+            if number < minimum {
+                return Err(format!("{path}: {number} is below {minimum}"));
+            }
+        }
+        if let Some(maximum) = schema.get("maximum").and_then(Value::as_f64) {
+            if number > maximum {
+                return Err(format!("{path}: {number} is above {maximum}"));
+            }
+        }
+    }
+    if let Some(object) = value.as_object() {
+        for required in schema
+            .get("required")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
+            if !object.contains_key(required) {
+                return Err(format!("{path}: missing {required}"));
+            }
+        }
+        if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
+            for (key, child) in object {
+                if let Some(child_schema) = properties.get(key) {
+                    validate(root, child_schema, child, &format!("{path}.{key}"))?;
+                }
+            }
+        }
+    }
+    if let (Some(items), Some(item_schema)) = (value.as_array(), schema.get("items")) {
+        for (index, item) in items.iter().enumerate() {
+            validate(root, item_schema, item, &format!("{path}[{index}]"))?;
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn the_written_understanding_json_validates_against_the_committed_schema() {
+    let schema: Value = serde_json::from_slice(
+        &fs::read(repo_root().join("crates/understand/schema/understanding.schema.json"))
+            .expect("schema file"),
+    )
+    .expect("schema json");
+    let lecture = lecture("und-schema");
+    let out = lecture.root.join("understanding.json");
+    let output = understand(
+        &lecture,
+        &out,
+        &["--replay", &lecture.replay.to_string_lossy()],
+    );
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    let written: Value = serde_json::from_slice(&fs::read(&out).expect("output")).expect("json");
+    validate(&schema, &schema, &written, "$").expect("the written file follows the schema");
+
+    // Not vacuous: the file has content the schema constrains, and a corrupted copy fails.
+    assert!(written["clips"].as_array().is_some_and(|c| !c.is_empty()));
+    assert!(written["cuts"].as_array().is_some_and(|c| !c.is_empty()));
+    let mut missing_top = written.clone();
+    if let Some(object) = missing_top.as_object_mut() {
+        object.remove("model");
+    }
+    assert!(validate(&schema, &schema, &missing_top, "$")
+        .is_err_and(|error| error.contains("missing model")));
+    let mut missing_nested = written.clone();
+    if let Some(object) = missing_nested["clips"][0].as_object_mut() {
+        object.remove("title");
+    }
+    assert!(validate(&schema, &schema, &missing_nested, "$")
+        .is_err_and(|error| error.contains("$.clips[0]") && error.contains("missing title")));
+    let mut wrong_type = written.clone();
+    wrong_type["segments"][0]["start_ms"] = json!("soon");
+    assert!(validate(&schema, &schema, &wrong_type, "$").is_err());
+    let mut negative = written;
+    negative["segments"][0]["start_ms"] = json!(-1);
+    assert!(validate(&schema, &schema, &negative, "$").is_err());
     let _ = fs::remove_dir_all(&lecture.root);
 }
