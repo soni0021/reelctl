@@ -75,10 +75,6 @@ const GATE_RATIO: f32 = 0.85;
 /// A scale explains a change if its fit beats the plain difference by this
 /// factor.
 const BEST_RATIO: f32 = 0.6;
-/// The scale over the run plus its margins must be this share of the run's.
-const EXT_RATIO_MIN: f32 = 0.75;
-/// ...and at most this.
-const EXT_RATIO_MAX: f32 = 1.5;
 /// ln of the largest scale tried (1.25; its inverse is 0.80).
 const LN_MAX: f32 = 0.2232;
 const COARSE_LN: [f32; 12] = [
@@ -143,7 +139,6 @@ struct PendingMove {
     anchor_time: u64,
     end_index: u64,
     end_time: u64,
-    ln: f32,
     cx: f32,
     cy: f32,
     resolve_at: u64,
@@ -344,7 +339,6 @@ impl MotionDetector {
             anchor_time: burst.anchor_time,
             end_index,
             end_time,
-            ln: fit.ln,
             cx: fit.cx,
             cy: fit.cy,
             resolve_at: burst.last_time + EXT_MS,
@@ -420,10 +414,6 @@ impl MotionDetector {
         }
         let base = cost(&before.luma, &after.luma, geom, 0.0, centre, stride);
         if best.1 > BEST_RATIO * base {
-            return;
-        }
-        let ratio = best.0 / pending.ln;
-        if !(EXT_RATIO_MIN..=EXT_RATIO_MAX).contains(&ratio) {
             return;
         }
         let scale = f64::from(best.0).exp();
@@ -1863,7 +1853,7 @@ mod tests {
     fn low_contrast(frame: &[u8]) -> Vec<u8> {
         frame
             .iter()
-            .map(|v| (128 + (i16::from(*v) - 128) / 4) as u8)
+            .map(|v| (128 + (i16::from(*v) - 128) / 6) as u8)
             .collect()
     }
 
