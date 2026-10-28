@@ -6,7 +6,103 @@
 
 use edit_dna::SilenceGap;
 
-use crate::types::{Clip, ClipPick, Rejected, Segment};
+use crate::types::{Clip, ClipPick, Rejected, Segment, SegmentRef};
+use crate::{
+    CLIP_MAX_MS, CLIP_MIN_MS, DEAD_AIR_MS, END_PAUSE_INTO_MS, END_TAIL_MS, HOOK_BACKUP_MAX_MS,
+    PAYOFF_MAX_MS, PAYOFF_MIN_MS, START_LEAD_MS, START_PAUSE_REACH_MS,
+};
+
+/// The start of a flag for a clip that opens on a hook that is not at a sentence start.
+/// Callers may match on this prefix; the numbers follow it.
+pub const FLAG_STARTS_MID_SENTENCE: &str = "starts mid-sentence";
+
+/// The flag for a clip that opens on its hook because the hook's sentence starts
+/// `back_ms` before it, more than `HOOK_BACKUP_MAX_MS`.
+fn flag_starts_mid_sentence(back_ms: u64) -> String {
+    format!(
+        "{FLAG_STARTS_MID_SENTENCE}: its sentence begins {back_ms} ms before the hook, over the {HOOK_BACKUP_MAX_MS} ms limit"
+    )
+}
+
+/// The flag for a tight length under `CLIP_MIN_MS`; it names the tight and the raw length.
+fn flag_tight_under(tight_ms: u64, length_ms: u64) -> String {
+    format!(
+        "tight length {tight_ms} ms is under the {CLIP_MIN_MS} ms minimum (clip length {length_ms} ms)"
+    )
+}
+
+/// The flag for a tight length over `CLIP_MAX_MS`; it names the tight and the raw length.
+fn flag_tight_over(tight_ms: u64, length_ms: u64) -> String {
+    format!(
+        "tight length {tight_ms} ms is over the {CLIP_MAX_MS} ms maximum (clip length {length_ms} ms)"
+    )
+}
+
+/// The flag for a payoff that lands `at_ms` into the clip on tight time, outside
+/// `PAYOFF_MIN_MS..=PAYOFF_MAX_MS`.
+fn flag_payoff_window(at_ms: u64) -> String {
+    format!(
+        "payoff lands {at_ms} ms into the clip, outside {PAYOFF_MIN_MS}-{PAYOFF_MAX_MS} ms (tight time)"
+    )
+}
+
+/// The flag for a payoff segment that is not one of the clip's segments.
+fn flag_payoff_outside(payoff: u32, first: u32, last: u32) -> String {
+    format!("payoff segment {payoff} is outside the clip (segments {first}-{last})")
+}
+
+/// The flag for a clip that overlaps the higher-ranked clip `rank`, which spans
+/// `start_ms..end_ms`.
+fn flag_overlap(rank: u32, start_ms: u64, end_ms: u64) -> String {
+    format!("overlaps higher-ranked clip {rank} ({start_ms}-{end_ms} ms)")
+}
+
+/// "segment 4" or "segments 4-6".
+fn segment_span(first: u32, last: u32) -> String {
+    if first == last {
+        format!("segment {first}")
+    } else {
+        format!("segments {first}-{last}")
+    }
+}
+
+/// The adjustment for material the model put before the opening segment `opening`.
+fn adjust_dropped_before(first: u32, last: u32, ms: u64, opening: u32) -> String {
+    format!(
+        "dropped {} ({ms} ms) before segment {opening}",
+        segment_span(first, last)
+    )
+}
+
+/// The adjustment for a start the model put after the opening segment `opening`.
+fn adjust_moved_start(from: u32, opening: u32) -> String {
+    format!("moved the start back from segment {from} to segment {opening} to open on the hook")
+}
+
+/// The adjustment for material the model put after the cutoff.
+fn adjust_dropped_after(first: u32, last: u32) -> String {
+    format!("dropped {} after the cutoff", segment_span(first, last))
+}
+
+/// The adjustment for an end the model put before the cutoff.
+fn adjust_extended_to_cutoff(end: u32, cutoff: u32) -> String {
+    format!("extended the end from segment {end} to the cutoff, segment {cutoff}")
+}
+
+/// The reason for a pick naming a segment that does not exist.
+fn reason_missing(field: &str, id: u32, count: usize) -> String {
+    format!("{field} {id} is not a segment (the transcript has {count})")
+}
+
+/// The reason for a cutoff before the hook.
+fn reason_cutoff_before_hook(cutoff: u32, hook: u32) -> String {
+    format!("cutoff_segment {cutoff} is before hook_segment {hook}")
+}
+
+/// The reason for a start after the end.
+fn reason_start_after_end(start: u32, end: u32) -> String {
+    format!("start_segment {start} is after end_segment {end}")
+}
 
 /// The picks that became clips (in the model's order) and the ones that did not.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -18,16 +114,296 @@ pub struct ClipOutcome {
 /// Apply the clip rules to the model's picks. `picks[i]` has rank `i + 1`.
 ///
 /// `pauses` are the measured silence gaps of the video; `duration_ms` bounds the cut
-/// points. See the spec's "Clip rules" for the six rules.
+/// points. See the spec's "Clip rules" for the six rules. Decisions the spec leaves open:
+///
+/// - `segments` are in time order; a segment is found by its `id`, and "before" and
+///   "after" compare positions in `segments`.
+/// - `pauses` do not overlap one another.
+/// - All five IDs of a pick must exist, `payoff_segment` and `end_segment` included.
+/// - The model's `start_segment` never decides the start: the hook does. Segments the
+///   model put before the opening segment are dropped; a start after it is moved back.
+/// - `end_segment` never decides the end: the cutoff does. A later `end_segment` is
+///   dropped, an earlier one is extended to the cutoff. Both are recorded.
+/// - A payoff outside the clip's segments is flagged, not rejected; `payoff_at_ms` is
+///   then 0 (before the clip) or the tight length (after it).
+/// - Overlap compares the final cut points, and clips that only touch do not overlap.
+///   It is checked against kept clips only, so a rejected pick is not one to overlap.
 pub fn build_clips(
     picks: &[ClipPick],
     segments: &[Segment],
     pauses: &[SilenceGap],
     duration_ms: u64,
 ) -> ClipOutcome {
-    // Stub: the rules are built in their own task.
-    let _ = (picks, segments, pauses, duration_ms);
-    ClipOutcome::default()
+    let mut outcome = ClipOutcome::default();
+    for (rank, pick) in (1u32..).zip(picks) {
+        match plan_clip(rank, pick, segments, pauses, duration_ms, &outcome.clips) {
+            Ok(clip) => outcome.clips.push(clip),
+            Err(reason) => outcome.rejected.push(Rejected {
+                rank,
+                title: pick.title.clone(),
+                reason,
+            }),
+        }
+    }
+    outcome
+}
+
+/// A segment and its position in the transcript.
+#[derive(Clone, Copy)]
+struct At<'a> {
+    index: usize,
+    seg: &'a Segment,
+}
+
+/// The five segments a pick names.
+struct Located<'a> {
+    start: At<'a>,
+    end: At<'a>,
+    hook: At<'a>,
+    payoff: At<'a>,
+    cutoff: At<'a>,
+}
+
+/// Rule 1: find the pick's segments, or say why it is invalid. Nothing is repaired.
+fn locate<'a>(pick: &ClipPick, segments: &'a [Segment]) -> Result<Located<'a>, String> {
+    let find = |field: &str, id: u32| {
+        segments
+            .iter()
+            .enumerate()
+            .find(|(_, seg)| seg.id == id)
+            .map(|(index, seg)| At { index, seg })
+            .ok_or_else(|| reason_missing(field, id, segments.len()))
+    };
+    let located = Located {
+        start: find("start_segment", pick.start_segment)?,
+        end: find("end_segment", pick.end_segment)?,
+        hook: find("hook_segment", pick.hook_segment)?,
+        payoff: find("payoff_segment", pick.payoff_segment)?,
+        cutoff: find("cutoff_segment", pick.cutoff_segment)?,
+    };
+    if located.cutoff.index < located.hook.index {
+        return Err(reason_cutoff_before_hook(
+            pick.cutoff_segment,
+            pick.hook_segment,
+        ));
+    }
+    if located.start.index > located.end.index {
+        return Err(reason_start_after_end(pick.start_segment, pick.end_segment));
+    }
+    Ok(located)
+}
+
+/// Rule 2: the segment the clip opens on, and how far before the hook its sentence starts
+/// when that is too far (the clip then opens on the hook and is flagged).
+///
+/// A sentence starts at the first segment and after every segment with `ends_sentence`.
+fn open_on_hook<'a>(segments: &'a [Segment], hook: At<'a>) -> (At<'a>, Option<u64>) {
+    let mut sentence_start = hook;
+    while let Some(index) = sentence_start.index.checked_sub(1) {
+        match segments.get(index) {
+            Some(seg) if !seg.ends_sentence => sentence_start = At { index, seg },
+            _ => break,
+        }
+    }
+    let back_ms = hook
+        .seg
+        .start_ms
+        .saturating_sub(sentence_start.seg.start_ms);
+    if back_ms <= HOOK_BACKUP_MAX_MS {
+        (sentence_start, None)
+    } else {
+        (hook, Some(back_ms))
+    }
+}
+
+/// The length of a measured pause.
+fn pause_len(pause: &SilenceGap) -> u64 {
+    pause.end_ms.saturating_sub(pause.start_ms)
+}
+
+/// Rule 5, start: the end of the latest pause that lies between the previous segment and
+/// the first one and ends within `START_PAUSE_REACH_MS` before the first word; otherwise
+/// `START_LEAD_MS` before the first word. A pause that ends after the first word starts,
+/// or before the previous segment ends (speech lies between), is not a start.
+fn start_cut(first: &Segment, previous: Option<&Segment>, pauses: &[SilenceGap]) -> u64 {
+    let floor = previous.map_or(0, |seg| seg.end_ms);
+    let pause_end = pauses
+        .iter()
+        .map(|pause| pause.end_ms)
+        .filter(|&end| end <= first.start_ms && end >= floor)
+        .max();
+    match pause_end {
+        Some(end) if first.start_ms.saturating_sub(end) <= START_PAUSE_REACH_MS => end,
+        _ => first.start_ms.saturating_sub(START_LEAD_MS),
+    }
+}
+
+/// Rule 5, end: `END_PAUSE_INTO_MS` into the first pause that starts after the last word
+/// and before the next segment, or half the pause if that is shorter; otherwise
+/// `END_TAIL_MS` after the last word.
+fn end_cut(last: &Segment, next: Option<&Segment>, pauses: &[SilenceGap]) -> u64 {
+    let pause = pauses
+        .iter()
+        .filter(|pause| {
+            pause.start_ms >= last.end_ms && next.is_none_or(|seg| pause.start_ms < seg.start_ms)
+        })
+        .min_by_key(|pause| pause.start_ms);
+    match pause {
+        Some(pause) => pause
+            .start_ms
+            .saturating_add(END_PAUSE_INTO_MS.min(pause_len(pause) / 2)),
+        None => last.end_ms.saturating_add(END_TAIL_MS),
+    }
+}
+
+/// Rule 4: the pauses inside `start_ms..end_ms`, each clipped to that span, whose clipped
+/// length is at least `DEAD_AIR_MS`, in time order. The clipped length decides, so the
+/// 150 ms the clip ends into a long pause is never dead air.
+fn dead_air_in(pauses: &[SilenceGap], start_ms: u64, end_ms: u64) -> Vec<SilenceGap> {
+    let mut dead: Vec<SilenceGap> = pauses
+        .iter()
+        .filter_map(|pause| {
+            let from = pause.start_ms.max(start_ms);
+            let to = pause.end_ms.min(end_ms);
+            let duration_ms = to.saturating_sub(from);
+            (duration_ms >= DEAD_AIR_MS).then_some(SilenceGap {
+                start_ms: from,
+                end_ms: to,
+                duration_ms,
+            })
+        })
+        .collect();
+    dead.sort_by_key(|gap| gap.start_ms);
+    dead
+}
+
+/// The time of `at_ms` into a clip that starts at `start_ms`, once `dead_air` before it is cut.
+fn tight_offset(at_ms: u64, start_ms: u64, dead_air: &[SilenceGap]) -> u64 {
+    let cut: u64 = dead_air
+        .iter()
+        .map(|gap| gap.end_ms.min(at_ms).saturating_sub(gap.start_ms))
+        .sum();
+    at_ms.saturating_sub(start_ms).saturating_sub(cut)
+}
+
+/// What the rules changed about the clip's first and last segment.
+fn adjustments(segments: &[Segment], at: &Located, first: At) -> Vec<String> {
+    let mut changes = Vec::new();
+    match at.start.index.cmp(&first.index) {
+        std::cmp::Ordering::Less => {
+            let last_dropped = first
+                .index
+                .checked_sub(1)
+                .and_then(|index| segments.get(index))
+                .unwrap_or(at.start.seg);
+            changes.push(adjust_dropped_before(
+                at.start.seg.id,
+                last_dropped.id,
+                first.seg.start_ms.saturating_sub(at.start.seg.start_ms),
+                first.seg.id,
+            ));
+        }
+        std::cmp::Ordering::Greater => {
+            changes.push(adjust_moved_start(at.start.seg.id, first.seg.id));
+        }
+        std::cmp::Ordering::Equal => {}
+    }
+    match at.end.index.cmp(&at.cutoff.index) {
+        std::cmp::Ordering::Greater => {
+            let first_dropped = segments.get(at.cutoff.index + 1).unwrap_or(at.end.seg);
+            changes.push(adjust_dropped_after(first_dropped.id, at.end.seg.id));
+        }
+        std::cmp::Ordering::Less => {
+            changes.push(adjust_extended_to_cutoff(at.end.seg.id, at.cutoff.seg.id));
+        }
+        std::cmp::Ordering::Equal => {}
+    }
+    changes
+}
+
+/// Apply the rules to one pick. `kept` are the higher-ranked clips already built.
+fn plan_clip(
+    rank: u32,
+    pick: &ClipPick,
+    segments: &[Segment],
+    pauses: &[SilenceGap],
+    duration_ms: u64,
+    kept: &[Clip],
+) -> Result<Clip, String> {
+    let at = locate(pick, segments)?;
+    let (first, mid_sentence_ms) = open_on_hook(segments, at.hook);
+    let previous = first
+        .index
+        .checked_sub(1)
+        .and_then(|index| segments.get(index));
+    let next = segments.get(at.cutoff.index + 1);
+
+    let start_ms = start_cut(first.seg, previous, pauses).min(duration_ms);
+    let end_ms = end_cut(at.cutoff.seg, next, pauses).min(duration_ms);
+    let length_ms = end_ms.saturating_sub(start_ms);
+    let dead_air = dead_air_in(pauses, start_ms, end_ms);
+    let dead_ms: u64 = dead_air.iter().map(|gap| gap.duration_ms).sum();
+    let tight_length_ms = length_ms.saturating_sub(dead_ms);
+
+    let payoff_inside = (first.index..=at.cutoff.index).contains(&at.payoff.index);
+    let payoff_at_ms = if payoff_inside {
+        tight_offset(at.payoff.seg.start_ms, start_ms, &dead_air)
+    } else if at.payoff.index < first.index {
+        0
+    } else {
+        tight_length_ms
+    };
+
+    let mut flags = Vec::new();
+    if let Some(back_ms) = mid_sentence_ms {
+        flags.push(flag_starts_mid_sentence(back_ms));
+    }
+    if tight_length_ms < CLIP_MIN_MS {
+        flags.push(flag_tight_under(tight_length_ms, length_ms));
+    } else if tight_length_ms > CLIP_MAX_MS {
+        flags.push(flag_tight_over(tight_length_ms, length_ms));
+    }
+    if !payoff_inside {
+        flags.push(flag_payoff_outside(
+            at.payoff.seg.id,
+            first.seg.id,
+            at.cutoff.seg.id,
+        ));
+    } else if !(PAYOFF_MIN_MS..=PAYOFF_MAX_MS).contains(&payoff_at_ms) {
+        flags.push(flag_payoff_window(payoff_at_ms));
+    }
+    for higher in kept {
+        if start_ms < higher.end_ms && higher.start_ms < end_ms {
+            flags.push(flag_overlap(higher.rank, higher.start_ms, higher.end_ms));
+        }
+    }
+
+    Ok(Clip {
+        rank,
+        title: pick.title.clone(),
+        start_ms,
+        end_ms,
+        length_ms,
+        tight_length_ms,
+        dead_air,
+        hook: quote(at.hook.seg),
+        payoff: quote(at.payoff.seg),
+        last: quote(at.cutoff.seg),
+        payoff_at_ms,
+        open_loop: pick.open_loop.clone(),
+        visual_suggestion: pick.visual_suggestion.clone(),
+        why: pick.why.clone(),
+        adjustments: adjustments(segments, &at, first),
+        flags,
+    })
+}
+
+/// A segment's ID and its text, copied exactly.
+fn quote(seg: &Segment) -> SegmentRef {
+    SegmentRef {
+        id: seg.id,
+        text: seg.text.clone(),
+    }
 }
 
 #[cfg(test)]
@@ -465,6 +841,22 @@ mod tests {
     }
 
     #[test]
+    fn dead_air_is_clipped_to_the_clips_start_too() {
+        // A pause that ends after the first word starts is not a start, so the clip starts
+        // 100 ms before the word (at 900 ms) and only 200 ms of the pause lie inside it.
+        let segs = vec![seg(1, 1_000, 2_000, true), seg(2, 3_000, 4_000, true)];
+        let clip = one_clip(build_clips(
+            &[pick(1, 2, 1, 2, 2)],
+            &segs,
+            &[gap(500, 1_100)],
+            100_000,
+        ));
+        assert_eq!(clip.start_ms, 900);
+        assert_eq!(clip.dead_air, vec![gap(900, 1_100)]);
+        assert_eq!(clip.tight_length_ms, clip.length_ms - 200);
+    }
+
+    #[test]
     fn a_sliver_of_a_long_pause_under_180_ms_inside_the_span_is_not_dead_air() {
         let segs = vec![seg(1, 1_000, 2_000, true), seg(2, 3_000, 10_000, true)];
         let clip = one_clip(build_clips(
@@ -767,10 +1159,11 @@ mod tests {
     }
 
     #[test]
-    fn a_payoff_on_the_first_segment_is_at_zero_and_flagged() {
+    fn a_payoff_on_the_first_segment_lands_at_the_start_lead_and_is_flagged() {
         let segs = vec![seg(1, 1_000, 2_000, true), seg(2, 3_000, 4_000, true)];
         let clip = one_clip(build_clips(&[pick(1, 2, 1, 1, 2)], &segs, &[], 100_000));
-        assert_eq!(clip.payoff_at_ms, 0);
+        // The clip starts 100 ms before the first word.
+        assert_eq!(clip.payoff_at_ms, 100);
         assert!(has_flag(&clip, "payoff"));
     }
 
