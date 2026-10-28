@@ -12,6 +12,7 @@ use edit_dna::{BoundaryView, CutDetectorKind, EditDna, SCHEMA_VERSION};
 
 use crate::asr::{self, AsrEstimate};
 use crate::decode::{self, DecodedReel, DecoderSetting, RawBoundary, THUMB_H, THUMB_W};
+use crate::easing;
 use crate::error::DecompileError;
 use crate::histogram::aggregate;
 use crate::loudness::integrated_lufs;
@@ -183,7 +184,7 @@ fn assemble(
     );
     dna.schema_version = SCHEMA_VERSION;
     dna.frame_count = decoded.frames.len() as u64;
-    dna.visual_events = visual_events(&decoded.motion_events, &cuts);
+    (dna.visual_events, dna.zoom_curves) = visual_events_and_curves(&decoded.motion_events, &cuts);
     dna.cuts = cuts;
     dna.silence_gaps = silence.gaps;
     dna.silence_threshold_db = round2(silence.threshold_db);
@@ -286,19 +287,26 @@ fn duration_ms(duration: Duration) -> u64 {
     u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
-/// The measured events as `edit_dna.json` records. An event never lies on a frame that
-/// is also a resolved cut (the detector was told about the scene-score cuts; a different
-/// cut detector can disagree), and the list stays sorted by time.
-fn visual_events(
+/// The measured events as `edit_dna.json` records, and one easing curve for each
+/// punch-in or zoom-out. An event never lies on a frame that is also a resolved cut
+/// (the detector was told about the scene-score cuts; a different cut detector can
+/// disagree), and the list stays sorted by time; `event_index` of a curve points
+/// into the list as returned.
+fn visual_events_and_curves(
     events: &[crate::motion::DetectedEvent],
     cuts: &[edit_dna::Cut],
-) -> Vec<edit_dna::VisualEvent> {
+) -> (Vec<edit_dna::VisualEvent>, edit_dna::ZoomCurves) {
     use crate::motion::MotionKind;
     use edit_dna::VisualEventKind;
-    let mut out: Vec<edit_dna::VisualEvent> = events
+    let mut kept: Vec<&crate::motion::DetectedEvent> = events
         .iter()
         .filter(|event| !cuts.iter().any(|cut| cut.frame_index == event.frame_index))
-        .map(|event| edit_dna::VisualEvent {
+        .collect();
+    kept.sort_by_key(|event| (event.time_ms, event.frame_index));
+    let mut out = Vec::with_capacity(kept.len());
+    let mut curves = Vec::new();
+    for (index, event) in kept.into_iter().enumerate() {
+        out.push(edit_dna::VisualEvent {
             time_ms: event.time_ms,
             frame_index: event.frame_index,
             kind: match event.kind {
@@ -310,12 +318,164 @@ fn visual_events(
             center_x: event.center_x.map(round4),
             center_y: event.center_y.map(round4),
             area: event.area.map(round4),
-        })
-        .collect();
-    out.sort_by_key(|event| (event.time_ms, event.frame_index));
-    out
+        });
+        if event.kind != MotionKind::OverlayChange {
+            curves.push(zoom_curve(index, event));
+        }
+    }
+    (out, edit_dna::ZoomCurves::measured(curves))
+}
+
+/// The curve entry of one zoom move. A move with no measurable change in its
+/// track keeps the event's time and has no samples and no curve.
+fn zoom_curve(index: usize, event: &crate::motion::DetectedEvent) -> edit_dna::ZoomCurve {
+    let curve = easing::curve_from_track(&event.track);
+    edit_dna::ZoomCurve {
+        event_index: u32::try_from(index).unwrap_or(u32::MAX),
+        start_ms: curve.as_ref().map_or(event.time_ms, |c| c.start_ms),
+        end_ms: curve.as_ref().map_or(event.time_ms, |c| c.end_ms),
+        from_scale: 1.0,
+        to_scale: event.scale.map_or(1.0, round4),
+        bezier: curve.as_ref().and_then(|c| c.bezier).map(|b| b.map(round4)),
+        samples: curve
+            .as_ref()
+            .map_or(0, |c| u32::try_from(c.samples).unwrap_or(u32::MAX)),
+        fit_rms: curve.as_ref().and_then(|c| c.fit_rms).map(round4),
+    }
 }
 
 fn round4(value: f64) -> f64 {
     (value * 10_000.0).round() / 10_000.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::motion::{DetectedEvent, MotionKind, ScalePoint};
+
+    fn point(time_ms: u64, scale: f64) -> ScalePoint {
+        ScalePoint { time_ms, scale }
+    }
+
+    /// A zoom event at `frame` whose track runs from 1 to `total` over 12 frames
+    /// of a straight line, then holds for two.
+    fn zoom(kind: MotionKind, frame: u64, total: f64) -> DetectedEvent {
+        let mut track = vec![point(frame * 42 - 500, 1.0)];
+        for k in 1..=14u64 {
+            let share = (k.min(12)) as f64 / 12.0;
+            track.push(point(
+                frame * 42 - 500 + k * 42,
+                1.0 + (total - 1.0) * share,
+            ));
+        }
+        DetectedEvent {
+            time_ms: frame * 42,
+            frame_index: frame,
+            kind,
+            scale: Some(total),
+            center_x: Some(0.5),
+            center_y: Some(0.5),
+            area: None,
+            track,
+        }
+    }
+
+    fn overlay(frame: u64) -> DetectedEvent {
+        DetectedEvent {
+            time_ms: frame * 42,
+            frame_index: frame,
+            kind: MotionKind::OverlayChange,
+            scale: None,
+            center_x: None,
+            center_y: None,
+            area: Some(0.12),
+            track: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_curve_for_each_zoom_in_event_order_and_none_for_an_overlay() {
+        let events = vec![
+            zoom(MotionKind::ZoomOut, 300, 0.85),
+            overlay(200),
+            zoom(MotionKind::PunchIn, 100, 1.18),
+        ];
+        let (visual, curves) = visual_events_and_curves(&events, &[]);
+        assert_eq!(visual.len(), 3);
+        assert_eq!(curves.status, edit_dna::CurveStatus::Measured);
+        assert_eq!(curves.reason, "");
+        let indexes: Vec<u32> = curves.curves.iter().map(|c| c.event_index).collect();
+        assert_eq!(
+            indexes,
+            vec![0, 2],
+            "events sorted: punch-in, overlay, zoom-out"
+        );
+        assert_eq!(visual[0].kind, edit_dna::VisualEventKind::PunchIn);
+        assert_eq!(visual[2].kind, edit_dna::VisualEventKind::ZoomOut);
+        let first = &curves.curves[0];
+        assert_eq!((first.from_scale, first.to_scale), (1.0, 1.18));
+        assert_eq!(curves.curves[1].to_scale, 0.85);
+        let [x1, y1, x2, y2] = first.bezier.expect("a fit");
+        assert_eq!((x1, x2), (0.3333, 0.6667));
+        assert!(
+            (y1 - 1.0 / 3.0).abs() < 0.01 && (y2 - 2.0 / 3.0).abs() < 0.01,
+            "{y1} {y2}"
+        );
+        assert!(first.fit_rms.expect("rms") < 0.01);
+        assert!(first.samples >= 12);
+        assert!(first.start_ms < first.end_ms);
+    }
+
+    #[test]
+    fn an_event_on_a_cut_is_dropped_with_its_curve_and_indexes_follow() {
+        let events = vec![
+            zoom(MotionKind::PunchIn, 100, 1.18),
+            zoom(MotionKind::PunchIn, 200, 1.2),
+        ];
+        let cut = edit_dna::Cut {
+            frame_index: 100,
+            time_ms: 4_200,
+            interval_ms: 4_200,
+            scene_score: 0.9,
+        };
+        let (visual, curves) = visual_events_and_curves(&events, &[cut]);
+        assert_eq!(visual.len(), 1);
+        assert_eq!(visual[0].frame_index, 200);
+        assert_eq!(curves.curves.len(), 1);
+        assert_eq!(curves.curves[0].event_index, 0);
+        assert_eq!(curves.curves[0].to_scale, 1.2);
+    }
+
+    #[test]
+    fn no_events_gives_measured_curves_with_an_empty_list() {
+        let (visual, curves) = visual_events_and_curves(&[], &[]);
+        assert!(visual.is_empty());
+        assert_eq!(curves, edit_dna::ZoomCurves::measured(Vec::new()));
+    }
+
+    #[test]
+    fn a_snap_keeps_its_entry_with_a_null_curve() {
+        let mut snap = zoom(MotionKind::PunchIn, 100, 1.18);
+        snap.track = vec![point(3_700, 1.0), point(3_742, 1.18), point(3_784, 1.18)];
+        let (_, curves) = visual_events_and_curves(&[snap], &[]);
+        let entry = &curves.curves[0];
+        assert_eq!(
+            (entry.start_ms, entry.end_ms, entry.samples),
+            (3_700, 3_742, 2)
+        );
+        assert!(entry.bezier.is_none() && entry.fit_rms.is_none());
+    }
+
+    #[test]
+    fn a_zoom_with_no_track_keeps_its_entry_without_samples() {
+        let mut bare = zoom(MotionKind::PunchIn, 100, 1.18);
+        bare.track.clear();
+        let (_, curves) = visual_events_and_curves(&[bare], &[]);
+        let entry = &curves.curves[0];
+        assert_eq!(
+            (entry.start_ms, entry.end_ms, entry.samples),
+            (4_200, 4_200, 0)
+        );
+        assert!(entry.bezier.is_none() && entry.fit_rms.is_none());
+    }
 }

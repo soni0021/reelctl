@@ -99,6 +99,14 @@ pub(crate) enum MotionKind {
     OverlayChange,
 }
 
+/// The picture's scale at one frame of a move, relative to the anchor (the
+/// frame before the move, scale 1).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ScalePoint {
+    pub time_ms: u64,
+    pub scale: f64,
+}
+
 /// One event, ready to be mapped to the `edit_dna.json` type.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct DetectedEvent {
@@ -114,6 +122,10 @@ pub(crate) struct DetectedEvent {
     pub center_y: Option<f64>,
     /// The changed share of the frame for an overlay.
     pub area: Option<f64>,
+    /// For a punch-in or zoom-out: the scale at each frame from the anchor
+    /// (the frame before the move, scale 1) on, relative to the anchor, up to
+    /// the frame after which the picture no longer moves. Empty for an overlay.
+    pub track: Vec<ScalePoint>,
 }
 
 struct Frame {
@@ -143,6 +155,9 @@ struct PendingMove {
     end_time: u64,
     cx: f32,
     cy: f32,
+    /// The scale track covers the frames up to this time: the run's last
+    /// moving frame plus the baseline lag, after which the picture is still.
+    track_until: u64,
     resolve_at: u64,
 }
 
@@ -343,6 +358,7 @@ impl MotionDetector {
             end_time,
             cx: fit.cx,
             cy: fit.cy,
+            track_until: burst.last_time + BASE_MS,
             resolve_at: burst.last_time + EXT_MS,
         });
     }
@@ -424,6 +440,7 @@ impl MotionDetector {
         if (scale - 1.0).abs() < MIN_SCALE_DELTA {
             return;
         }
+        let track = self.scale_track(&pending, geom);
         self.events.push(DetectedEvent {
             time_ms: pending.end_time,
             frame_index: pending.end_index,
@@ -436,7 +453,50 @@ impl MotionDetector {
             center_x: Some(f64::from(pending.cx)),
             center_y: Some(f64::from(pending.cy)),
             area: None,
+            track,
         });
+    }
+
+    /// The scale of each frame from the anchor to `track_until`, against the
+    /// anchor, at the move's own centre. A move is a resolved event by now, so
+    /// this runs a few times per event and never on a still frame. Each frame
+    /// starts its search where the frames before it ended (a move is smooth),
+    /// so a frame costs about ten evaluations of `cost`.
+    fn scale_track(&self, pending: &PendingMove, geom: Geom) -> Vec<ScalePoint> {
+        let mut track = vec![ScalePoint {
+            time_ms: pending.anchor_time,
+            scale: 1.0,
+        }];
+        let Some(anchor_pos) = pos_of_index(&self.ring, pending.anchor_index) else {
+            return track;
+        };
+        let Some(anchor) = self.ring.get(anchor_pos) else {
+            return track;
+        };
+        let end_pos = pos_at_or_before(&self.ring, pending.track_until).unwrap_or(anchor_pos);
+        let stride = geom.fine_stride();
+        let centre = (pending.cx, pending.cy);
+        let (mut prev, mut prev2) = (0.0f32, 0.0f32);
+        for pos in anchor_pos + 1..=end_pos {
+            let Some(frame) = self.ring.get(pos) else {
+                break;
+            };
+            let seed = (2.0 * prev - prev2).clamp(-LN_MAX - 0.02, LN_MAX + 0.02);
+            let ln = track_ln(
+                &anchor.luma,
+                &frame.luma,
+                geom,
+                centre,
+                stride,
+                [prev, seed],
+            );
+            track.push(ScalePoint {
+                time_ms: frame.time_ms,
+                scale: f64::from(ln).exp(),
+            });
+            (prev2, prev) = (prev, ln);
+        }
+        track
     }
 
     // ---- overlay ----
@@ -562,6 +622,7 @@ impl MotionDetector {
             center_x: None,
             center_y: None,
             area: Some(area),
+            track: Vec::new(),
         });
     }
 }
@@ -877,6 +938,57 @@ fn fit_move(a: &[u8], b: &[u8], geom: Geom) -> Option<Fit> {
         }
     }
     Some(best)
+}
+
+/// Steps (ln) of the search that follows a move frame by frame, each repeated
+/// while it helps; the last is halved once more by the parabola through the
+/// three costs around the minimum.
+const TRACK_STEPS: [f32; 4] = [0.02, 0.01, 0.005, 0.0025];
+const TRACK_REPEATS: usize = 8;
+
+/// The ln scale of `b` against `a` at a fixed centre, found by descending from
+/// the best of `seeds`.
+fn track_ln(
+    a: &[u8],
+    b: &[u8],
+    geom: Geom,
+    centre: (f32, f32),
+    stride: usize,
+    seeds: [f32; 2],
+) -> f32 {
+    let limit = LN_MAX + 0.02;
+    let mut best = (seeds[0], cost(a, b, geom, seeds[0], centre, stride));
+    let c = cost(a, b, geom, seeds[1], centre, stride);
+    if c < best.1 {
+        best = (seeds[1], c);
+    }
+    for step in TRACK_STEPS {
+        for _ in 0..TRACK_REPEATS {
+            let mut next = best;
+            for ln in [best.0 - step, best.0 + step] {
+                let ln = ln.clamp(-limit, limit);
+                let c = cost(a, b, geom, ln, centre, stride);
+                if c < next.1 {
+                    next = (ln, c);
+                }
+            }
+            if next.0 == best.0 {
+                break;
+            }
+            best = next;
+        }
+    }
+    let step = TRACK_STEPS[TRACK_STEPS.len() - 1];
+    let left = cost(a, b, geom, best.0 - step, centre, stride);
+    let right = cost(a, b, geom, best.0 + step, centre, stride);
+    let curve = left - 2.0 * best.1 + right;
+    if curve > 1e-6 {
+        let offset = 0.5 * step * (left - right) / curve;
+        if offset.abs() <= step {
+            return best.0 + offset;
+        }
+    }
+    best.0
 }
 
 #[cfg(test)]
@@ -2043,5 +2155,115 @@ mod tests {
         let events = det.finish();
         assert_eq!(events.len(), 1, "{events:?}");
         assert_eq!(events[0].frame_index, 31);
+    }
+
+    // ---- the scale at each frame of a move ----
+
+    /// The planted scale (relative to the frame before the move) of the frame
+    /// at `index`, given the scales from `first` on.
+    fn planted_at(first: usize, scales: &[f32], from: f32, index: usize) -> f64 {
+        let s = if index < first {
+            from
+        } else {
+            scales
+                .get(index - first)
+                .or(scales.last())
+                .copied()
+                .unwrap_or(from)
+        };
+        f64::from(s / from)
+    }
+
+    fn assert_track(e: &DetectedEvent, first: usize, scales: &[f32], from: f32, tol: f64) {
+        assert!(e.track.len() >= 3, "track {:?}", e.track);
+        assert_eq!(e.track[0].scale, 1.0, "the anchor is scale 1");
+        assert!(e.track[0].time_ms < time_of(first), "{:?}", e.track[0]);
+        for pair in e.track.windows(2) {
+            assert!(pair[0].time_ms < pair[1].time_ms, "{:?}", e.track);
+        }
+        for point in &e.track[1..] {
+            let index = (0..first + scales.len() + 10)
+                .find(|i| time_of(*i) == point.time_ms)
+                .expect("a frame time");
+            let want = planted_at(first, scales, from, index);
+            assert!(
+                (point.scale - want).abs() <= tol,
+                "frame {index}: {} vs {want}\n{:?}",
+                point.scale,
+                e.track
+            );
+        }
+        let last = e.track.last().expect("last");
+        let end = planted_at(first, scales, from, first + scales.len() + 5);
+        assert!((last.scale - end).abs() <= tol, "{last:?} vs {end}");
+    }
+
+    #[test]
+    fn a_punch_in_event_carries_the_scale_at_each_frame_of_the_move() {
+        for (cols, rows) in SHAPES {
+            let scales = ease(1.0, 1.18, 6, true);
+            let clip = zoom_clip(cols, rows, 1.0, &scales, (0.5, 0.5), 30, 40);
+            let events = run(cols, rows, &clip);
+            let e = assert_one_move(&events, MotionKind::PunchIn, 1.18, (0.5, 0.5), 0.1);
+            assert_track(&e, 30, &scales, 1.0, 0.01);
+            // The planted smoothstep is there at its own frames.
+            assert!(
+                e.track.iter().any(|p| (p.scale - 1.086).abs() < 0.01),
+                "{:?}",
+                e.track
+            );
+        }
+    }
+
+    #[test]
+    fn a_zoom_out_event_carries_a_falling_track() {
+        let (cols, rows) = (160, 90);
+        let scales = ease(1.18, 1.0, 6, true);
+        let clip = zoom_clip(cols, rows, 1.18, &scales, (0.5, 0.5), 30, 40);
+        let events = run(cols, rows, &clip);
+        let e = assert_one_move(&events, MotionKind::ZoomOut, 1.0 / 1.18, (0.5, 0.5), 0.1);
+        assert_track(&e, 30, &scales, 1.18, 0.01);
+        assert!(e.track.last().expect("last").scale < 0.9);
+    }
+
+    #[test]
+    fn a_twelve_frame_cubic_move_keeps_its_shape_in_the_track() {
+        use crate::easing::progress_at;
+        let (cols, rows) = (160, 90);
+        for (y1, y2) in [(0.0, 0.3), (0.6, 1.0), (0.1, 1.4), (1.0 / 3.0, 2.0 / 3.0)] {
+            let scales: Vec<f32> = (1..=12)
+                .map(|k| 1.0 + 0.18 * progress_at(y1, y2, k as f64 / 12.0) as f32)
+                .collect();
+            let clip = zoom_clip(cols, rows, 1.0, &scales, (0.5, 0.5), 30, 40);
+            let events = run(cols, rows, &clip);
+            assert_eq!(events.len(), 1, "{y1} {y2}: {events:?}");
+            assert_track(&events[0], 30, &scales, 1.0, 0.012);
+        }
+    }
+
+    #[test]
+    fn a_one_frame_snap_jumps_in_its_track_at_its_frame() {
+        let (cols, rows) = (160, 90);
+        let clip = zoom_clip(cols, rows, 1.0, &[1.18], (0.5, 0.5), 30, 40);
+        let events = run(cols, rows, &clip);
+        let e = assert_one_move(&events, MotionKind::PunchIn, 1.18, (0.5, 0.5), 0.1);
+        // The anchor is a few frames before the jump, which is at frame 30.
+        assert_eq!(e.track[0].scale, 1.0);
+        let jump = e.track.iter().position(|p| p.scale > 1.05).expect("jump");
+        assert_eq!(e.track[jump].time_ms, time_of(30), "{:?}", e.track);
+        assert!(e.track[..jump].iter().all(|p| (p.scale - 1.0).abs() < 0.01));
+        assert!((e.track[jump].scale - 1.18).abs() < 0.012, "{:?}", e.track);
+    }
+
+    #[test]
+    fn an_overlay_event_has_no_track() {
+        let (cols, rows) = (160, 90);
+        let base = render(cols, rows, 1.0, 0.5, 0.5);
+        let blk = with_block(&base, &block_mask(cols, rows));
+        let mut clip = Clip::default();
+        clip.hold(&base, 30).hold(&blk, 50);
+        let events = run(cols, rows, &clip);
+        assert_eq!(events.len(), 1);
+        assert!(events[0].track.is_empty());
     }
 }

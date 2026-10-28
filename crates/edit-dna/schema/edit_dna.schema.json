@@ -8,6 +8,21 @@
       ],
       "type": "string"
     },
+    "CurveStatus": {
+      "description": "Whether [`ZoomCurves::curves`] was measured.",
+      "oneOf": [
+        {
+          "const": "measured",
+          "description": "The curves were fitted; an empty list means no zoom move was found.",
+          "type": "string"
+        },
+        {
+          "const": "unimplemented",
+          "description": "The file is from a version before 4, which did not fit curves.",
+          "type": "string"
+        }
+      ]
+    },
     "Cut": {
       "description": "A detected scene change. `interval_ms` is the time since the previous cut,\nor since the start of the reel for the first cut.",
       "properties": {
@@ -344,6 +359,99 @@
         "end_ms"
       ],
       "type": "object"
+    },
+    "ZoomCurve": {
+      "description": "The easing of one zoom move: `cubic-bezier(1/3, y1, 2/3, y2)` fitted to the\nscale measured at each frame of a [`VisualEvent`] of kind `punch_in` or\n`zoom_out`.",
+      "properties": {
+        "bezier": {
+          "description": "`[x1, y1, x2, y2]` with `x1 = 1/3` and `x2 = 2/3`; `y1` and `y2` lie in\n`-0.5..=1.5` (above 1 for an overshoot). `null` when too few frames were\nmeasured to fit one (a one-frame snap).",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "end_ms": {
+          "description": "The frame where the picture has reached its final scale. This can be a\nlittle later than the event's `time_ms`, which is the first frame within\nthe noise floor of the last one.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "event_index": {
+          "description": "Index into [`EditDna::visual_events`] of the move.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "fit_rms": {
+          "description": "Root mean square of the measured progress minus the curve, in units of\nprogress (0 at the start, 1 at the end). `null` when `bezier` is.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "from_scale": {
+          "description": "The scale at `start_ms`, relative to itself: always 1.",
+          "format": "double",
+          "type": "number"
+        },
+        "samples": {
+          "description": "Frames from `start_ms` to `end_ms`, both included.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "start_ms": {
+          "description": "The frame before the move (the anchor, or the last frame still within a\nhair of it), as measured.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "to_scale": {
+          "description": "The total factor of the move, as in the event's `scale`.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "event_index",
+        "start_ms",
+        "end_ms",
+        "from_scale",
+        "to_scale",
+        "samples"
+      ],
+      "type": "object"
+    },
+    "ZoomCurves": {
+      "description": "Easing curves of the zoom moves. Version 3 and earlier files hold the stub\nthey always had (`unimplemented`) and read with an empty list.",
+      "properties": {
+        "curves": {
+          "default": [],
+          "description": "One entry per `punch_in` or `zoom_out` in `visual_events`, in order.",
+          "items": {
+            "$ref": "#/$defs/ZoomCurve"
+          },
+          "type": "array"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/CurveStatus"
+        }
+      },
+      "required": [
+        "status",
+        "reason"
+      ],
+      "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -460,7 +568,12 @@
       "type": "number"
     },
     "zoom_curves": {
-      "$ref": "#/$defs/StubbedPass"
+      "$ref": "#/$defs/ZoomCurves",
+      "default": {
+        "curves": [],
+        "reason": "This file was written before zoom easing curves were measured (schema version 3 or earlier).",
+        "status": "unimplemented"
+      }
     }
   },
   "required": [
@@ -478,7 +591,6 @@
     "payoff_window",
     "signal_ms",
     "asr_ms",
-    "zoom_curves",
     "cube_lut",
     "cut_detector",
     "cut_detector_note",
