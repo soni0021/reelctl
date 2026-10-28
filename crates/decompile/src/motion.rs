@@ -32,44 +32,53 @@ const OTHER_FLOOR: f64 = 0.005;
 const LOOKBACK_MS: u64 = 250;
 /// The change must still be there this long after it was seen.
 const PERSIST_MS: u64 = 500;
-/// The last grids before the check must have settled this long.
+/// The block must already have been changed this long before the check...
 const STABLE_MS: u64 = 200;
-/// Cells of the block that may still move in that time.
-const STABLE_SHARE: f64 = 0.15;
+/// ...in at least this share of its cells (a block that jumps elsewhere inside
+/// the persistence time did not stay; what moves inside a card does not matter).
+const HOLD_SHARE: f64 = 0.7;
 /// A change that restores this share of the block to the grid from before
 /// the change window is a flash coming back, not a new overlay.
 const REVERT_SHARE: f64 = 0.7;
-/// The event is the first frame holding this share of the final change.
-const FULL_SHARE: f64 = 0.9;
+/// The event is the first frame holding this share of the final change (not
+/// more, because the final grid is chosen for being changed and a card that
+/// animates inside never repeats it).
+const FULL_SHARE: f64 = 0.75;
+/// The block must have been still before the comparison grid: no more than
+/// `QUIET_SHARE` of its cells may have moved by `QUIET_LEVEL` in the
+/// `QUIET_MS` before it. A fade that is not over, or a card that animates
+/// inside, is one change, not one every half second.
+const QUIET_MS: u64 = 150;
+const QUIET_LEVEL: u8 = 8;
+const QUIET_SHARE: f64 = 0.3;
 
 // ---- scale ----
-/// Mean absolute difference (luma levels) between consecutive grids above
-/// which a frame is moving and a scale may be fitted. Below it a frame costs
-/// one comparison.
+/// A frame is compared with the newest grid at least this old (three frames
+/// at 24 fps), so a move eased over a few frames shows up whatever the frame
+/// rate, and a slow drift does not.
+const BASE_MS: u64 = 125;
+/// Mean absolute difference (luma levels) to that grid above which a frame is
+/// moving and a scale may be fitted. Below it a frame costs one comparison.
 const SCALE_FLOOR: f32 = 1.5;
-/// A move must complete in this long: 12 frames at 24 fps plus rounding.
-const MAX_MOVE_MS: u64 = 510;
+/// A run of moving frames may last this long and still be a move: a move of
+/// 12 frames at 24 fps (0.5 s) plus the time the baseline lags behind it. A
+/// longer run is a drift, a gesture or a shaky camera.
+const MAX_RUN_MS: u64 = 600;
 /// A real move is still before and after it; this much time is checked on
 /// each side so a slow drift (which keeps going) is not an event.
 const EXT_MS: u64 = 250;
-/// A run's fitted scale must differ from 1 by at least this much in ln.
-const MIN_BURST_LN: f32 = 0.03;
 /// An event's scale must differ from 1 by at least this much.
 const MIN_SCALE_DELTA: f64 = 0.05;
 /// The best coarse fit must beat the plain difference by this factor to be
 /// refined (a cheap gate for a gesture or a flash).
 const GATE_RATIO: f32 = 0.85;
-/// The refined fit must beat the plain difference by this factor...
+/// A scale explains a change if its fit beats the plain difference by this
+/// factor.
 const BEST_RATIO: f32 = 0.6;
-/// ...and by this many luma levels.
-const MIN_GAIN: f32 = 1.0;
 /// The scale over the run plus its margins must be this share of the run's.
 const EXT_RATIO_MIN: f32 = 0.75;
 /// ...and at most this.
-const EXT_RATIO_MAX: f32 = 1.35;
-/// Each half of a run must carry at least this share of its ln scale, in the
-/// same direction: the scale agrees across the frames.
-const HALF_SHARE: f32 = 0.15;
+const EXT_RATIO_MAX: f32 = 1.5;
 /// ln of the largest scale tried (1.25; its inverse is 0.80).
 const LN_MAX: f32 = 0.2232;
 const COARSE_LN: [f32; 12] = [
@@ -119,11 +128,12 @@ struct Frame {
 /// the floor.
 #[derive(Clone, Copy)]
 struct Burst {
+    /// The grid the first moving frame was compared with: before the move.
     anchor_index: u64,
     anchor_time: u64,
+    first_time: u64,
     last_index: u64,
     last_time: u64,
-    steps: u32,
 }
 
 /// A move whose margins are still to be checked.
@@ -161,14 +171,11 @@ pub(crate) struct MotionDetector {
     ring: VecDeque<Frame>,
     spare: Vec<Vec<u8>>,
     burst: Option<Burst>,
-    /// Start and last time of a run that outlasted the longest move.
-    busy: Option<(u64, u64)>,
+    /// A run of moving frames has outlasted the longest move.
+    busy: bool,
     overlay: Option<PendingOverlay>,
     moves: Vec<PendingMove>,
     events: Vec<DetectedEvent>,
-    overlay_events: Vec<(u64, DetectedEvent)>,
-    /// Time spans in which a scale or a long run of motion explains changes.
-    spans: Vec<(u64, u64)>,
     scratch: Scratch,
 }
 
@@ -185,12 +192,10 @@ impl MotionDetector {
             ring: VecDeque::new(),
             spare: Vec::new(),
             burst: None,
-            busy: None,
+            busy: false,
             overlay: None,
             moves: Vec::new(),
             events: Vec::new(),
-            overlay_events: Vec::new(),
-            spans: Vec::new(),
             scratch: Scratch {
                 mask: Vec::new(),
                 stack: Vec::new(),
@@ -215,10 +220,12 @@ impl MotionDetector {
             return;
         };
         let time_ms = time_ms.max(prev.time_ms);
-        let (prev_index, prev_time) = (prev.index, prev.time_ms);
-        let diff = mean_abs_diff(luma, &prev.luma);
+        let base_pos = pos_at_or_before(&self.ring, time_ms.saturating_sub(BASE_MS)).unwrap_or(0);
+        let base = self.ring.get(base_pos).unwrap_or(prev);
+        let (base_index, base_time) = (base.index, base.time_ms);
+        let diff = mean_abs_diff(luma, &base.luma);
         self.store(frame_index, time_ms, luma);
-        self.track_burst(diff, prev_index, prev_time, frame_index, time_ms);
+        self.track_burst(diff, (base_index, base_time), frame_index, time_ms);
         self.resolve_due(time_ms);
         if self.overlay.is_none() {
             self.look_for_overlay(frame_index, time_ms);
@@ -230,16 +237,7 @@ impl MotionDetector {
     /// margins is judged on the frames there are.
     pub(crate) fn finish(mut self) -> Vec<DetectedEvent> {
         self.end_shot();
-        let spans = std::mem::take(&mut self.spans);
         let mut events = std::mem::take(&mut self.events);
-        for (cand_time, event) in std::mem::take(&mut self.overlay_events) {
-            let explained = spans
-                .iter()
-                .any(|(start, end)| cand_time >= *start && cand_time <= end + LOOKBACK_MS);
-            if !explained {
-                events.push(event);
-            }
-        }
         events.sort_by_key(|e| (e.time_ms, e.frame_index));
         events
     }
@@ -272,22 +270,13 @@ impl MotionDetector {
         if let Some(burst) = self.burst.take() {
             self.close_burst(burst);
         }
-        if let Some((start, end)) = self.busy.take() {
-            self.add_span(start, end);
-        }
+        self.busy = false;
         for pending in std::mem::take(&mut self.moves) {
             self.resolve_move(pending);
         }
         self.overlay = None;
         while let Some(old) = self.ring.pop_front() {
             self.spare.push(old.luma);
-        }
-    }
-
-    fn add_span(&mut self, start: u64, end: u64) {
-        match self.spans.last_mut() {
-            Some(last) if start <= last.1 + LOOKBACK_MS => last.1 = last.1.max(end),
-            _ => self.spans.push((start, end)),
         }
     }
 
@@ -312,40 +301,35 @@ impl MotionDetector {
 
     // ---- scale ----
 
-    fn track_burst(&mut self, diff: f32, prev_index: u64, prev_time: u64, index: u64, time: u64) {
+    fn track_burst(&mut self, diff: f32, anchor: (u64, u64), index: u64, time: u64) {
         if wants_fit(diff) {
             match self.burst {
                 Some(mut burst) => {
                     burst.last_index = index;
                     burst.last_time = time;
-                    burst.steps += 1;
-                    if time.saturating_sub(burst.anchor_time) > MAX_MOVE_MS {
+                    if time.saturating_sub(burst.first_time) > MAX_RUN_MS {
                         self.burst = None;
-                        self.busy = Some((burst.anchor_time, time));
+                        self.busy = true;
                     } else {
                         self.burst = Some(burst);
                     }
                 }
-                None => match self.busy {
-                    Some((start, _)) => self.busy = Some((start, time)),
-                    None => {
-                        self.burst = Some(Burst {
-                            anchor_index: prev_index,
-                            anchor_time: prev_time,
-                            last_index: index,
-                            last_time: time,
-                            steps: 1,
-                        });
-                    }
-                },
+                None if !self.busy => {
+                    self.burst = Some(Burst {
+                        anchor_index: anchor.0,
+                        anchor_time: anchor.1,
+                        first_time: time,
+                        last_index: index,
+                        last_time: time,
+                    });
+                }
+                None => {}
             }
         } else {
             if let Some(burst) = self.burst.take() {
                 self.close_burst(burst);
             }
-            if let Some((start, end)) = self.busy.take() {
-                self.add_span(start, end);
-            }
+            self.busy = false;
         }
     }
 
@@ -354,20 +338,40 @@ impl MotionDetector {
         let Some(fit) = self.fit_burst(&burst) else {
             return;
         };
-        self.add_span(burst.anchor_time, burst.last_time);
-        if fit.ln.abs() < MIN_BURST_LN {
-            return;
-        }
+        let (end_index, end_time) = self.settled(&burst);
         self.moves.push(PendingMove {
             anchor_index: burst.anchor_index,
             anchor_time: burst.anchor_time,
-            end_index: burst.last_index,
-            end_time: burst.last_time,
+            end_index,
+            end_time,
             ln: fit.ln,
             cx: fit.cx,
             cy: fit.cy,
             resolve_at: burst.last_time + EXT_MS,
         });
+    }
+
+    /// The first grid of the run that is within the floor of its last one:
+    /// the frame where the move is complete.
+    fn settled(&self, burst: &Burst) -> (u64, u64) {
+        let last = (burst.last_index, burst.last_time);
+        let (Some(from), Some(to)) = (
+            pos_of_index(&self.ring, burst.anchor_index),
+            pos_of_index(&self.ring, burst.last_index),
+        ) else {
+            return last;
+        };
+        let Some(end) = self.ring.get(to) else {
+            return last;
+        };
+        for pos in from + 1..to {
+            if let Some(frame) = self.ring.get(pos) {
+                if !wants_fit(mean_abs_diff(&frame.luma, &end.luma)) {
+                    return (frame.index, frame.time_ms);
+                }
+            }
+        }
+        last
     }
 
     fn fit_burst(&self, burst: &Burst) -> Option<Fit> {
@@ -379,26 +383,7 @@ impl MotionDetector {
             cols: self.cols,
             rows: self.rows,
         };
-        let fit = fit_move(&a.luma, &b.luma, geom)?;
-        if burst.steps >= 2 {
-            let mid_time = (burst.anchor_time + burst.last_time) / 2;
-            let mid = self
-                .ring
-                .get(pos_at_or_before(&self.ring, mid_time)?)
-                .filter(|m| m.index != a.index && m.index != b.index);
-            if let Some(mid) = mid {
-                let stride = geom.coarse_stride();
-                let first = scan_scale(&a.luma, &mid.luma, geom, (fit.cx, fit.cy), stride, 0.005);
-                let second = scan_scale(&mid.luma, &b.luma, geom, (fit.cx, fit.cy), stride, 0.005);
-                let want = fit.ln.signum();
-                let least = HALF_SHARE * fit.ln.abs();
-                let agrees = |half: f32| half * want > 0.0 && half.abs() >= least;
-                if !agrees(first.0) || !agrees(second.0) {
-                    return None;
-                }
-            }
-        }
-        Some(fit)
+        fit_move(&a.luma, &b.luma, geom)
     }
 
     /// A move's margins are in: the picture must be still before and after.
@@ -434,7 +419,7 @@ impl MotionDetector {
             }
         }
         let base = cost(&before.luma, &after.luma, geom, 0.0, centre, stride);
-        if best.1 > BEST_RATIO * base || base - best.1 < MIN_GAIN {
+        if best.1 > BEST_RATIO * base {
             return;
         }
         let ratio = best.0 / pending.ln;
@@ -472,7 +457,7 @@ impl MotionDetector {
         let Some(reference) = self.ring.get(pos) else {
             return;
         };
-        if reference.index == cur.index || time < LOOKBACK_MS {
+        if reference.index == cur.index {
             return;
         }
         let changed = count_changed(&cur.luma, &reference.luma) as f64;
@@ -522,18 +507,27 @@ impl MotionDetector {
         if size / bbox < MIN_FILL {
             return;
         }
-        // Settled: the last grids before the check no longer move the block.
-        let settled_pos = pos_at_or_before(&self.ring, now.time_ms.saturating_sub(STABLE_MS))
+        // Held: the block was already changed a little before the check.
+        let held_pos = pos_at_or_before(&self.ring, now.time_ms.saturating_sub(STABLE_MS))
             .unwrap_or(self.ring.len() - 1);
-        let Some(settled) = self.ring.get(settled_pos) else {
+        let Some(held) = self.ring.get(held_pos) else {
             return;
         };
-        let moved_in_block = changed_in_block(&self.scratch.mask, &now.luma, &settled.luma);
-        let moved_total = count_changed(&now.luma, &settled.luma) as f64;
-        if moved_in_block as f64 > STABLE_SHARE * size
-            || moved_total > OTHER_SHARE * size + OTHER_FLOOR * cells
-        {
+        let held_cells = changed_in_block(&self.scratch.mask, &held.luma, &reference.luma);
+        if (held_cells as f64) < HOLD_SHARE * size {
             return;
+        }
+        // Still before: the block was not already changing in the comparison
+        // grid.
+        let quiet_time = reference.time_ms.saturating_sub(QUIET_MS);
+        if let Some(quiet) = pos_at_or_before(&self.ring, quiet_time)
+            .filter(|p| *p != reference_pos)
+            .and_then(|p| self.ring.get(p))
+        {
+            let moving = moved_in_block(&self.scratch.mask, &reference.luma, &quiet.luma);
+            if moving as f64 > QUIET_SHARE * size {
+                return;
+            }
         }
         // A flash coming back: the block now looks like the grid from before
         // the change window.
@@ -566,18 +560,27 @@ impl MotionDetector {
         let Some(frame) = self.ring.get(at) else {
             return;
         };
-        self.overlay_events.push((
-            pending.cand_time,
-            DetectedEvent {
-                time_ms: frame.time_ms,
-                frame_index: frame.index,
-                kind: MotionKind::OverlayChange,
-                scale: None,
-                center_x: None,
-                center_y: None,
-                area: Some(area),
-            },
-        ));
+        let event = DetectedEvent {
+            time_ms: frame.time_ms,
+            frame_index: frame.index,
+            kind: MotionKind::OverlayChange,
+            scale: None,
+            center_x: None,
+            center_y: None,
+            area: Some(area),
+        };
+        // Last, because it costs a fit: a change a scale explains (a punch-in
+        // over a mostly flat scene) is not an overlay.
+        let geom = Geom {
+            cols: self.cols,
+            rows: self.rows,
+        };
+        if let Some(fit) = fit_move(&reference.luma, &now.luma, geom) {
+            if fit.cost <= BEST_RATIO * fit.base {
+                return;
+            }
+        }
+        self.events.push(event);
     }
 }
 
@@ -701,6 +704,13 @@ fn changed_in_block(mask: &[u8], a: &[u8], b: &[u8]) -> usize {
         .count()
 }
 
+fn moved_in_block(mask: &[u8], a: &[u8], b: &[u8]) -> usize {
+    mask.iter()
+        .zip(a.iter().zip(b))
+        .filter(|(m, (x, y))| **m == 3 && x.abs_diff(**y) >= QUIET_LEVEL)
+        .count()
+}
+
 fn same_in_block(mask: &[u8], a: &[u8], b: &[u8]) -> usize {
     mask.iter()
         .zip(a.iter().zip(b))
@@ -751,7 +761,17 @@ struct Fit {
     ln: f32,
     cx: f32,
     cy: f32,
+    /// The mean difference at this scale and centre...
     cost: f32,
+    /// ...and with no scale at all, over the same samples.
+    base: f32,
+}
+
+/// Times the pattern search ran (tests check that the cheap gate keeps it off
+/// motion that is no scale).
+#[cfg(test)]
+thread_local! {
+    static REFINES: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
 /// Mean absolute difference between `b` and `a` magnified by `exp(ln)` about
@@ -811,19 +831,18 @@ fn scan_scale(
 }
 
 /// Fits a scale and its fixed point between two grids: a coarse search over
-/// scales and nine centres, a gate, then a pattern search. `None` unless the
-/// scale clearly explains the difference.
+/// scales and nine centres, a gate (`None` if no scale comes close to
+/// explaining the difference), then a pattern search. The caller judges the
+/// refined fit against `BEST_RATIO`.
 fn fit_move(a: &[u8], b: &[u8], geom: Geom) -> Option<Fit> {
     let coarse = geom.coarse_stride();
     let base_coarse = cost(a, b, geom, 0.0, (0.5, 0.5), coarse);
-    if base_coarse < MIN_GAIN {
-        return None;
-    }
     let mut best = Fit {
         ln: 0.0,
         cx: 0.5,
         cy: 0.5,
         cost: base_coarse,
+        base: base_coarse,
     };
     for ln in COARSE_LN {
         for cy in [0.0f32, 0.5, 1.0] {
@@ -835,6 +854,7 @@ fn fit_move(a: &[u8], b: &[u8], geom: Geom) -> Option<Fit> {
                         cx,
                         cy,
                         cost: c,
+                        base: base_coarse,
                     };
                 }
             }
@@ -843,8 +863,10 @@ fn fit_move(a: &[u8], b: &[u8], geom: Geom) -> Option<Fit> {
     if best.cost > GATE_RATIO * base_coarse {
         return None;
     }
+    #[cfg(test)]
+    REFINES.with(|n| n.set(n.get() + 1));
     let fine = geom.fine_stride();
-    let base = cost(a, b, geom, 0.0, (0.5, 0.5), fine);
+    best.base = cost(a, b, geom, 0.0, (0.5, 0.5), fine);
     best.cost = cost(a, b, geom, best.ln, (best.cx, best.cy), fine);
     for (d_ln, d_c) in REFINE {
         for _ in 0..2 {
@@ -865,6 +887,7 @@ fn fit_move(a: &[u8], b: &[u8], geom: Geom) -> Option<Fit> {
                                 cx,
                                 cy,
                                 cost: c,
+                                base: best.base,
                             };
                         }
                     }
@@ -877,9 +900,6 @@ fn fit_move(a: &[u8], b: &[u8], geom: Geom) -> Option<Fit> {
             }
         }
     }
-    if best.cost > BEST_RATIO * base || base - best.cost < MIN_GAIN {
-        return None;
-    }
     Some(best)
 }
 
@@ -889,7 +909,9 @@ mod tests {
 
     const SHAPES: [(usize, usize); 2] = [(160, 90), (180, 91)];
     const FPS: u64 = 24;
-    const LEVEL_FOR_TESTS: u8 = 24;
+
+    // The blocks below move cells by 100 levels, far above `LEVEL`.
+    const _: () = assert!(LEVEL < 100);
 
     // ---- synthetic grids ----
 
@@ -1018,16 +1040,66 @@ mod tests {
         }
     }
 
+    fn time_at(i: usize, fps: u64) -> u64 {
+        (i as u64 * 1000 + fps / 2) / fps
+    }
+
     fn time_of(i: usize) -> u64 {
-        (i as u64 * 1000 + FPS / 2) / FPS
+        time_at(i, FPS)
+    }
+
+    fn run_at(cols: usize, rows: usize, clip: &Clip, fps: u64) -> Vec<DetectedEvent> {
+        let mut det = MotionDetector::new(cols, rows);
+        for (i, frame) in clip.frames.iter().enumerate() {
+            det.push(i as u64, time_at(i, fps), frame, clip.cuts.contains(&i));
+        }
+        det.finish()
     }
 
     fn run(cols: usize, rows: usize, clip: &Clip) -> Vec<DetectedEvent> {
-        let mut det = MotionDetector::new(cols, rows);
-        for (i, frame) in clip.frames.iter().enumerate() {
-            det.push(i as u64, time_of(i), frame, clip.cuts.contains(&i));
+        run_at(cols, rows, clip, FPS)
+    }
+
+    /// Cells in the mask move `delta` levels away from the middle grey.
+    fn with_delta(base: &[u8], mask: &[bool], delta: u8) -> Vec<u8> {
+        base.iter()
+            .zip(mask)
+            .map(|(v, m)| match (*m, *v < 128) {
+                (false, _) => *v,
+                (true, true) => v.saturating_add(delta),
+                (true, false) => v.saturating_sub(delta),
+            })
+            .collect()
+    }
+
+    /// A flat grey scene with a textured subject in the middle, seen at `scale`.
+    fn render_subject(cols: usize, rows: usize, scale: f32) -> Vec<u8> {
+        let mut out = Vec::with_capacity(cols * rows);
+        for y in 0..rows {
+            let v = y as f32 / (rows - 1) as f32;
+            for x in 0..cols {
+                let u = x as f32 / (cols - 1) as f32;
+                let (su, sv) = (0.5 + (u - 0.5) / scale, 0.5 + (v - 0.5) / scale);
+                let inside = (0.35..0.65).contains(&su) && (0.3..0.7).contains(&sv);
+                out.push(if inside { texture(su, sv) as u8 } else { 128 });
+            }
         }
-        det.finish()
+        out
+    }
+
+    /// Cells of `mask` set to a new pseudo-random value on every call.
+    fn with_animation(base: &[u8], mask: &[bool], seed: u32) -> Vec<u8> {
+        base.iter()
+            .zip(mask)
+            .enumerate()
+            .map(|(i, (v, m))| {
+                if *m {
+                    (hash(i as i32, seed as i32, 5) * 255.0) as u8
+                } else {
+                    *v
+                }
+            })
+            .collect()
     }
 
     /// Frames of `scales` (a lead of `from` before, the last scale held after).
@@ -1112,6 +1184,198 @@ mod tests {
             let want = count(&mask) as f64 / (cols * rows) as f64;
             let got = e.area.expect("area");
             assert!((got - want).abs() < 0.005, "area {got} vs {want}");
+        }
+    }
+
+    #[test]
+    fn a_block_on_busy_footage_is_still_one_overlay() {
+        // Noise of +-3 keeps every frame above the scale floor, so no scale is
+        // ever fitted; overlays must not depend on that.
+        for (cols, rows) in SHAPES {
+            let base = render(cols, rows, 1.0, 0.5, 0.5);
+            let blk = with_block(&base, &block_mask(cols, rows));
+            let mut clip = Clip::default();
+            for i in 0..80 {
+                let src = if i < 30 { &base } else { &blk };
+                clip.one(noisy(src, i as u32, 3));
+            }
+            let events = run(cols, rows, &clip);
+            assert_eq!(events.len(), 1, "{cols}x{rows}: {events:?}");
+            assert_eq!(events[0].kind, MotionKind::OverlayChange);
+            assert_eq!(events[0].frame_index, 30);
+        }
+    }
+
+    #[test]
+    fn the_level_separates_a_caption_from_a_faint_shadow() {
+        let (cols, rows) = (160, 90);
+        let base = render(cols, rows, 1.0, 0.5, 0.5);
+        let mask = block_mask(cols, rows);
+        let mut faint = Clip::default();
+        faint
+            .hold(&base, 30)
+            .hold(&with_delta(&base, &mask, 15), 50);
+        assert!(run(cols, rows, &faint).is_empty());
+        let mut medium = Clip::default();
+        medium
+            .hold(&base, 30)
+            .hold(&with_delta(&base, &mask, 40), 50);
+        let events = run(cols, rows, &medium);
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert_eq!(events[0].frame_index, 30);
+    }
+
+    #[test]
+    fn the_area_range_runs_from_two_percent_to_a_third() {
+        for (cols, rows) in SHAPES {
+            let base = render(cols, rows, 1.0, 0.5, 0.5);
+            for (x0, y0, x1, y1) in [(0.6, 0.6, 0.74, 0.74), (0.1, 0.1, 0.7, 0.68)] {
+                let mask = rect(cols, rows, x0, y0, x1, y1);
+                let mut clip = Clip::default();
+                clip.hold(&base, 30).hold(&with_block(&base, &mask), 50);
+                let events = run(cols, rows, &clip);
+                assert_eq!(events.len(), 1, "{cols}x{rows} {x0}: {events:?}");
+                let want = count(&mask) as f64 / (cols * rows) as f64;
+                assert!((events[0].area.expect("area") - want).abs() < 0.005);
+            }
+        }
+    }
+
+    /// Single changed cells every `step` cells, away from any block.
+    fn strays(cols: usize, rows: usize, step: usize) -> Vec<bool> {
+        let mut mask = vec![false; cols * rows];
+        for y in (0..rows).step_by(step) {
+            for x in (0..cols).step_by(step) {
+                mask[y * cols + x] = true;
+            }
+        }
+        mask
+    }
+
+    fn union(a: &[bool], b: &[bool]) -> Vec<bool> {
+        a.iter().zip(b).map(|(x, y)| *x || *y).collect()
+    }
+
+    #[test]
+    fn a_few_stray_cells_do_not_spoil_a_block() {
+        let (cols, rows) = (160, 90);
+        let base = render(cols, rows, 1.0, 0.5, 0.5);
+        // About 1.6% of the frame strays beside a 7.5% block...
+        let big = union(&block_mask(cols, rows), &strays(cols, rows, 8));
+        let mut clip = Clip::default();
+        clip.hold(&base, 30).hold(&with_block(&base, &big), 50);
+        let events = run(cols, rows, &clip);
+        assert_eq!(events.len(), 1, "{events:?}");
+        // ...and 0.8% beside a 2% block.
+        let small_block = rect(cols, rows, 0.6, 0.6, 0.74, 0.74);
+        let small = union(&small_block, &strays(cols, rows, 11));
+        let mut clip = Clip::default();
+        clip.hold(&base, 30).hold(&with_block(&base, &small), 50);
+        let events = run(cols, rows, &clip);
+        assert_eq!(events.len(), 1, "{events:?}");
+    }
+
+    #[test]
+    fn a_block_under_one_percent_with_strays_is_no_overlay() {
+        let (cols, rows) = (160, 90);
+        let base = render(cols, rows, 1.0, 0.5, 0.5);
+        let tiny = rect(cols, rows, 0.6, 0.6, 0.7, 0.68);
+        let mask = union(&tiny, &strays(cols, rows, 16));
+        let mut clip = Clip::default();
+        clip.hold(&base, 30).hold(&with_block(&base, &mask), 50);
+        let events = run(cols, rows, &clip);
+        assert!(events.is_empty(), "{events:?}");
+    }
+
+    #[test]
+    fn a_slow_fade_over_half_a_second_is_still_an_overlay() {
+        for (cols, rows) in SHAPES {
+            let base = render(cols, rows, 1.0, 0.5, 0.5);
+            let blk = with_block(&base, &block_mask(cols, rows));
+            let mut clip = Clip::default();
+            clip.hold(&base, 30);
+            for k in 1..=12 {
+                clip.one(blend(&base, &blk, k as f32 / 12.0));
+            }
+            clip.hold(&blk, 50);
+            let events = run(cols, rows, &clip);
+            assert_eq!(events.len(), 1, "{cols}x{rows}: {events:?}");
+            assert!(
+                (38..=42).contains(&events[0].frame_index),
+                "frame {}",
+                events[0].frame_index
+            );
+        }
+    }
+
+    #[test]
+    fn a_noisy_fade_still_lands_on_the_end_of_the_fade() {
+        let (cols, rows) = (160, 90);
+        let base = render(cols, rows, 1.0, 0.5, 0.5);
+        let blk = with_block(&base, &block_mask(cols, rows));
+        let mut clip = Clip::default();
+        for i in 0..30 {
+            clip.one(noisy(&base, i, 1));
+        }
+        for k in 1..=6 {
+            clip.one(noisy(&blend(&base, &blk, k as f32 / 6.0), 30 + k, 1));
+        }
+        for i in 0..50 {
+            clip.one(noisy(&blk, 40 + i, 1));
+        }
+        let events = run(cols, rows, &clip);
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert!(
+            (34..=36).contains(&events[0].frame_index),
+            "frame {}",
+            events[0].frame_index
+        );
+    }
+
+    #[test]
+    fn a_block_that_jumps_elsewhere_inside_the_persistence_time_is_no_event() {
+        let (cols, rows) = (160, 90);
+        let base = render(cols, rows, 1.0, 0.5, 0.5);
+        let first = with_block(&base, &rect(cols, rows, 0.55, 0.55, 0.80, 0.85));
+        let second = with_block(&base, &rect(cols, rows, 0.10, 0.10, 0.35, 0.40));
+        let mut clip = Clip::default();
+        clip.hold(&base, 30).hold(&first, 10).hold(&second, 60);
+        let events = run(cols, rows, &clip);
+        assert!(events.is_empty(), "{events:?}");
+    }
+
+    #[test]
+    fn a_card_that_animates_inside_is_one_overlay() {
+        let (cols, rows) = (160, 90);
+        let base = render(cols, rows, 1.0, 0.5, 0.5);
+        let mask = block_mask(cols, rows);
+        let mut clip = Clip::default();
+        clip.hold(&base, 30);
+        for i in 0..60 {
+            clip.one(with_animation(&base, &mask, i));
+        }
+        let events = run(cols, rows, &clip);
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert_eq!(events[0].kind, MotionKind::OverlayChange);
+        assert!(
+            (30..=33).contains(&events[0].frame_index),
+            "frame {}",
+            events[0].frame_index
+        );
+    }
+
+    #[test]
+    fn a_punch_in_over_a_flat_scene_is_not_also_an_overlay() {
+        for (cols, rows) in SHAPES {
+            let mut clip = Clip::default();
+            clip.hold(&render_subject(cols, rows, 1.0), 30);
+            for s in ease(1.0, 1.18, 6, true) {
+                clip.one(render_subject(cols, rows, s));
+            }
+            clip.hold(&render_subject(cols, rows, 1.18), 40);
+            let events = run(cols, rows, &clip);
+            assert_eq!(events.len(), 1, "{cols}x{rows}: {events:?}");
+            assert_eq!(events[0].kind, MotionKind::PunchIn);
         }
     }
 
@@ -1470,6 +1734,86 @@ mod tests {
         assert!(events.windows(2).all(|w| w[0].time_ms < w[1].time_ms));
     }
 
+    #[test]
+    fn the_motion_that_is_no_scale_never_reaches_the_pattern_search() {
+        let (cols, rows) = (160, 90);
+        let base = render(cols, rows, 1.0, 0.5, 0.5);
+        let blk = with_block(&base, &block_mask(cols, rows));
+        let mut clip = Clip::default();
+        clip.hold(&base, 30)
+            .hold(&blk, 30)
+            .hold(&shifted(&base, 50), 30);
+        for k in 1..=6 {
+            clip.one(shifted(&base, -8 * k));
+        }
+        clip.hold(&base, 30);
+        let before = REFINES.with(std::cell::Cell::get);
+        let _ = run(cols, rows, &clip);
+        assert_eq!(REFINES.with(std::cell::Cell::get), before);
+        // A real scale does reach it.
+        let zoom = zoom_clip(cols, rows, 1.0, &[1.18], (0.5, 0.5), 30, 40);
+        let _ = run(cols, rows, &zoom);
+        assert!(REFINES.with(std::cell::Cell::get) > before);
+    }
+
+    #[test]
+    fn a_move_in_the_frame_right_after_a_cut_is_found() {
+        for (cols, rows) in SHAPES {
+            let a = render(cols, rows, 1.0, 0.5, 0.5);
+            let b = render(cols, rows, 1.0, 0.8, 0.2);
+            let mut clip = Clip::default();
+            clip.hold(&a, 20).cut(&b);
+            clip.one(render(cols, rows, 1.18, 0.8, 0.2));
+            clip.hold(&render(cols, rows, 1.18, 0.8, 0.2), 40);
+            let events = run(cols, rows, &clip);
+            assert_eq!(events.len(), 1, "{cols}x{rows}: {events:?}");
+            assert_eq!(events[0].frame_index, 21);
+        }
+    }
+
+    // ---- other frame rates ----
+
+    #[test]
+    fn moves_are_measured_in_time_not_in_frames() {
+        let (cols, rows) = (160, 90);
+        for fps in [30u64, 60] {
+            // 0.25 s and 0.4 s moves are one event each.
+            for seconds in [0.25f64, 0.4] {
+                let steps = (seconds * fps as f64).round() as usize;
+                let clip = zoom_clip(
+                    cols,
+                    rows,
+                    1.0,
+                    &ease(1.0, 1.18, steps, true),
+                    (0.5, 0.5),
+                    (fps * 2) as usize,
+                    (fps * 2) as usize,
+                );
+                let events = run_at(cols, rows, &clip, fps);
+                assert_eq!(events.len(), 1, "{fps} fps {seconds} s: {events:?}");
+                assert_eq!(events[0].kind, MotionKind::PunchIn);
+                let want = time_at(2 * fps as usize + steps - 1, fps);
+                let got = events[0].time_ms;
+                assert!(got + 150 >= want && got <= want + 40, "{got} vs {want}");
+            }
+            // A push-in over 1.25 s is none.
+            let steps = (1.25 * fps as f64).round() as usize;
+            for smooth in [true, false] {
+                let clip = zoom_clip(
+                    cols,
+                    rows,
+                    1.0,
+                    &ease(1.0, 1.18, steps, smooth),
+                    (0.5, 0.5),
+                    (fps * 2) as usize,
+                    (fps * 2) as usize,
+                );
+                let events = run_at(cols, rows, &clip, fps);
+                assert!(events.is_empty(), "{fps} fps smooth {smooth}: {events:?}");
+            }
+        }
+    }
+
     // ---- nothing, noise, cuts, shapes ----
 
     #[test]
@@ -1627,6 +1971,18 @@ mod tests {
                     "busy footage (noise +-3)",
                     (0..1800).map(|i| busy_set[i % 16].as_slice()).collect(),
                 ),
+                (
+                    "gestures: 4 noisy frames, 2 still, repeating",
+                    (0..1800)
+                        .map(|i| {
+                            if i % 6 < 4 {
+                                busy_set[i % 16].as_slice()
+                            } else {
+                                noisy_set[0].as_slice()
+                            }
+                        })
+                        .collect(),
+                ),
                 ("punch-in out/in every 5 s", punch),
                 (
                     "overlay on/off every 3 s",
@@ -1657,12 +2013,5 @@ mod tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn the_changed_level_matches_the_test_blocks() {
-        // The blocks above move every cell by 100 levels, far above the
-        // detector's own level, so a retune of the level stays covered.
-        assert!(LEVEL_FOR_TESTS < 100);
     }
 }
