@@ -6,9 +6,10 @@
 //! The detector is pure: it sees only `cols` x `rows` bytes of luma per frame,
 //! the frame's index and time, and whether the cut detector calls the frame a
 //! cut. It keeps about 1.6 s of grids, so a still frame costs two cheap passes
-//! over one grid (the difference to the previous frame and to the frame 250 ms
-//! earlier). A scale is fitted only when a run of frames moves, once at the
-//! end of the run.
+//! over one grid (the difference to the grid at least 125 ms back, and to the
+//! one at least 250 ms back). A scale is fitted only when a run of frames moves
+//! (a run longer than 600 ms is a drift or a shaky picture, not a move), once
+//! at the end of the run.
 
 use std::collections::VecDeque;
 
@@ -64,8 +65,9 @@ const SCALE_FLOOR: f32 = 1.5;
 /// 12 frames at 24 fps (0.5 s) plus the time the baseline lags behind it. A
 /// longer run is a drift, a gesture or a shaky camera.
 const MAX_RUN_MS: u64 = 600;
-/// A real move is still before and after it; this much time is checked on
-/// each side so a slow drift (which keeps going) is not an event.
+/// The scale reported for a move is fitted from this long before the run to
+/// this long after it, so the slow ends of an eased move count. (A drift is
+/// rejected by `MAX_RUN_MS`, not by this window.)
 const EXT_MS: u64 = 250;
 /// An event's scale must differ from 1 by at least this much.
 const MIN_SCALE_DELTA: f64 = 0.05;
@@ -120,8 +122,8 @@ struct Frame {
     luma: Vec<u8>,
 }
 
-/// A run of consecutive frames that each differ from the last by more than
-/// the floor.
+/// A run of consecutive frames that each differ from the grid at least
+/// `BASE_MS` before them by more than the floor.
 #[derive(Clone, Copy)]
 struct Burst {
     /// The grid the first moving frame was compared with: before the move.
@@ -380,7 +382,9 @@ impl MotionDetector {
         fit_move(&a.luma, &b.luma, geom)
     }
 
-    /// A move's margins are in: the picture must be still before and after.
+    /// A move's margins are in: a scale must explain the picture from
+    /// `EXT_MS` before the run to `EXT_MS` after it (within `BEST_RATIO`) and
+    /// differ from 1 by `MIN_SCALE_DELTA`; that scale is the event's.
     fn resolve_move(&mut self, pending: PendingMove) {
         let Some(after) = self.ring.back() else {
             return;
