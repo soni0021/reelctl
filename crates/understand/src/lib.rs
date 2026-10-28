@@ -93,3 +93,47 @@ pub const IMAGE_TOKEN_ESTIMATE: u64 = 1_445;
 
 /// The default cap on the model's output.
 pub const DEFAULT_MAX_TOKENS: u32 = 16_000;
+
+/// JSON Schema for [`Understanding`] (`understanding.json`).
+pub fn json_schema() -> serde_json::Value {
+    serde_json::to_value(schemars::schema_for!(Understanding)).unwrap_or(serde_json::Value::Null)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The committed schema file is what the types generate. Regenerate it with
+    /// `cargo run -p understand --example schema`.
+    #[test]
+    fn the_schema_file_is_up_to_date() {
+        let committed = include_str!("../schema/understanding.schema.json");
+        let generated = serde_json::to_string_pretty(&json_schema()).unwrap_or_default();
+        assert_eq!(committed, format!("{generated}\n"));
+    }
+
+    #[test]
+    fn the_schema_names_the_top_level_fields() {
+        let schema = json_schema();
+        let properties = schema
+            .get("properties")
+            .and_then(serde_json::Value::as_object)
+            .map(|object| object.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        for field in [
+            "schema_version",
+            "source",
+            "model",
+            "settings",
+            "segments",
+            "summary",
+            "beats",
+            "visual_events",
+            "cuts",
+            "clips",
+            "rejected",
+        ] {
+            assert!(properties.iter().any(|name| name == field), "{field}");
+        }
+    }
+}

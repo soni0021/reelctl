@@ -1,0 +1,534 @@
+{
+  "$defs": {
+    "Beat": {
+      "properties": {
+        "end_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "end_segment": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "insight_density": {
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "start_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "start_segment": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "visual": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "start_segment",
+        "end_segment",
+        "start_ms",
+        "end_ms",
+        "kind",
+        "summary",
+        "visual",
+        "insight_density"
+      ],
+      "type": "object"
+    },
+    "Clip": {
+      "properties": {
+        "adjustments": {
+          "description": "What the clip rules changed (for example, material dropped before the hook).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "dead_air": {
+          "items": {
+            "$ref": "#/$defs/SilenceGap"
+          },
+          "type": "array"
+        },
+        "end_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "flags": {
+          "description": "The rules the clip breaks. Empty means it meets all of them.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "hook": {
+          "$ref": "#/$defs/SegmentRef"
+        },
+        "last": {
+          "$ref": "#/$defs/SegmentRef"
+        },
+        "length_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "open_loop": {
+          "type": "string"
+        },
+        "payoff": {
+          "$ref": "#/$defs/SegmentRef"
+        },
+        "payoff_at_ms": {
+          "description": "The payoff's time into the clip once dead air is cut.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rank": {
+          "description": "The model's ranking, 1 = best. Rejected picks keep their rank too.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "start_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tight_length_ms": {
+          "description": "`length_ms` minus every pause of at least 180 ms inside the clip.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "title": {
+          "type": "string"
+        },
+        "visual_suggestion": {
+          "type": "string"
+        },
+        "why": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "rank",
+        "title",
+        "start_ms",
+        "end_ms",
+        "length_ms",
+        "tight_length_ms",
+        "dead_air",
+        "hook",
+        "payoff",
+        "last",
+        "payoff_at_ms",
+        "open_loop",
+        "visual_suggestion",
+        "why",
+        "adjustments",
+        "flags"
+      ],
+      "type": "object"
+    },
+    "CutLabel": {
+      "description": "A `reelctl` cut and what the model saw there, if anything.",
+      "properties": {
+        "frame_index": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "time_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "vlm_label": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VlmLabel"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "frame_index",
+        "time_ms"
+      ],
+      "type": "object"
+    },
+    "ModelRun": {
+      "properties": {
+        "cost_upper_bound_usd": {
+          "description": "An upper bound computed before the call; it overestimates image tokens.",
+          "format": "double",
+          "type": "number"
+        },
+        "cost_usd": {
+          "description": "The cost the response reports, when it does.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "elapsed_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "input_tokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "output_tokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "quantization": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "provider",
+        "input_tokens",
+        "output_tokens",
+        "cost_upper_bound_usd",
+        "elapsed_ms"
+      ],
+      "type": "object"
+    },
+    "Rejected": {
+      "properties": {
+        "rank": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "rank",
+        "title",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "RunSettings": {
+      "properties": {
+        "every_s": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "quant": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "segment_pause_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sheet": {
+          "description": "`single`, `2x2`, or `3x3`: what was sent.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "every_s",
+        "sheet",
+        "segment_pause_ms",
+        "quant"
+      ],
+      "type": "object"
+    },
+    "Segment": {
+      "description": "A run of whisper words split at sentence ends or measured pauses. `id` is 1-based.",
+      "properties": {
+        "end_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "ends_sentence": {
+          "description": "The text ends with `.`, `?` or `!`. A sentence starts at segment 1 and after\nevery segment with this set.",
+          "type": "boolean"
+        },
+        "id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "start_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "text": {
+          "description": "Whisper's exact words, joined by single spaces.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "start_ms",
+        "end_ms",
+        "text",
+        "ends_sentence"
+      ],
+      "type": "object"
+    },
+    "SegmentRef": {
+      "description": "A segment's ID and its exact text.",
+      "properties": {
+        "id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "text"
+      ],
+      "type": "object"
+    },
+    "SilenceGap": {
+      "description": "A run of audio below the silence threshold.",
+      "properties": {
+        "duration_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "end_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "start_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "start_ms",
+        "end_ms",
+        "duration_ms"
+      ],
+      "type": "object"
+    },
+    "Source": {
+      "properties": {
+        "duration_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "duration_ms"
+      ],
+      "type": "object"
+    },
+    "Summary": {
+      "properties": {
+        "language": {
+          "type": "string"
+        },
+        "speaker_count": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "topic": {
+          "type": "string"
+        },
+        "visual_formats": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "topic",
+        "language",
+        "speaker_count",
+        "visual_formats"
+      ],
+      "type": "object"
+    },
+    "VisualEvent": {
+      "description": "An event the model saw. `seen_at_ms` is a sampled frame time: the event\nhappened at or before it, and after the previous frame.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/VisualEventKind"
+        },
+        "note": {
+          "type": "string"
+        },
+        "seen_at_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "seen_at_ms",
+        "kind",
+        "note"
+      ],
+      "type": "object"
+    },
+    "VisualEventKind": {
+      "description": "The editing events the model may name.",
+      "enum": [
+        "hard_cut",
+        "punch_in",
+        "zoom_out",
+        "overlay_on",
+        "overlay_off",
+        "b_roll_on",
+        "b_roll_off",
+        "slide_change",
+        "caption_change"
+      ],
+      "type": "string"
+    },
+    "VlmLabel": {
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/VisualEventKind"
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "note"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "beats": {
+      "items": {
+        "$ref": "#/$defs/Beat"
+      },
+      "type": "array"
+    },
+    "clips": {
+      "items": {
+        "$ref": "#/$defs/Clip"
+      },
+      "type": "array"
+    },
+    "cuts": {
+      "items": {
+        "$ref": "#/$defs/CutLabel"
+      },
+      "type": "array"
+    },
+    "model": {
+      "$ref": "#/$defs/ModelRun"
+    },
+    "rejected": {
+      "items": {
+        "$ref": "#/$defs/Rejected"
+      },
+      "type": "array"
+    },
+    "schema_version": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "segments": {
+      "items": {
+        "$ref": "#/$defs/Segment"
+      },
+      "type": "array"
+    },
+    "settings": {
+      "$ref": "#/$defs/RunSettings"
+    },
+    "source": {
+      "$ref": "#/$defs/Source"
+    },
+    "summary": {
+      "$ref": "#/$defs/Summary"
+    },
+    "visual_events": {
+      "items": {
+        "$ref": "#/$defs/VisualEvent"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "source",
+    "model",
+    "settings",
+    "segments",
+    "summary",
+    "beats",
+    "visual_events",
+    "cuts",
+    "clips",
+    "rejected"
+  ],
+  "title": "Understanding",
+  "type": "object"
+}
