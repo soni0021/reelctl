@@ -29,10 +29,8 @@ type analysis struct {
 
 func analyze(c niche.Creator, o Options) analysis {
 	scored, skips := scorePosts(c.Posts)
-	velocity, velocitySkip := growth(c.Snapshots)
-	if velocitySkip != nil {
-		skips = append(skips, *velocitySkip)
-	}
+	velocity, velocitySkips := growth(c.Snapshots)
+	skips = append(skips, velocitySkips...)
 	a := analysis{scored: scored, skipped: skips, velocity: velocity}
 	a.surgingBy = stats.SurgeReasons(bestMultiplier(scored), followerShare(velocity), o.MinScore, o.MinVelocity)
 	return a
@@ -101,24 +99,45 @@ func followerShare(v *Velocity) *float64 {
 	return &share
 }
 
-func growth(snapshots []niche.Snapshot) (*Velocity, *Skip) {
+// growth fits followers and total views on their own, so a total_views series
+// that cannot be fitted (a zero first value) does not take the follower
+// velocity with it. A follower series that cannot be fitted gives no velocity,
+// because the surging rule rests on it.
+func growth(snapshots []niche.Snapshot) (*Velocity, []Skip) {
 	if len(snapshots) == 0 {
-		return nil, &Skip{Reason: ReasonVelocity, Detail: "no snapshots"}
+		return nil, []Skip{{Reason: ReasonVelocity, Detail: "no snapshots"}}
 	}
 	followers := window(snapshots, func(s niche.Snapshot) float64 { return float64(s.Followers) })
 	views := window(snapshots, func(s niche.Snapshot) float64 { return float64(s.TotalViews) })
 	fr, ferr := stats.GrowthRate(followers)
 	vr, verr := stats.GrowthRate(views)
-	if err := errors.Join(ferr, verr); err != nil {
-		return nil, &Skip{Reason: ReasonVelocity, Detail: velocityDetail(followers, ferr, verr)}
+	if isWindowError(ferr) {
+		// The dates are the same for both series, so one skip says it.
+		return nil, []Skip{{Reason: ReasonVelocity, Detail: windowDetail(followers, ferr)}}
 	}
-	return &Velocity{
+	var skips []Skip
+	if verr != nil {
+		skips = append(skips, Skip{Reason: ReasonVelocity, Detail: "total views: " + zeroStartDetail})
+	}
+	if ferr != nil {
+		return nil, append([]Skip{{Reason: ReasonVelocity, Detail: "followers: " + zeroStartDetail}}, skips...)
+	}
+	v := &Velocity{
 		Snapshots:       len(followers),
 		FollowersPerDay: stats.Round(fr.PerDay),
 		FollowersShare:  stats.Round(fr.Share),
-		ViewsPerDay:     stats.Round(vr.PerDay),
-		ViewsShare:      stats.Round(vr.Share),
-	}, nil
+	}
+	if verr == nil {
+		perDay, share := stats.Round(vr.PerDay), stats.Round(vr.Share)
+		v.ViewsPerDay, v.ViewsShare = &perDay, &share
+	}
+	return v, skips
+}
+
+const zeroStartDetail = "the first snapshot in the window is zero"
+
+func isWindowError(err error) bool {
+	return errors.Is(err, stats.ErrTooFewSnapshots) || errors.Is(err, stats.ErrSameDay)
 }
 
 func window(snapshots []niche.Snapshot, pick func(niche.Snapshot) float64) []stats.Sample {
@@ -129,12 +148,12 @@ func window(snapshots []niche.Snapshot, pick func(niche.Snapshot) float64) []sta
 	return stats.Window(samples)
 }
 
-func velocityDetail(followers []stats.Sample, errs ...error) string {
-	if errors.Is(errors.Join(errs...), stats.ErrTooFewSnapshots) {
-		latest := followers[len(followers)-1].Day.Format(dateLayout)
-		return fmt.Sprintf("%d snapshots in the 7 days ending %s, need %d", len(followers), latest, stats.MinSnapshots)
+func windowDetail(window []stats.Sample, err error) string {
+	latest := window[len(window)-1].Day.Format(dateLayout)
+	if errors.Is(err, stats.ErrSameDay) {
+		return fmt.Sprintf("all %d snapshots in the 7 days ending %s share one date, so there is no time span to fit a rate over", len(window), latest)
 	}
-	return "the first snapshot in the window has zero followers or zero views"
+	return fmt.Sprintf("%d snapshots in the 7 days ending %s, need %d", len(window), latest, stats.MinSnapshots)
 }
 
 // split sorts scored posts into breakouts (at or above minScore) and baseline

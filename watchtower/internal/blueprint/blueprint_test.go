@@ -125,14 +125,17 @@ func TestLoadDNAReadsOnlyWhatTheBlueprintUses(t *testing.T) {
 	}
 }
 
+// minimal is a valid edit_dna.json with only the fields the blueprint requires.
+const minimal = `"schema_version": 2, "duration_ms": 1000, "cuts": [], "silence_gaps": [], "words_per_minute": 0, "integrated_lufs": -70`
+
 func TestLoadDNAWithoutVisualEvents(t *testing.T) {
-	if got := loadFrom(t, `{"duration_ms": 1000}`); got.VisualEvents != nil {
+	if got := loadFrom(t, `{`+minimal+`}`); got.VisualEvents != nil {
 		t.Errorf("absent: got %v", got.VisualEvents)
 	}
-	if got := loadFrom(t, `{"duration_ms": 1000, "visual_events": null}`); got.VisualEvents != nil {
+	if got := loadFrom(t, `{`+minimal+`, "visual_events": null}`); got.VisualEvents != nil {
 		t.Errorf("null: got %v", got.VisualEvents)
 	}
-	if got := loadFrom(t, `{"duration_ms": 1000, "visual_events": []}`); got.VisualEvents == nil {
+	if got := loadFrom(t, `{`+minimal+`, "visual_events": []}`); got.VisualEvents == nil {
 		t.Error("empty list: got nil")
 	}
 }
@@ -165,7 +168,7 @@ func loadFrom(t *testing.T, body string) DNA {
 }
 
 func reelWithWPM(wpm float64) Reel {
-	return Reel{Shots: 5, MeanShotMs: 2000, MedianShotMs: 2000, CutsPerMinute: 10, WordsPerMinute: wpm, LUFS: -14}
+	return Reel{Shots: 5, MeanShotMs: 2000, MedianShotMs: 2000, CutsPerMinute: 10, WordsPerMinute: wpm, LUFS: -14, ASRBackend: BackendWhisper}
 }
 
 func compareWPM(before, after float64) Blueprint {
@@ -292,8 +295,8 @@ func TestVisualEventsAreComparedPerKindInSortedOrder(t *testing.T) {
 }
 
 func TestVisualEventsAreLeftOutWhenAnyReelDidNotMeasureThem(t *testing.T) {
-	measured := Reel{VisualPerMinute: map[string]float64{"punch_in": 2}}
-	old := Reel{}
+	measured := Reel{ASRBackend: BackendWhisper, VisualPerMinute: map[string]float64{"punch_in": 2}}
+	old := Reel{ASRBackend: BackendWhisper}
 	bp := Compare([]Reel{old, measured}, []Reel{measured, measured, measured})
 	for _, m := range bp.Metrics {
 		if strings.HasPrefix(m.Key, "visual_events_per_minute") {
@@ -307,7 +310,8 @@ func TestVisualEventsAreLeftOutWhenAnyReelDidNotMeasureThem(t *testing.T) {
 }
 
 func TestAnOldDataSetStillSaysWhyVisualEventsAreAbsent(t *testing.T) {
-	bp := Compare([]Reel{{}, {}}, []Reel{{}, {}})
+	r := Reel{ASRBackend: BackendWhisper}
+	bp := Compare([]Reel{r, r}, []Reel{r, r})
 	want := []string{"visual_events was missing from 4 of 4 files, so visual events are not compared."}
 	if !reflect.DeepEqual(bp.Notes, want) {
 		t.Fatalf("got %q, want %q", bp.Notes, want)

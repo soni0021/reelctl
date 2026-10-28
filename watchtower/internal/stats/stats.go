@@ -30,6 +30,7 @@ var (
 	ErrZeroMedian       = errors.New("the median of earlier views is zero")
 	ErrTooFewSnapshots  = errors.New("too few snapshots")
 	ErrZeroStart        = errors.New("the first snapshot value is zero")
+	ErrSameDay          = errors.New("every snapshot has the same date")
 )
 
 // Sample is one dated value, such as a follower count.
@@ -139,7 +140,7 @@ func GrowthRate(window []Sample) (Rate, error) {
 	}
 	slope, ok := Slope(xs, ys)
 	if !ok {
-		return Rate{}, ErrTooFewSnapshots
+		return Rate{}, ErrSameDay
 	}
 	return Rate{PerDay: slope, Share: slope / start.Value}, nil
 }
