@@ -16,8 +16,8 @@ use decompile::{
 use diff::{compare_many, render_text, NamedReel};
 use edit_dna::EditDna;
 
-mod look_cmd;
 mod card;
+mod look_cmd;
 mod timeline_cmd;
 mod understand_cmd;
 
