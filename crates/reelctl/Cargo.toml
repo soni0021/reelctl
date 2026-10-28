@@ -20,6 +20,7 @@ filmstrip = { path = "../filmstrip" }
 image.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+timeline = { path = "../timeline" }
 understand = { path = "../understand" }
 
 [dev-dependencies]

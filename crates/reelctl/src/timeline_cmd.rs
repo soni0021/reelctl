@@ -1,0 +1,919 @@
+//! `reelctl timeline|transform|funnel|render|qa`: edit an OpenTimelineIO project and
+//! render it.
+//!
+//! Exit codes: 2 for a bad argument, an unreadable or invalid project or DNA, or a
+//! span outside the timeline; 1 for a failed ffmpeg (or a missing one). The project
+//! is read before anything is written, and written atomically (a temporary file in
+//! the same directory, then a rename), so `--out` may be `--project`. `render` and
+//! `init` run the `ffmpeg` and `ffprobe` command line tools; no command uses the
+//! network or a model.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::Instant;
+
+use anyhow::{anyhow, Context, Result};
+use clap::{Args, Subcommand};
+use decompile::{decode_frames_at, DecoderSetting};
+use edit_dna::{BoundaryView, EditDna};
+use serde_json::Value;
+use timeline::{
+    attach_bridge, bridge_of, build_render_plan, cut_silence, dna_ref, init, joins, media_info,
+    punch_in, set_dna_ref, words_on_timeline, BridgeRequest, CutOptions, DnaRef, InitSpec,
+    PunchRequest, RenderPlan, RenderSize, Timeline, TimelineError,
+};
+
+use crate::card::{draw_card, parse_color};
+use crate::understand_cmd::ExitWith;
+
+/// The DNA and the media may differ by this much in length (see `timeline::cut_silence`).
+const DNA_TOLERANCE_MS: u64 = 100;
+/// Width of the thumbnails in `qa inspect-boundaries`.
+const THUMB_WIDTH: u32 = 160;
+/// Audio on each side of a join in `qa inspect-boundaries`.
+const PCM_WINDOW_MS: u64 = 400;
+const PCM_RATE: u32 = 16_000;
+
+#[derive(Args)]
+pub struct TimelineCommand {
+    #[command(subcommand)]
+    command: TimelineSub,
+}
+
+#[derive(Subcommand)]
+enum TimelineSub {
+    /// Make a project (.otio) with one clip spanning a video.
+    Init(InitArgs),
+    /// Cut silence gaps (and filler words) out of a project, from its edit DNA.
+    CutSilence(CutSilenceArgs),
+}
+
+#[derive(Args)]
+pub struct TransformCommand {
+    #[command(subcommand)]
+    command: TransformSub,
+}
+
+#[derive(Subcommand)]
+enum TransformSub {
+    /// Zoom into the centre of the picture over a span.
+    PunchIn(PunchInArgs),
+}
+
+#[derive(Args)]
+pub struct FunnelCommand {
+    #[command(subcommand)]
+    command: FunnelSub,
+}
+
+#[derive(Subcommand)]
+enum FunnelSub {
+    /// Cut the project at a tension point and end on a card with a link.
+    AttachBridge(AttachBridgeArgs),
+}
+
+#[derive(Args)]
+pub struct QaCommand {
+    #[command(subcommand)]
+    command: QaSub,
+}
+
+#[derive(Subcommand)]
+enum QaSub {
+    /// Write a filmstrip PNG for every join in the project.
+    InspectBoundaries(InspectArgs),
+}
+
+#[derive(Args)]
+struct InitArgs {
+    /// The video to edit. Its absolute path is written to the project.
+    #[arg(long)]
+    input: PathBuf,
+    /// Its edit_dna.json from `decompile`. Its path and length are recorded.
+    #[arg(long)]
+    dna: Option<PathBuf>,
+    /// Where to write the project.
+    #[arg(long)]
+    out: PathBuf,
+}
+
+#[derive(Args)]
+struct CutSilenceArgs {
+    #[arg(long)]
+    project: PathBuf,
+    /// The edit_dna.json of the project's video.
+    #[arg(long)]
+    dna: PathBuf,
+    /// Remove silence gaps at least this long.
+    #[arg(long, default_value_t = 180)]
+    min_gap_ms: u64,
+    /// Audio fade on each side of a join.
+    #[arg(long, default_value_t = 30)]
+    fade_ms: u64,
+    /// Filler words to remove (needs whisper words in the DNA), comma-separated.
+    #[arg(long, value_delimiter = ',', default_values_t = ["um".to_string(), "uh".to_string()])]
+    fillers: Vec<String>,
+    #[arg(long)]
+    out: PathBuf,
+}
+
+#[derive(Args)]
+struct PunchInArgs {
+    #[arg(long)]
+    project: PathBuf,
+    /// Start of the zoom, in milliseconds of the edited timeline.
+    #[arg(long)]
+    start_ms: u64,
+    #[arg(long)]
+    end_ms: u64,
+    /// Zoom factor: above 1, at most 2.
+    #[arg(long, allow_negative_numbers = true)]
+    scale: f64,
+    #[arg(long)]
+    out: PathBuf,
+}
+
+#[derive(Args)]
+struct AttachBridgeArgs {
+    #[arg(long)]
+    project: PathBuf,
+    /// The link shown on the card.
+    #[arg(long)]
+    target_url: String,
+    /// Cut at this fraction of the timeline (0 to 1, exclusive).
+    #[arg(long, default_value_t = 0.72, allow_negative_numbers = true)]
+    cutoff_pct: f64,
+    /// Length of the card.
+    #[arg(long, default_value_t = 2500)]
+    card_ms: u64,
+    /// The edit DNA, to cut in a pause. Defaults to the one `init` recorded.
+    #[arg(long)]
+    dna: Option<PathBuf>,
+    #[arg(long)]
+    out: PathBuf,
+}
+
+#[derive(Args)]
+pub struct RenderArgs {
+    #[arg(long)]
+    project: PathBuf,
+    #[arg(long)]
+    out: PathBuf,
+    /// Output size, `WIDTHxHEIGHT`, scaled and cropped to fill. Defaults to the
+    /// source's size.
+    #[arg(long, value_parser = parse_size)]
+    size: Option<RenderSize>,
+}
+
+#[derive(Args)]
+struct InspectArgs {
+    #[arg(long)]
+    project: PathBuf,
+    #[arg(long)]
+    out_dir: PathBuf,
+}
+
+fn parse_size(text: &str) -> std::result::Result<RenderSize, String> {
+    let (width, height) = text
+        .split_once('x')
+        .ok_or_else(|| format!("\"{text}\" is not WIDTHxHEIGHT"))?;
+    let side = |value: &str| {
+        value
+            .parse::<u32>()
+            .ok()
+            .filter(|side| *side > 0 && side % 2 == 0)
+            .ok_or_else(|| format!("\"{text}\": {value} is not an even, positive number"))
+    };
+    Ok(RenderSize {
+        width: side(width)?,
+        height: side(height)?,
+    })
+}
+
+pub fn timeline(command: TimelineCommand) -> Result<()> {
+    match command.command {
+        TimelineSub::Init(args) => init_cmd(args),
+        TimelineSub::CutSilence(args) => cut_silence_cmd(args),
+    }
+}
+
+pub fn transform(command: TransformCommand) -> Result<()> {
+    match command.command {
+        TransformSub::PunchIn(args) => punch_in_cmd(args),
+    }
+}
+
+pub fn funnel(command: FunnelCommand) -> Result<()> {
+    match command.command {
+        FunnelSub::AttachBridge(args) => attach_bridge_cmd(args),
+    }
+}
+
+pub fn qa(command: QaCommand) -> Result<()> {
+    match command.command {
+        QaSub::InspectBoundaries(args) => inspect_cmd(args),
+    }
+}
+
+/// An error that exits with code 2.
+fn usage(message: impl Into<String>) -> anyhow::Error {
+    anyhow::Error::new(ExitWith {
+        code: 2,
+        message: message.into(),
+    })
+}
+
+/// A timeline-crate error: the project or an argument is unusable (exit 2).
+fn invalid(error: TimelineError) -> anyhow::Error {
+    usage(error.to_string())
+}
+
+fn load_project(path: &Path) -> Result<Timeline> {
+    let text = fs::read_to_string(path)
+        .map_err(|error| usage(format!("cannot read project {}: {error}", path.display())))?;
+    Timeline::from_json(&text).map_err(|error| usage(format!("{}: {error}", path.display())))
+}
+
+fn load_dna(path: &Path) -> Result<EditDna> {
+    let text = fs::read_to_string(path)
+        .map_err(|error| usage(format!("cannot read edit DNA {}: {error}", path.display())))?;
+    serde_json::from_str(&text)
+        .map_err(|error| usage(format!("{}: not an edit_dna.json: {error}", path.display())))
+}
+
+fn absolute(path: &Path, what: &str) -> Result<PathBuf> {
+    fs::canonicalize(path)
+        .map_err(|error| usage(format!("cannot find {what} {}: {error}", path.display())))
+}
+
+fn utf8(path: &Path) -> Result<String> {
+    path.to_str()
+        .map(str::to_string)
+        .ok_or_else(|| usage(format!("{} is not valid UTF-8", path.display())))
+}
+
+/// Write `bytes` to `path` through a temporary file in the same directory.
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    let dir = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+    fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| anyhow!("{} has no file name", path.display()))?;
+    let temporary = dir.join(format!(".{name}.{}.tmp", std::process::id()));
+    fs::write(&temporary, bytes).with_context(|| format!("write {}", temporary.display()))?;
+    if let Err(error) = fs::rename(&temporary, path) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error).with_context(|| format!("replace {}", path.display()));
+    }
+    Ok(())
+}
+
+fn save_project(timeline: &Timeline, out: &Path) -> Result<()> {
+    let text = timeline.to_json().map_err(invalid)?;
+    write_atomic(out, text.as_bytes())
+}
+
+/// What `ffprobe` says about the first video stream and the audio.
+#[derive(Debug, PartialEq)]
+struct Probe {
+    fps: f64,
+    frames: i64,
+    width: u32,
+    height: u32,
+    has_audio: bool,
+}
+
+fn parse_rate(text: &str) -> Option<f64> {
+    let (numerator, denominator) = text.split_once('/')?;
+    let (numerator, denominator): (f64, f64) = (numerator.parse().ok()?, denominator.parse().ok()?);
+    (denominator > 0.0 && numerator > 0.0).then(|| numerator / denominator)
+}
+
+fn parse_probe(json: &Value, path: &Path) -> Result<Probe> {
+    let streams = json
+        .get("streams")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let video = streams
+        .iter()
+        .find(|stream| stream.get("codec_type").and_then(Value::as_str) == Some("video"))
+        .ok_or_else(|| usage(format!("{} has no video stream", path.display())))?;
+    let text = |key: &str| video.get(key).and_then(Value::as_str);
+    let fps = text("avg_frame_rate")
+        .and_then(parse_rate)
+        .or_else(|| text("r_frame_rate").and_then(parse_rate))
+        .ok_or_else(|| usage(format!("{}: the frame rate is unknown", path.display())))?;
+    let seconds = text("duration")
+        .or_else(|| {
+            json.get("format")
+                .and_then(|format| format.get("duration"))
+                .and_then(Value::as_str)
+        })
+        .and_then(|duration| duration.parse::<f64>().ok());
+    let frames = text("nb_frames")
+        .and_then(|count| count.parse::<i64>().ok())
+        .or_else(|| seconds.map(|seconds| (seconds * fps).round() as i64))
+        .filter(|frames| *frames > 0)
+        .ok_or_else(|| usage(format!("{}: the video length is unknown", path.display())))?;
+    let number = |key: &str| video.get(key).and_then(Value::as_u64).map(|n| n as u32);
+    let (mut width, mut height) = match (number("width"), number("height")) {
+        (Some(width), Some(height)) => (width, height),
+        _ => {
+            return Err(usage(format!(
+                "{}: the video size is unknown",
+                path.display()
+            )))
+        }
+    };
+    // A phone clip is stored sideways with a rotation to apply.
+    let rotation = video
+        .get("side_data_list")
+        .and_then(Value::as_array)
+        .and_then(|list| list.iter().find_map(|data| data.get("rotation")))
+        .and_then(Value::as_f64)
+        .or_else(|| {
+            video
+                .get("tags")
+                .and_then(|tags| tags.get("rotate"))
+                .and_then(Value::as_str)
+                .and_then(|rotate| rotate.parse().ok())
+        })
+        .unwrap_or(0.0);
+    if (rotation.abs().round() as i64) % 180 == 90 {
+        std::mem::swap(&mut width, &mut height);
+    }
+    Ok(Probe {
+        fps,
+        frames,
+        width,
+        height,
+        has_audio: streams
+            .iter()
+            .any(|stream| stream.get("codec_type").and_then(Value::as_str) == Some("audio")),
+    })
+}
+
+/// A command that cannot start because the tool is missing is exit 1 with a message
+/// that names it.
+fn spawn_error(tool: &str, error: std::io::Error) -> anyhow::Error {
+    if error.kind() == std::io::ErrorKind::NotFound {
+        anyhow!("{tool} was not found on PATH; install ffmpeg (macOS: `brew install ffmpeg`), which provides ffmpeg and ffprobe")
+    } else {
+        anyhow!("cannot run {tool}: {error}")
+    }
+}
+
+fn probe_media(path: &Path) -> Result<Probe> {
+    let output = Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-print_format",
+            "json",
+            "-show_streams",
+            "-show_format",
+        ])
+        .arg(path)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|error| spawn_error("ffprobe", error))?;
+    if !output.status.success() {
+        return Err(usage(format!(
+            "ffprobe cannot read {}: {}",
+            path.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    let json: Value = serde_json::from_slice(&output.stdout).context("parse ffprobe output")?;
+    parse_probe(&json, path)
+}
+
+fn check_dna_length(dna: &EditDna, dna_path: &Path, probe: &Probe) -> Result<()> {
+    let media_ms = (probe.frames as f64 * 1000.0 / probe.fps).round() as u64;
+    if dna.duration_ms.abs_diff(media_ms) > DNA_TOLERANCE_MS {
+        return Err(usage(format!(
+            "{}: the edit DNA is {} ms long and the video is {media_ms} ms; they are not the same file",
+            dna_path.display(),
+            dna.duration_ms
+        )));
+    }
+    Ok(())
+}
+
+fn init_cmd(args: InitArgs) -> Result<()> {
+    let media = absolute(&args.input, "input")?;
+    let probe = probe_media(&media)?;
+    let dna = match &args.dna {
+        Some(path) => {
+            let dna = load_dna(path)?;
+            check_dna_length(&dna, path, &probe)?;
+            Some(DnaRef {
+                path: utf8(&absolute(path, "edit DNA")?)?,
+                duration_ms: dna.duration_ms,
+            })
+        }
+        None => None,
+    };
+    let project = init(&InitSpec {
+        media_path: utf8(&media)?,
+        fps: probe.fps,
+        frames: probe.frames,
+        width: probe.width,
+        height: probe.height,
+        has_audio: probe.has_audio,
+        dna,
+    })
+    .map_err(invalid)?;
+    save_project(&project, &args.out)?;
+    println!(
+        "init: out={} frames={} fps={:.3} size={}x{} audio={}",
+        args.out.display(),
+        probe.frames,
+        probe.fps,
+        probe.width,
+        probe.height,
+        probe.has_audio
+    );
+    Ok(())
+}
+
+fn cut_silence_cmd(args: CutSilenceArgs) -> Result<()> {
+    let mut project = load_project(&args.project)?;
+    let dna = load_dna(&args.dna)?;
+    let options = CutOptions {
+        min_gap_ms: args.min_gap_ms,
+        fade_ms: args.fade_ms,
+        fillers: args.fillers,
+    };
+    let report = cut_silence(&mut project, &dna, &options).map_err(|error| {
+        usage(format!(
+            "{} with {}: {error}",
+            args.project.display(),
+            args.dna.display()
+        ))
+    })?;
+    set_dna_ref(
+        &mut project,
+        &DnaRef {
+            path: utf8(&absolute(&args.dna, "edit DNA")?)?,
+            duration_ms: dna.duration_ms,
+        },
+    );
+    save_project(&project, &args.out)?;
+    println!(
+        "cut-silence: out={} removed_spans={} removed_ms={} timeline_ms={}",
+        args.out.display(),
+        report.removed.len(),
+        report
+            .removed
+            .iter()
+            .map(|span| span.end_ms - span.start_ms)
+            .sum::<u64>(),
+        timeline_ms(&project)?
+    );
+    Ok(())
+}
+
+fn timeline_ms(project: &Timeline) -> Result<u64> {
+    let rate = timeline::project_rate(project).map_err(invalid)?;
+    let frames = timeline::timeline_frames(project).map_err(invalid)?;
+    Ok(timeline::frame_ms(frames, rate))
+}
+
+fn punch_in_cmd(args: PunchInArgs) -> Result<()> {
+    let mut project = load_project(&args.project)?;
+    let report = punch_in(
+        &mut project,
+        &PunchRequest {
+            start_ms: args.start_ms,
+            end_ms: args.end_ms,
+            scale: args.scale,
+        },
+    )
+    .map_err(invalid)?;
+    save_project(&project, &args.out)?;
+    println!(
+        "punch-in: out={} frames={}..{} clips={} scale={}",
+        args.out.display(),
+        report.start_frame,
+        report.end_frame,
+        report.clips,
+        args.scale
+    );
+    Ok(())
+}
+
+fn attach_bridge_cmd(args: AttachBridgeArgs) -> Result<()> {
+    let mut project = load_project(&args.project)?;
+    // A project that already has a bridge does not look at pauses again.
+    let pauses: Vec<(u64, u64)> = if bridge_of(&project).is_some() {
+        Vec::new()
+    } else {
+        let dna_path = match (&args.dna, dna_ref(&project)) {
+            (Some(path), _) => Some(path.clone()),
+            (None, Some(recorded)) => Some(PathBuf::from(recorded.path)),
+            (None, None) => None,
+        };
+        match dna_path {
+            Some(path) => load_dna(&path)?
+                .silence_gaps
+                .iter()
+                .map(|gap| (gap.start_ms, gap.end_ms))
+                .collect(),
+            None => Vec::new(),
+        }
+    };
+    let report = attach_bridge(
+        &mut project,
+        &BridgeRequest {
+            target_url: args.target_url,
+            cutoff_pct: args.cutoff_pct,
+            card_ms: args.card_ms,
+        },
+        &pauses,
+    )
+    .map_err(invalid)?;
+    save_project(&project, &args.out)?;
+    let rate = timeline::project_rate(&project).map_err(invalid)?;
+    println!(
+        "attach-bridge: out={} cut_ms={} in_pause={} card_ms={} unchanged={}",
+        args.out.display(),
+        timeline::frame_ms(report.spec.cut_frame, rate),
+        report.in_pause,
+        report.spec.card_ms,
+        report.unchanged
+    );
+    Ok(())
+}
+
+/// Removes its directory when dropped.
+struct TempDir(PathBuf);
+
+impl TempDir {
+    fn create() -> Result<Self> {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.subsec_nanos())
+            .unwrap_or(0);
+        let path =
+            std::env::temp_dir().join(format!("reelctl-render-{}-{nanos}", std::process::id()));
+        fs::create_dir_all(&path).with_context(|| format!("create {}", path.display()))?;
+        Ok(Self(path))
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn seconds(frames: i64, fps: f64) -> String {
+    format!("{:.6}", frames as f64 / fps)
+}
+
+/// The `ffmpeg` argument list that renders `plan` to `output`, with card images
+/// at `card_paths`.
+fn ffmpeg_args(
+    plan: &RenderPlan,
+    card_paths: &[PathBuf],
+    output: &Path,
+) -> Vec<std::ffi::OsString> {
+    let mut args: Vec<std::ffi::OsString> =
+        ["-y", "-hide_banner", "-loglevel", "error", "-nostdin"]
+            .iter()
+            .map(Into::into)
+            .collect();
+    for media in &plan.media {
+        args.push("-i".into());
+        args.push(media.into());
+    }
+    for (card, path) in plan.cards.iter().zip(card_paths) {
+        for part in [
+            "-loop",
+            "1",
+            "-framerate",
+            plan.frame_rate.as_str(),
+            "-t",
+            seconds(card.frames, plan.fps).as_str(),
+            "-i",
+        ] {
+            args.push(part.into());
+        }
+        args.push(path.into());
+    }
+    args.push("-filter_complex".into());
+    args.push(plan.filter_graph.clone().into());
+    args.push("-map".into());
+    args.push(format!("[{}]", plan.video_label).into());
+    if let Some(audio) = &plan.audio_label {
+        args.push("-map".into());
+        args.push(format!("[{audio}]").into());
+    }
+    for part in [
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
+    ] {
+        args.push(part.into());
+    }
+    if plan.audio_label.is_some() {
+        for part in ["-c:a", "aac", "-b:a", "192k"] {
+            args.push(part.into());
+        }
+    }
+    args.push("-movflags".into());
+    args.push("+faststart".into());
+    args.push(output.into());
+    args
+}
+
+pub fn render(args: RenderArgs) -> Result<()> {
+    let project = load_project(&args.project)?;
+    let plan = build_render_plan(&project, args.size)
+        .map_err(|error| usage(format!("{}: {error}", args.project.display())))?;
+    for media in &plan.media {
+        if !Path::new(media).is_file() {
+            return Err(usage(format!(
+                "{}: the media file {media} does not exist",
+                args.project.display()
+            )));
+        }
+    }
+    let scratch = TempDir::create()?;
+    let mut card_paths = Vec::with_capacity(plan.cards.len());
+    for (index, card) in plan.cards.iter().enumerate() {
+        let image = draw_card(
+            &card.text,
+            parse_color(&card.background)?,
+            parse_color(&card.foreground)?,
+            plan.size.width,
+            plan.size.height,
+        );
+        let path = scratch.0.join(format!("card{index}.png"));
+        image
+            .save(&path)
+            .with_context(|| format!("write {}", path.display()))?;
+        card_paths.push(path);
+    }
+
+    // Render beside the output, then rename, so a failed run leaves nothing behind.
+    let dir = match args.out.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+    fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
+    let name = args
+        .out
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| usage(format!("{} has no file name", args.out.display())))?;
+    let temporary = dir.join(format!(".{}.{name}.tmp", std::process::id()));
+    // Keep the extension last so ffmpeg picks the container from it.
+    let temporary = match args.out.extension().and_then(|ext| ext.to_str()) {
+        Some(extension) => temporary.with_extension(extension),
+        None => temporary,
+    };
+
+    let started = Instant::now();
+    let output = Command::new("ffmpeg")
+        .args(ffmpeg_args(&plan, &card_paths, &temporary))
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|error| spawn_error("ffmpeg", error))?;
+    if !output.status.success() {
+        let _ = fs::remove_file(&temporary);
+        let log = String::from_utf8_lossy(&output.stderr);
+        let tail: Vec<&str> = log.lines().rev().take(12).collect();
+        return Err(anyhow!(
+            "ffmpeg failed ({}) rendering {}:\n{}",
+            output.status,
+            args.project.display(),
+            tail.into_iter().rev().collect::<Vec<_>>().join("\n")
+        ));
+    }
+    fs::rename(&temporary, &args.out).with_context(|| format!("replace {}", args.out.display()))?;
+    println!(
+        "render: out={} frames={} duration_ms={} size={}x{} ffmpeg_ms={}",
+        args.out.display(),
+        plan.frames,
+        (plan.frames as f64 * 1000.0 / plan.fps).round() as u64,
+        plan.size.width,
+        plan.size.height,
+        started.elapsed().as_millis()
+    );
+    Ok(())
+}
+
+/// Mono f32 audio of `media` from `from_ms` for `length_ms`, at `PCM_RATE`.
+fn decode_pcm(media: &str, from_ms: u64, length_ms: u64) -> Result<Vec<f32>> {
+    let output = Command::new("ffmpeg")
+        .args(["-v", "error", "-nostdin", "-ss"])
+        .arg(format!("{:.3}", from_ms as f64 / 1000.0))
+        .arg("-t")
+        .arg(format!("{:.3}", length_ms as f64 / 1000.0))
+        .arg("-i")
+        .arg(media)
+        .args(["-vn", "-f", "f32le", "-ac", "1", "-ar"])
+        .arg(PCM_RATE.to_string())
+        .arg("-")
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|error| spawn_error("ffmpeg", error))?;
+    if !output.status.success() {
+        return Err(anyhow!(
+            "ffmpeg cannot read the audio of {media}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(output
+        .stdout
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|bytes| f32::from_le_bytes(*bytes))
+        .collect())
+}
+
+fn inspect_cmd(args: InspectArgs) -> Result<()> {
+    let project = load_project(&args.project)?;
+    let info = media_info(&project)
+        .map_err(|error| usage(format!("{}: {error}", args.project.display())))?;
+    let rate = timeline::project_rate(&project).map_err(invalid)?;
+    let all = joins(&project).map_err(invalid)?;
+    let words = match dna_ref(&project).map(|recorded| PathBuf::from(recorded.path)) {
+        Some(path) if path.is_file() => {
+            let dna = load_dna(&path)?;
+            words_on_timeline(&project, &dna.words).map_err(invalid)?
+        }
+        _ => Vec::new(),
+    };
+
+    let frame_time = |frame: i64| ((frame as f64 + 0.5) * 1000.0 / rate).round() as u64;
+    let mut views = Vec::with_capacity(all.len());
+    for join in &all {
+        // Two frames before the join and two after, from where they come from.
+        let before = join
+            .before
+            .as_ref()
+            .map(|(media, last)| (media.as_str(), [(*last - 1).max(0), *last]));
+        let after = join
+            .after
+            .as_ref()
+            .map(|(media, first)| (media.as_str(), [*first, *first + 1]));
+        let mut sides: Vec<Option<Vec<Vec<u8>>>> = Vec::with_capacity(2);
+        let mut size: Option<(u32, u32)> = None;
+        for side in [before, after] {
+            let Some((media, frames)) = side else {
+                sides.push(None);
+                continue;
+            };
+            let times = frames.map(frame_time);
+            let decoded =
+                decode_frames_at(Path::new(media), &times, THUMB_WIDTH, DecoderSetting::Auto)
+                    .with_context(|| format!("decode frames of {media}"))?;
+            if let Some(first) = decoded.first() {
+                size = Some((first.width, first.height));
+            }
+            sides.push(Some(decoded.into_iter().map(|frame| frame.rgb).collect()));
+        }
+        let (thumb_width, thumb_height) = size.unwrap_or_else(|| {
+            let height =
+                u64::from(THUMB_WIDTH) * u64::from(info.height) / u64::from(info.width.max(1));
+            (THUMB_WIDTH, (height + height % 2) as u32)
+        });
+        // A side that is not footage (a card) is shown as a dark frame.
+        let blank = vec![0x14u8; (thumb_width * thumb_height * 3) as usize];
+        let mut thumbs: Vec<Vec<u8>> = Vec::with_capacity(4);
+        for side in sides {
+            match side {
+                Some(frames) if frames.len() == 2 => thumbs.extend(frames),
+                _ => thumbs.extend([blank.clone(), blank.clone()]),
+            }
+        }
+
+        let join_ms = timeline::frame_ms(join.frame, rate);
+        let mut pcm: Vec<f32> = Vec::new();
+        let mut before_len = 0;
+        if let Some((media, last)) = &join.before {
+            let end = timeline::frame_ms(last + 1, rate);
+            let from = end.saturating_sub(PCM_WINDOW_MS);
+            if info.has_audio {
+                pcm.extend(decode_pcm(media, from, end - from)?);
+            }
+            before_len = end - from;
+        }
+        if let Some((media, first)) = &join.after {
+            let from = timeline::frame_ms(*first, rate);
+            if info.has_audio {
+                pcm.extend(decode_pcm(media, from, PCM_WINDOW_MS)?);
+            }
+        }
+        views.push(BoundaryView {
+            frame_index: join.frame as u64,
+            time_ms: join_ms,
+            thumb_width,
+            thumb_height,
+            thumbs,
+            cut_thumb_index: 2,
+            sample_rate: PCM_RATE,
+            pcm_start_ms: join_ms.saturating_sub(before_len),
+            pcm,
+        });
+    }
+    let paths = filmstrip::write_boundary_views(&args.out_dir, &views, &words)
+        .with_context(|| format!("write filmstrips to {}", args.out_dir.display()))?;
+    println!(
+        "inspect-boundaries: out_dir={} joins={}",
+        args.out_dir.display(),
+        paths.len()
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn sample() -> Value {
+        json!({
+            "streams": [
+                {"codec_type": "video", "width": 1920, "height": 1080,
+                 "avg_frame_rate": "30000/1001", "r_frame_rate": "30000/1001",
+                 "nb_frames": "300", "duration": "10.01"},
+                {"codec_type": "audio", "duration": "10.0"}
+            ],
+            "format": {"duration": "10.02"}
+        })
+    }
+
+    #[test]
+    fn a_probe_gives_rate_frames_size_and_audio() {
+        let probe = parse_probe(&sample(), Path::new("a.mp4")).expect("probe");
+        assert_eq!(probe.frames, 300);
+        assert!((probe.fps - 29.97002997).abs() < 1e-6);
+        assert_eq!(
+            (probe.width, probe.height, probe.has_audio),
+            (1920, 1080, true)
+        );
+    }
+
+    #[test]
+    fn without_a_frame_count_the_duration_gives_it() {
+        let mut json = sample();
+        json["streams"][0]["nb_frames"] = Value::Null;
+        let probe = parse_probe(&json, Path::new("a.mp4")).expect("probe");
+        assert_eq!(probe.frames, 300);
+    }
+
+    #[test]
+    fn a_rotated_phone_clip_swaps_its_sides() {
+        let mut json = sample();
+        json["streams"][0]["side_data_list"] = json!([{"rotation": -90}]);
+        let probe = parse_probe(&json, Path::new("a.mp4")).expect("probe");
+        assert_eq!((probe.width, probe.height), (1080, 1920));
+    }
+
+    #[test]
+    fn a_file_without_video_is_a_usage_error() {
+        let json = json!({"streams": [{"codec_type": "audio"}]});
+        let error = parse_probe(&json, Path::new("a.mp3")).expect_err("no video");
+        assert!(error.to_string().contains("a.mp3"));
+    }
+
+    #[test]
+    fn the_size_is_width_x_height_with_even_sides() {
+        assert_eq!(
+            parse_size("1080x1920").expect("size"),
+            RenderSize {
+                width: 1080,
+                height: 1920
+            }
+        );
+        assert!(parse_size("1080").is_err());
+        assert!(parse_size("1081x1920").is_err());
+        assert!(parse_size("0x10").is_err());
+        assert!(parse_size("axb").is_err());
+    }
+
+    #[test]
+    fn an_atomic_write_leaves_only_the_file() {
+        let dir = std::env::temp_dir().join(format!("reelctl-atomic-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let path = dir.join("nested").join("p.otio");
+        write_atomic(&path, b"one").expect("write");
+        write_atomic(&path, b"two").expect("overwrite");
+        assert_eq!(fs::read(&path).expect("read"), b"two");
+        let names: Vec<_> = fs::read_dir(path.parent().expect("parent"))
+            .expect("dir")
+            .map(|entry| entry.expect("entry").file_name())
+            .collect();
+        assert_eq!(names.len(), 1, "{names:?}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+}

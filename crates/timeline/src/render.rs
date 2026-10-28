@@ -309,10 +309,15 @@ pub fn build_render_plan(timeline: &Timeline, size: Option<RenderSize>) -> Resul
                     "[{tap}]trim=start_frame={start}:end_frame={},setpts=PTS-STARTPTS,{fit}",
                     start + duration
                 );
-                if let Some(zoom) = zoom_of(clip)? {
-                    chain.push_str(&format!(",{}", zoompan(&zoom, width, height, &frame_rate)));
+                // `zoompan` goes last but for the pixel format: a `fps` after it
+                // misreads its timestamps and repeats frames.
+                match zoom_of(clip)? {
+                    Some(zoom) => chain.push_str(&format!(
+                        ",fps={frame_rate},{},format=yuv420p[{label}]",
+                        zoompan(&zoom, width, height, &frame_rate)
+                    )),
+                    None => chain.push_str(&format!(",{finish}[{label}]")),
                 }
-                chain.push_str(&format!(",{finish}[{label}]"));
                 parts.push(chain);
             }
             MediaReference::Generator(generator) if generator.generator_kind == CARD_KIND => {
@@ -500,7 +505,7 @@ mod tests {
             "[na0]asplit=4[ta0_0][ta0_1][ta0_2][ta0_3]".to_string(),
             format!("[tv0_0]trim=start_frame=0:end_frame=30,setpts=PTS-STARTPTS,{fit},{finish}[sv0]"),
             format!("[tv0_1]trim=start_frame=45:end_frame=75,setpts=PTS-STARTPTS,{fit},{finish}[sv1]"),
-            format!("[tv0_2]trim=start_frame=75:end_frame=135,setpts=PTS-STARTPTS,{fit},zoompan=z='1+(1.18-1)*min(clip((on-(0))/6,0,1),clip((60-1-on)/6,0,1))':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=640x360:fps=30,{finish}[sv2]"),
+            format!("[tv0_2]trim=start_frame=75:end_frame=135,setpts=PTS-STARTPTS,{fit},fps=30,zoompan=z='1+(1.18-1)*min(clip((on-(0))/6,0,1),clip((60-1-on)/6,0,1))':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=640x360:fps=30,format=yuv420p[sv2]"),
             format!("[tv0_3]trim=start_frame=135:end_frame=220,setpts=PTS-STARTPTS,{fit},{finish}[sv3]"),
             format!("[1:v]trim=end_frame=75,setpts=PTS-STARTPTS,scale=640:360,setsar=1,{finish}[sv4]"),
             "[sv0][sv1][sv2][sv3][sv4]concat=n=5:v=1:a=0[vout]".to_string(),
