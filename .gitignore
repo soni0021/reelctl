@@ -13,3 +13,7 @@
 
 # Local secrets (API keys) are never committed
 .env
+.env.local
+.env.*.local
+*.pem
+*.key
