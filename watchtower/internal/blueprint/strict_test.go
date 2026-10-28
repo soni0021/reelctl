@@ -18,8 +18,8 @@ func loadErr(t *testing.T, body string) error {
 	return err
 }
 
-func TestLoadDNAAcceptsSchemaVersionsOneToThree(t *testing.T) {
-	for _, v := range []string{"1", "2", "3"} {
+func TestLoadDNAAcceptsSchemaVersionsOneToFour(t *testing.T) {
+	for _, v := range []string{"1", "2", "3", "4"} {
 		body := strings.Replace(`{`+minimal+`}`, `"schema_version": 2`, `"schema_version": `+v, 1)
 		if err := loadErr(t, body); err != nil {
 			t.Errorf("version %s: %v", v, err)
@@ -30,7 +30,7 @@ func TestLoadDNAAcceptsSchemaVersionsOneToThree(t *testing.T) {
 func TestLoadDNARejectsAnUnknownOrMissingSchemaVersion(t *testing.T) {
 	cases := map[string]string{
 		"zero":    strings.Replace(`{`+minimal+`}`, `"schema_version": 2`, `"schema_version": 0`, 1),
-		"four":    strings.Replace(`{`+minimal+`}`, `"schema_version": 2`, `"schema_version": 4`, 1),
+		"five":    strings.Replace(`{`+minimal+`}`, `"schema_version": 2`, `"schema_version": 5`, 1),
 		"null":    strings.Replace(`{`+minimal+`}`, `"schema_version": 2`, `"schema_version": null`, 1),
 		"missing": strings.Replace(`{`+minimal+`}`, `"schema_version": 2, `, ``, 1),
 	}

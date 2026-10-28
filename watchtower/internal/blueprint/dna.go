@@ -84,7 +84,7 @@ func LoadDNA(path string) (DNA, error) {
 // visual_events, and 1 is the oldest file reelctl still reads.
 const (
 	minSchemaVersion = 1
-	maxSchemaVersion = 3
+	maxSchemaVersion = 4
 )
 
 // rawDNA is edit_dna.json with a pointer wherever a null or absent number

@@ -82,7 +82,7 @@ A creator gets a blueprint when at least 2 breakouts and at least 2 baseline pos
 
 Read from each `edit_dna.json`: `schema_version`, `duration_ms`, `cuts[].time_ms`, `silence_gaps[].duration_ms`, `words_per_minute`, `asr_backend`, `integrated_lufs`, and `visual_events[].kind`. Nothing else is read.
 
-A file the blueprint cannot trust is a failure for that post (stage `read_edit_dna`), never a zero: `schema_version` must be 1, 2 or 3 (2 is written on `main`, 3 by the `visual-motion` branch; absent or any other value is refused); `duration_ms` must be above 0; and `duration_ms`, `cuts`, `silence_gaps`, `words_per_minute`, `integrated_lufs`, every `cuts[].time_ms` and every `silence_gaps[].duration_ms` must be present and not `null`. An absent `visual_events` is still "not measured".
+A file the blueprint cannot trust is a failure for that post (stage `read_edit_dna`), never a zero: `schema_version` must be 1, 2, 3 or 4 (4 is written now: 3 added `visual_events`, 4 added `zoom_curves`, which the watchtower does not read; absent or any other value is refused); `duration_ms` must be above 0; and `duration_ms`, `cuts`, `silence_gaps`, `words_per_minute`, `integrated_lufs`, every `cuts[].time_ms` and every `silence_gaps[].duration_ms` must be present and not `null`. An absent `visual_events` is still "not measured".
 
 | Metric key | How it is measured |
 |---|---|
