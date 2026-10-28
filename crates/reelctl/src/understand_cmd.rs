@@ -207,7 +207,8 @@ fn plan(args: &UnderstandArgs, dna: &EditDna, catalog: &dyn ModelCatalog) -> Res
         .unwrap_or(0);
 
     let segment_text = segment_lines(&segments);
-    let text_tokens = estimate_input_tokens(0, system_prompt(), &segment_text);
+    let prompt = system_prompt(&segments);
+    let text_tokens = estimate_input_tokens(0, &prompt, &segment_text);
     let layout = choose_layout(
         args.sheet.mode(),
         times_ms.len(),
@@ -219,7 +220,7 @@ fn plan(args: &UnderstandArgs, dna: &EditDna, catalog: &dyn ModelCatalog) -> Res
         Layout::Single => times_ms.len(),
         Layout::Grid(n) => times_ms.len().div_ceil((n * n) as usize),
     };
-    let input_tokens = estimate_input_tokens(images, system_prompt(), &segment_text);
+    let input_tokens = estimate_input_tokens(images, &prompt, &segment_text);
     let refs: Vec<&EndpointInfo> = endpoints.iter().collect();
     let bound_usd = cost_upper_bound(input_tokens, DEFAULT_MAX_TOKENS, &refs);
     Ok(Plan {
@@ -376,7 +377,7 @@ pub fn understand(args: UnderstandArgs) -> Result<()> {
     let (images, frame_times) = images_for(&args, &plan)?;
     let request = VlmRequest {
         model: args.model.clone(),
-        system: system_prompt().to_string(),
+        system: system_prompt(&plan.segments),
         parts: build_parts(&images, &plan.segments),
         schema: response_schema(),
         max_tokens: DEFAULT_MAX_TOKENS,
