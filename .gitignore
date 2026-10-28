@@ -10,3 +10,6 @@
 
 # Real reels and their analysis output are never committed
 /Reels/
+
+# Local secrets (API keys) are never committed
+.env
