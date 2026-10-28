@@ -18,6 +18,10 @@ use crate::tracks::{check_editable, external_url, item_range, FADE_KEY, PUNCH_IN
 
 /// Sample rate of the rendered audio. Every segment is resampled to it.
 pub const AUDIO_SAMPLE_RATE: u32 = 48_000;
+/// The longest side of the output, in pixels.
+pub const MAX_SIDE: u32 = 8192;
+/// The most pixels the output may have: 8K UHD, 7680 by 4320.
+pub const MAX_PIXELS: u64 = 7680 * 4320;
 /// Label of the video the graph produces.
 pub const VIDEO_LABEL: &str = "vout";
 /// Label of the audio the graph produces, when the project has an audio track.
@@ -242,12 +246,26 @@ pub fn build_render_plan(timeline: &Timeline, size: Option<RenderSize>) -> Resul
             size.width, size.height
         )));
     }
+    if size.width > MAX_SIDE
+        || size.height > MAX_SIDE
+        || u64::from(size.width) * u64::from(size.height) > MAX_PIXELS
+    {
+        return Err(TimelineError::invalid(format!(
+            "the output size {}x{} is too big: at most {MAX_SIDE} pixels on a side and {MAX_PIXELS} in all",
+            size.width, size.height
+        )));
+    }
     let video = timeline
         .track(VIDEO_KIND)
         .ok_or_else(|| TimelineError::invalid("the project has no video track"))?;
     let audio = timeline.track(AUDIO_KIND);
     if video.children.is_empty() {
         return Err(TimelineError::invalid("the video track is empty"));
+    }
+    if crate::tracks::track_frames(video, rate)? == 0 {
+        return Err(TimelineError::invalid(
+            "the project has no frames: every item on the video track is empty",
+        ));
     }
     let frame_rate = frame_rate_arg(rate);
 
@@ -466,6 +484,7 @@ mod tests {
     use super::*;
     use crate::bridge::{attach_bridge, BridgeRequest};
     use crate::cut::{cut_silence, CutOptions};
+    use crate::otio::TimeRange;
     use crate::punch::{punch_in, PunchRequest};
     use crate::testutil::{dna, project};
 
@@ -645,5 +664,49 @@ mod tests {
     fn a_project_from_another_tool_has_no_size_to_render_with() {
         let timeline = Timeline::from_json(include_str!("../tests/reference.otio")).expect("parse");
         assert!(build_render_plan(&timeline, None).is_err());
+    }
+
+    fn size(width: u32, height: u32) -> Option<RenderSize> {
+        Some(RenderSize { width, height })
+    }
+
+    #[test]
+    fn the_output_size_is_capped_by_side_and_by_pixels() {
+        let timeline = project(30.0, 300);
+        assert!(build_render_plan(&timeline, size(7680, 4320)).is_ok());
+        assert!(build_render_plan(&timeline, size(8192, 2)).is_ok());
+        for (width, height) in [(8194, 2), (2, 8194), (8192, 4096), (4096, 8192)] {
+            let error = build_render_plan(&timeline, size(width, height)).expect_err("too big");
+            let text = error.to_string();
+            assert!(text.contains(&format!("{width}x{height}")), "{text}");
+            assert!(text.contains("8192") && text.contains("33177600"), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_source_size_above_the_cap_cannot_be_the_default_size() {
+        let json = project(30.0, 300)
+            .to_json()
+            .expect("json")
+            .replace("\"width\": 640", "\"width\": 10000");
+        let timeline = Timeline::from_json(&json).expect("parse");
+        let error = build_render_plan(&timeline, None).expect_err("too wide");
+        assert!(error.to_string().contains("10000"), "{error}");
+        // The recorded size is wrong whatever the output size is.
+        assert!(build_render_plan(&timeline, size(640, 360)).is_err());
+    }
+
+    #[test]
+    fn a_project_with_no_frames_does_not_render() {
+        let mut timeline = project(30.0, 300);
+        for track in &mut timeline.tracks.children {
+            for item in &mut track.children {
+                if let Item::Clip(clip) = item {
+                    clip.source_range = Some(TimeRange::new(0.0, 0.0, 30.0));
+                }
+            }
+        }
+        let error = build_render_plan(&timeline, None).expect_err("empty");
+        assert!(error.to_string().contains("no frames"), "{error}");
     }
 }

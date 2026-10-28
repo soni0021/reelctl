@@ -8,6 +8,7 @@ use crate::otio::{
     reelctl, update_reelctl, Clip, ExternalReference, Item, MediaReference, TimeRange, Timeline,
     Track, AUDIO_KIND, VIDEO_KIND,
 };
+use crate::render::MAX_SIDE;
 
 /// The key under `metadata.reelctl` of a timeline that records its edit DNA.
 pub const DNA_KEY: &str = "dna";
@@ -150,6 +151,17 @@ pub fn media_info(timeline: &Timeline) -> Result<MediaInfo> {
             ) else {
                 continue;
             };
+            let sides = 1.0..=f64::from(MAX_SIDE);
+            if !sides.contains(&width) || !sides.contains(&height) {
+                return Err(TimelineError::invalid(format!(
+                    "\"{path}\": metadata.reelctl.{MEDIA_KEY} says {width}x{height}; each side must be 1 to {MAX_SIDE} pixels"
+                )));
+            }
+            if !fps.is_finite() || fps <= 0.0 || !(1.0..=f64::from(i32::MAX)).contains(&frames) {
+                return Err(TimelineError::invalid(format!(
+                    "\"{path}\": metadata.reelctl.{MEDIA_KEY} says {frames} frames at {fps} fps; both must be above 0"
+                )));
+            }
             return Ok(MediaInfo {
                 path,
                 fps,

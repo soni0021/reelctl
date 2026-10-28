@@ -1,13 +1,13 @@
 //! `timeline cut-silence`: remove silence gaps (and filler words) from both tracks.
 
-use edit_dna::{AsrBackend, EditDna};
+use edit_dna::{AsrBackend, EditDna, Word};
 use serde_json::{json, Value};
 
 use crate::error::{Result, TimelineError};
 use crate::otio::{update_reelctl, Item, MediaReference, Timeline, Track, VIDEO_KIND};
 use crate::tracks::{
     ceil_frame, check_editable, external_url, floor_frame, frame_ms, frames_of, item_range, piece,
-    timeline_frames, FADE_KEY,
+    project_rate, timeline_frames, FADE_KEY,
 };
 
 /// The key under the timeline's `metadata.reelctl` that lists the removed spans.
@@ -86,6 +86,17 @@ fn normalize(word: &str) -> String {
         .collect()
 }
 
+/// The words of the DNA that are words. Only a speech recognizer gives them; the
+/// voiced bursts of the fallback estimator are not words, so they neither protect
+/// footage nor hold a cut back.
+fn real_words(dna: &EditDna) -> &[Word] {
+    if dna.asr_backend == AsrBackend::WhisperCpp {
+        &dna.words
+    } else {
+        &[]
+    }
+}
+
 fn raw_spans(dna: &EditDna, options: &CutOptions) -> Vec<Raw> {
     let mut spans = Vec::new();
     for gap in &dna.silence_gaps {
@@ -101,25 +112,23 @@ fn raw_spans(dna: &EditDna, options: &CutOptions) -> Vec<Raw> {
             });
         }
     }
-    // Only a speech recognizer gives words. Voiced bursts are not words.
-    if dna.asr_backend == AsrBackend::WhisperCpp {
-        let fillers: Vec<String> = options
-            .fillers
-            .iter()
-            .map(|word| normalize(word))
-            .filter(|word| !word.is_empty())
-            .collect();
-        for (index, word) in dna.words.iter().enumerate() {
-            if word.end_ms > word.start_ms && fillers.contains(&normalize(&word.text)) {
-                spans.push(Raw {
-                    start_ms: word.start_ms,
-                    end_ms: word.end_ms,
-                    start_silence: false,
-                    end_silence: false,
-                    silence: false,
-                    fillers: vec![index],
-                });
-            }
+    let words = real_words(dna);
+    let fillers: Vec<String> = options
+        .fillers
+        .iter()
+        .map(|word| normalize(word))
+        .filter(|word| !word.is_empty())
+        .collect();
+    for (index, word) in words.iter().enumerate() {
+        if word.end_ms > word.start_ms && fillers.contains(&normalize(&word.text)) {
+            spans.push(Raw {
+                start_ms: word.start_ms,
+                end_ms: word.end_ms,
+                start_silence: false,
+                end_silence: false,
+                silence: false,
+                fillers: vec![index],
+            });
         }
     }
     // Earliest first; at a tie the silence, whose edge snaps inward, leads.
@@ -139,6 +148,61 @@ fn raw_spans(dna: &EditDna, options: &CutOptions) -> Vec<Raw> {
         }
     }
     merged
+        .into_iter()
+        .flat_map(|span| split_around_words(span, words))
+        .collect()
+}
+
+/// `span` without the words that lie in it. A word that is not a filler of the span
+/// is kept whole, so a silence span that has a word inside it (or one that starts or
+/// ends inside the span) is cut in pieces around the word. The edges the words make
+/// are pause edges: they snap away from the word.
+fn split_around_words(span: Raw, words: &[Word]) -> Vec<Raw> {
+    let mut protected: Vec<(u64, u64)> = words
+        .iter()
+        .enumerate()
+        .filter(|(index, word)| {
+            !span.fillers.contains(index)
+                && word.end_ms > word.start_ms
+                && word.start_ms < span.end_ms
+                && word.end_ms > span.start_ms
+        })
+        .map(|(_, word)| (word.start_ms, word.end_ms))
+        .collect();
+    protected.sort_unstable();
+    let piece = |start_ms: u64, end_ms: u64, start_silence: bool, end_silence: bool| Raw {
+        start_ms,
+        end_ms,
+        start_silence,
+        end_silence,
+        silence: span.silence,
+        fillers: span
+            .fillers
+            .iter()
+            .copied()
+            .filter(|&index| {
+                words
+                    .get(index)
+                    .is_some_and(|word| word.start_ms < end_ms && word.end_ms > start_ms)
+            })
+            .collect(),
+    };
+    let mut pieces = Vec::new();
+    let mut cursor = span.start_ms;
+    let mut cursor_silence = span.start_silence;
+    for (from, to) in protected {
+        if from > cursor {
+            pieces.push(piece(cursor, from, cursor_silence, true));
+        }
+        if to > cursor {
+            cursor = to;
+            cursor_silence = true;
+        }
+    }
+    if cursor < span.end_ms {
+        pieces.push(piece(cursor, span.end_ms, cursor_silence, span.end_silence));
+    }
+    pieces
 }
 
 /// Frames `[start, end)` to take out for `span`. A silence edge snaps into the
@@ -156,15 +220,14 @@ fn snap(span: &Raw, dna: &EditDna, rate: f64) -> (i64, i64) {
         ceil_frame(span.end_ms, rate)
     };
     let neighbour = |index: usize| span.fillers.contains(&index);
-    let previous_end = dna
-        .words
+    let words = real_words(dna);
+    let previous_end = words
         .iter()
         .enumerate()
         .filter(|(index, word)| !neighbour(*index) && word.start_ms < span.start_ms)
         .map(|(_, word)| word.end_ms)
         .max();
-    let next_start = dna
-        .words
+    let next_start = words
         .iter()
         .enumerate()
         .filter(|(index, word)| !neighbour(*index) && word.end_ms > span.end_ms)
@@ -251,13 +314,7 @@ pub fn cut_silence(
     options: &CutOptions,
 ) -> Result<CutReport> {
     let rate = check_editable(timeline)?;
-    let media_ms = media_length_ms(timeline, rate)?;
-    if dna.duration_ms.abs_diff(media_ms) > DURATION_TOLERANCE_MS {
-        return Err(TimelineError::invalid(format!(
-            "the edit DNA is {} ms long and the project's media is {media_ms} ms; they are not the same file",
-            dna.duration_ms
-        )));
-    }
+    check_dna_length(timeline, dna.duration_ms)?;
 
     let snapped: Vec<(Raw, (i64, i64))> = raw_spans(dna, options)
         .into_iter()
@@ -287,7 +344,7 @@ pub fn cut_silence(
             let text: Vec<&str> = span
                 .fillers
                 .iter()
-                .filter_map(|&index| dna.words.get(index))
+                .filter_map(|&index| real_words(dna).get(index))
                 .map(|word| word.text.as_str())
                 .collect();
             removed.push(RemovedSpan {
@@ -305,6 +362,8 @@ pub fn cut_silence(
         }
     }
     if removed.is_empty() {
+        // Nothing to take out, but the fade is an argument like the others.
+        set_fades(timeline, options.fade_ms);
         return Ok(CutReport::default());
     }
 
@@ -334,6 +393,19 @@ pub fn cut_silence(
     check_editable(&work)?;
     *timeline = work;
     Ok(CutReport { removed })
+}
+
+/// Check that an edit DNA of `duration_ms` is of the project's media: the lengths
+/// may differ by [`DURATION_TOLERANCE_MS`] and no more.
+pub fn check_dna_length(timeline: &Timeline, duration_ms: u64) -> Result<()> {
+    let rate = project_rate(timeline)?;
+    let media_ms = media_length_ms(timeline, rate)?;
+    if duration_ms.abs_diff(media_ms) > DURATION_TOLERANCE_MS {
+        return Err(TimelineError::invalid(format!(
+            "the edit DNA is {duration_ms} ms long and the project's media is {media_ms} ms; they are not the same file"
+        )));
+    }
+    Ok(())
 }
 
 /// Length of the media in milliseconds: the `available_range` of its reference.
@@ -684,5 +756,176 @@ mod tests {
         let error = cut_silence(&mut timeline, &gaps, &options()).expect_err("empty");
         assert!(error.to_string().contains("nothing"), "{error}");
         assert_eq!(timeline.to_json().expect("json"), before);
+    }
+
+    fn spans_of(report: &CutReport) -> Vec<(i64, i64)> {
+        report
+            .removed
+            .iter()
+            .map(|span| (span.start_frame, span.end_frame))
+            .collect()
+    }
+
+    fn fade_of(item: &Item) -> Option<u64> {
+        reelctl(item.metadata())
+            .and_then(|map| map.get("fade_ms"))
+            .and_then(|value| value.as_u64())
+    }
+
+    #[test]
+    fn a_word_wholly_inside_a_silence_span_is_not_cut() {
+        let mut timeline = ten_seconds();
+        let spoken = with_words(
+            dna(10_000, 100.0, &[(1_000, 1_500)]),
+            &[("hello", 1_100, 1_300)],
+        );
+        let report = cut_silence(&mut timeline, &spoken, &options()).expect("cut");
+        // The silence is removed on both sides of the word; frames 110..130 stay.
+        assert_eq!(spans_of(&report), vec![(100, 110), (130, 150)]);
+        assert_eq!(kept(&timeline), vec![(0, 100), (110, 20), (150, 850)]);
+        check_editable(&timeline).expect("tracks match");
+    }
+
+    #[test]
+    fn several_words_inside_a_span_split_it_around_each() {
+        let mut timeline = ten_seconds();
+        let spoken = with_words(
+            dna(10_000, 100.0, &[(1_000, 2_000)]),
+            &[
+                ("a", 1_100, 1_200),
+                ("b", 1_500, 1_600),
+                ("c", 1_550, 1_900),
+            ],
+        );
+        let report = cut_silence(&mut timeline, &spoken, &options()).expect("cut");
+        assert_eq!(spans_of(&report), vec![(100, 110), (120, 150), (190, 200)]);
+    }
+
+    #[test]
+    fn a_word_that_ends_inside_the_span_or_covers_it_all_is_kept_too() {
+        let mut timeline = ten_seconds();
+        let spoken = with_words(
+            dna(10_000, 100.0, &[(1_000, 1_500), (3_000, 3_500)]),
+            &[("a", 900, 1_200), ("b", 2_900, 3_600)],
+        );
+        let report = cut_silence(&mut timeline, &spoken, &options()).expect("cut");
+        assert_eq!(spans_of(&report), vec![(120, 150)]);
+    }
+
+    #[test]
+    fn bursts_neither_protect_nor_hold_back_a_cut() {
+        // Voiced bursts are not words: a pseudo-word inside the gap, or one that
+        // starts inside it, must not shorten the cut.
+        let mut timeline = ten_seconds();
+        let mut bursts = with_words(
+            dna(10_000, 100.0, &[(1_000, 1_500), (3_000, 3_500)]),
+            &[("burst", 1_100, 1_300), ("burst", 3_400, 3_900)],
+        );
+        bursts.asr_backend = AsrBackend::SilenceBursts;
+        let report = cut_silence(&mut timeline, &bursts, &options()).expect("cut");
+        assert_eq!(spans_of(&report), vec![(100, 150), (300, 350)]);
+    }
+
+    #[test]
+    fn the_dna_may_be_100_ms_off_the_media_and_no_more() {
+        let timeline = ten_seconds();
+        for ms in [9_900, 10_000, 10_100] {
+            check_dna_length(&timeline, ms).unwrap_or_else(|error| panic!("{ms}: {error}"));
+        }
+        for ms in [9_899, 10_101, 10_500, 30_000] {
+            let error = check_dna_length(&timeline, ms).expect_err("too far off");
+            assert!(error.to_string().contains(&ms.to_string()), "{error}");
+        }
+        let mut near = ten_seconds();
+        let gaps = dna(10_101, 100.0, &[(2_000, 2_500)]);
+        assert!(cut_silence(&mut near, &gaps, &options()).is_err());
+        let mut within = ten_seconds();
+        let gaps = dna(10_100, 100.0, &[(2_000, 2_500)]);
+        assert!(cut_silence(&mut within, &gaps, &options()).is_ok());
+    }
+
+    #[test]
+    fn a_filler_is_held_off_the_next_word_by_rounding_down() {
+        // 30 fps. "go" starts at 2520 ms (frame 75.6). "um" ends at 2515 ms, which
+        // rounds up to frame 76: that would take the first 13 ms of "go".
+        let mut timeline = project(30.0, 300);
+        let spoken = with_words(
+            dna(10_000, 30.0, &[]),
+            &[("um", 2_000, 2_515), ("go", 2_520, 3_000)],
+        );
+        let report = cut_silence(&mut timeline, &spoken, &options()).expect("cut");
+        assert_eq!(spans_of(&report), vec![(60, 75)]);
+    }
+
+    #[test]
+    fn a_silence_and_a_filler_that_start_together_snap_as_a_silence() {
+        // 30 fps: 1010 ms is frame 30.3. A silence start snaps up to 31; a word
+        // start snaps down to 30. At a tie the silence leads.
+        let mut timeline = project(30.0, 300);
+        let spoken = with_words(
+            dna(10_000, 30.0, &[(1_010, 1_800)]),
+            &[("um", 1_010, 1_300)],
+        );
+        let report = cut_silence(&mut timeline, &spoken, &options()).expect("cut");
+        assert_eq!(spans_of(&report), vec![(31, 54)]);
+        assert_eq!(report.removed[0].reason, "silence");
+        assert_eq!(report.removed[0].text.as_deref(), Some("um"));
+    }
+
+    #[test]
+    fn a_silence_and_a_filler_that_end_together_snap_as_a_silence() {
+        // 30 fps: 1510 ms is frame 45.3. A silence end snaps down to 45; a word
+        // end snaps up to 46. At a tie the silence wins, whichever came first.
+        let mut filler_first = project(30.0, 300);
+        let spoken = with_words(
+            dna(10_000, 30.0, &[(1_200, 1_510)]),
+            &[("um", 1_000, 1_510)],
+        );
+        let report = cut_silence(&mut filler_first, &spoken, &options()).expect("cut");
+        assert_eq!(spans_of(&report), vec![(30, 45)]);
+
+        let mut silence_first = project(30.0, 300);
+        let spoken = with_words(
+            dna(10_000, 30.0, &[(1_000, 1_510)]),
+            &[("um", 1_200, 1_510)],
+        );
+        let report = cut_silence(&mut silence_first, &spoken, &options()).expect("cut");
+        assert_eq!(spans_of(&report), vec![(30, 45)]);
+    }
+
+    #[test]
+    fn the_fade_argument_is_applied_when_nothing_is_removed() {
+        let mut timeline = ten_seconds();
+        let gaps = dna(10_000, 100.0, &[(2_000, 2_500)]);
+        cut_silence(&mut timeline, &gaps, &options()).expect("cut");
+        let again = CutOptions {
+            fade_ms: 45,
+            ..options()
+        };
+        let report = cut_silence(&mut timeline, &gaps, &again).expect("again");
+        assert!(report.removed.is_empty(), "{report:?}");
+        for track in &timeline.tracks.children {
+            for item in &track.children {
+                assert_eq!(fade_of(item), Some(45), "{}", track.kind);
+            }
+        }
+        // The same arguments again change nothing.
+        let once = timeline.to_json().expect("json");
+        cut_silence(&mut timeline, &gaps, &again).expect("third");
+        assert_eq!(timeline.to_json().expect("json"), once);
+    }
+
+    #[test]
+    fn a_project_with_no_gaps_still_takes_the_fade() {
+        let mut timeline = ten_seconds();
+        let nothing = dna(10_000, 100.0, &[]);
+        let fade = CutOptions {
+            fade_ms: 45,
+            ..options()
+        };
+        let report = cut_silence(&mut timeline, &nothing, &fade).expect("cut");
+        assert!(report.removed.is_empty());
+        let video = timeline.track(VIDEO_KIND).expect("video");
+        assert_eq!(fade_of(&video.children[0]), Some(45));
     }
 }

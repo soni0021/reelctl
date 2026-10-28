@@ -3,7 +3,7 @@
 use serde_json::{json, Value};
 
 use crate::error::{Result, TimelineError};
-use crate::otio::{update_reelctl, Item, RationalTime, Timeline, VIDEO_KIND};
+use crate::otio::{reelctl, update_reelctl, Clip, Item, RationalTime, Timeline, VIDEO_KIND};
 use crate::tracks::{
     check_editable, external_url, frame_ms, item_range, round_frame, split_at, timeline_frames,
     PUNCH_IN_KEY,
@@ -36,6 +36,10 @@ pub struct PunchReport {
 /// hold it, and bring it back over the last [`RAMP_FRAMES`] frames before `end_ms`.
 /// The clips under the span are split at its ends, so the zoom is a property of
 /// whole clips; the audio is split in step and left alone.
+///
+/// A punch-in replaces any earlier one it overlaps, on the frames they share. The
+/// earlier one ends (or, past the new span, starts) cleanly at the new span's edge:
+/// it ramps back to 1.0 there, so the zoom never jumps.
 pub fn punch_in(timeline: &mut Timeline, request: &PunchRequest) -> Result<PunchReport> {
     let rate = check_editable(timeline)?;
     if !request.scale.is_finite() || request.scale <= 1.0 || request.scale > MAX_SCALE {
@@ -87,6 +91,8 @@ pub fn punch_in(timeline: &mut Timeline, request: &PunchRequest) -> Result<Punch
                         map.insert(PUNCH_IN_KEY.to_string(), zoom);
                     });
                     clips += 1;
+                } else if !inside {
+                    trim_earlier(clip, position, duration, (start, end), rate)?;
                 }
             }
             position += duration;
@@ -105,6 +111,44 @@ pub fn punch_in(timeline: &mut Timeline, request: &PunchRequest) -> Result<Punch
         end_frame: end,
         clips,
     })
+}
+
+/// A piece outside the new span `(start, end)` that carries an earlier punch-in
+/// running into the span: the earlier one now ends at `start` (for a piece before
+/// the span) or starts at `end` (for a piece after it). The times are in the
+/// piece's own frames.
+fn trim_earlier(
+    clip: &mut Clip,
+    position: i64,
+    duration: i64,
+    (start, end): (i64, i64),
+    rate: f64,
+) -> Result<()> {
+    let time_of = |key: &str| -> Option<f64> {
+        reelctl(&clip.metadata)?
+            .get(PUNCH_IN_KEY)?
+            .get(key)?
+            .get("value")?
+            .as_f64()
+    };
+    let (Some(old_start), Some(old_end)) = (time_of("start"), time_of("end")) else {
+        return Ok(());
+    };
+    let (key, frames) = if position + duration <= start && position as f64 + old_end > start as f64
+    {
+        ("end", start - position)
+    } else if position >= end && (position as f64 + old_start) < end as f64 {
+        ("start", end - position)
+    } else {
+        return Ok(());
+    };
+    let value = time_value(frames, rate)?;
+    update_reelctl(&mut clip.metadata, |map| {
+        if let Some(Value::Object(punch)) = map.get_mut(PUNCH_IN_KEY) {
+            punch.insert(key.to_string(), value);
+        }
+    });
+    Ok(())
 }
 
 fn time_value(frames: i64, rate: f64) -> Result<Value> {
@@ -260,5 +304,104 @@ mod tests {
         let mut timeline = project(100.0, 1000);
         let report = punch_in(&mut timeline, &request(2_004, 3_996, 1.2)).expect("punch");
         assert_eq!((report.start_frame, report.end_frame), (200, 400));
+    }
+
+    /// The zoom factor at timeline `frame`, from the recorded punch-ins, with the
+    /// formula the renderer's `zoompan` uses (`on` counts frames of the piece).
+    fn scale_at(timeline: &Timeline, frame: i64) -> f64 {
+        let video = timeline.track(VIDEO_KIND).expect("video");
+        let mut position = 0;
+        for item in &video.children {
+            let (_, duration) = item_range(item, 100.0).expect("range");
+            if frame < position + duration {
+                let Some(zoom) = zoom_of(item) else {
+                    return 1.0;
+                };
+                let number = |value: &Value| value.as_f64().expect("number");
+                let scale = number(&zoom["scale"]);
+                let ramp = number(&zoom["ramp_frames"]);
+                let start = number(&zoom["start"]["value"]);
+                let end = number(&zoom["end"]["value"]);
+                let on = (frame - position) as f64;
+                let up = ((on - start) / ramp).clamp(0.0, 1.0);
+                let down = ((end - 1.0 - on) / ramp).clamp(0.0, 1.0);
+                return 1.0 + (scale - 1.0) * up.min(down);
+            }
+            position += duration;
+        }
+        1.0
+    }
+
+    /// The largest change in zoom between two neighbouring frames.
+    fn largest_step(timeline: &Timeline) -> f64 {
+        let total = timeline_frames(timeline).expect("frames");
+        (1..total)
+            .map(|frame| (scale_at(timeline, frame) - scale_at(timeline, frame - 1)).abs())
+            .fold(0.0, f64::max)
+    }
+
+    #[test]
+    fn a_partly_overlapping_second_punch_in_does_not_jump() {
+        let mut timeline = project(100.0, 1000);
+        punch_in(&mut timeline, &request(2_000, 4_000, 1.5)).expect("first");
+        punch_in(&mut timeline, &request(3_000, 5_000, 1.5)).expect("second");
+        // No frame-to-frame step is bigger than one ramp step, (1.5 - 1) / 6.
+        let step = largest_step(&timeline);
+        assert!(step <= 0.5 / 6.0 + 1e-9, "a step of {step}");
+        // The first ends cleanly where the second begins, and the second holds
+        // its full scale.
+        assert_eq!(scale_at(&timeline, 299), 1.0);
+        assert_eq!(scale_at(&timeline, 300), 1.0);
+        assert_eq!(scale_at(&timeline, 400), 1.5);
+        assert_eq!(scale_at(&timeline, 499), 1.0);
+        // The first still holds its scale before its own ramp out.
+        assert_eq!(scale_at(&timeline, 250), 1.5);
+        assert_eq!(scale_at(&timeline, 204), 1.0 + 0.5 * 4.0 / 6.0);
+    }
+
+    #[test]
+    fn a_later_punch_in_in_the_middle_of_an_earlier_one_splits_it_cleanly() {
+        let mut timeline = project(100.0, 1000);
+        punch_in(&mut timeline, &request(2_000, 6_000, 1.4)).expect("first");
+        punch_in(&mut timeline, &request(3_000, 4_000, 1.8)).expect("second");
+        let step = largest_step(&timeline);
+        assert!(step <= 0.8 / 6.0 + 1e-9, "a step of {step}");
+        assert_eq!(scale_at(&timeline, 250), 1.4);
+        assert_eq!(scale_at(&timeline, 299), 1.0);
+        assert_eq!(scale_at(&timeline, 350), 1.8);
+        assert_eq!(scale_at(&timeline, 400), 1.0);
+        assert_eq!(scale_at(&timeline, 500), 1.4);
+        assert_eq!(scale_at(&timeline, 599), 1.0);
+    }
+
+    #[test]
+    fn a_later_punch_in_over_an_earlier_one_replaces_it_where_they_overlap() {
+        // The same span with another scale replaces the first on every frame.
+        let mut timeline = project(100.0, 1000);
+        punch_in(&mut timeline, &request(2_000, 4_000, 1.5)).expect("first");
+        punch_in(&mut timeline, &request(2_000, 4_000, 1.2)).expect("second");
+        assert_eq!(scale_at(&timeline, 300), 1.2);
+        assert!(largest_step(&timeline) <= 0.2 / 6.0 + 1e-9);
+    }
+
+    #[test]
+    fn overlapping_punch_ins_across_a_join_do_not_jump_either() {
+        let mut timeline = project(100.0, 1000);
+        let gaps = dna(10_000, 100.0, &[(2_500, 3_000)]);
+        cut_silence(&mut timeline, &gaps, &CutOptions::default()).expect("cut");
+        punch_in(&mut timeline, &request(2_000, 4_000, 1.5)).expect("first");
+        punch_in(&mut timeline, &request(3_000, 5_000, 1.3)).expect("second");
+        let step = largest_step(&timeline);
+        assert!(step <= 0.5 / 6.0 + 1e-9, "a step of {step}");
+    }
+
+    #[test]
+    fn the_same_overlapping_pair_twice_gives_the_same_project() {
+        let mut timeline = project(100.0, 1000);
+        punch_in(&mut timeline, &request(2_000, 4_000, 1.5)).expect("first");
+        punch_in(&mut timeline, &request(3_000, 5_000, 1.5)).expect("second");
+        let once = timeline.to_json().expect("json");
+        punch_in(&mut timeline, &request(3_000, 5_000, 1.5)).expect("again");
+        assert_eq!(timeline.to_json().expect("json"), once);
     }
 }
