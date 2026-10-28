@@ -231,6 +231,207 @@ tonespeech() {
   rm -f "$base" "$speech"
 }
 
+# --- Clips for the visual-motion module: a static textured picture with planted
+# punch-ins, zoom-outs and overlay boxes, and no cut anywhere. ---------------
+
+motion_fps=24
+motion_zoom=0.18  # a punch-in scales the picture 1.00 -> 1.18
+motion_ease=6     # frames a zoom move takes (smoothstep from first to last)
+
+# One frame of fine texture: smooth noise at six sizes (6 to 44 px), a mild S
+# curve for edges, and different mixes in the three colour planes so luma and
+# chroma both carry detail. A scale by 1.18 moves every feature, so it changes
+# most pixels. The solid-colour fixtures do not: they look the same at every
+# scale. The noise is a sine hash of the pixel position, not the noise filter,
+# whose slice threads make the result depend on the thread count. Fixed
+# arithmetic means the same frame on every run, which the frame hashes show.
+texture_png() {
+  local out="$1" w="$2" h="$3"
+  # layer STEP SEED: a grid of hash noise with one cell per STEP pixels, scaled
+  # up smoothly, then cropped (the grid is a cell larger than the frame).
+  layer() {
+    local gw=$(( w / $1 + 2 )) gh=$(( h / $1 + 2 ))
+    echo "nullsrc=s=${gw}x${gh}:r=1,format=gray,geq=lum='255*(sin((X+$2)*12.9898+(Y+$2*3)*78.233)*43758.5453-floor(sin((X+$2)*12.9898+(Y+$2*3)*78.233)*43758.5453))',scale=$(( gw * $1 ))x$(( gh * $1 )):flags=bicubic,crop=${w}:${h}:0:0,format=gray"
+  }
+  local s_curve="curves=all='0/0 0.25/0.12 0.75/0.88 1/1'"
+  mkdir -p "$(dirname "$out")"
+  ffmpeg -y -hide_banner -loglevel error -filter_complex "
+    $(layer 30 1)[a];
+    $(layer 13 2),split[b1][b2];
+    $(layer 6 3),split[c1][c2];
+    $(layer 24 4)[d];
+    $(layer 10 5),split[e1][e2];
+    $(layer 44 6)[f];
+    [a][b1]blend=all_expr='A*0.55+B*0.45'[r1];
+    [r1][c1]blend=all_expr='A*0.8+B*0.2',${s_curve}[r];
+    [d][e1]blend=all_expr='A*0.55+B*0.45'[g1];
+    [g1][c2]blend=all_expr='A*0.8+B*0.2',${s_curve}[g];
+    [f][b2]blend=all_expr='A*0.6+B*0.4'[b3];
+    [b3][e2]blend=all_expr='A*0.8+B*0.2',${s_curve}[b];
+    [g][b][r]mergeplanes=0x001020:gbrp,format=rgb24[o]" \
+    -map "[o]" -frames:v 1 "$out"
+}
+
+# The 0..1 smoothstep that starts at frame $2 and takes motion_ease frames, as
+# an FFmpeg expression in the frame number given as the expression $1. scale
+# and crop do not agree on `n`: measured on FFmpeg 8.1, scale's n is one ahead of
+# the output frame index (frame 96 sees n=97) while crop's is the index. The
+# crop would centre each in-move frame on the wrong size, one frame off. So scale
+# takes the index from its timestamp, round(t*fps), and crop takes n. (crop's
+# `t` is not set, and its x and y fall back to 0.)
+ease_expr() {
+  local p="clip(($1-$2)/${motion_ease},0,1)"
+  echo "(${p}*${p}*(3-2*${p}))"
+}
+
+# Box geometry for a frame of $1 x $2 pixels, as "x y w h": 89% of the width and
+# as tall as makes 12% of the frame, every value even so the 4:2:0 chroma
+# does not blend at its edges. $3 is lower (a lower third) or upper.
+box_geometry() {
+  awk -v w="$1" -v h="$2" -v row="$3" 'function even(v) { return 2 * int(v / 2 + 0.5) }
+    BEGIN {
+      bw = even(0.89 * w); bh = even(0.12 * w * h / bw)
+      y = even((row == "upper" ? 0.20 : 0.78) * h - bh / 2)
+      print even((w - bw) / 2), y, bw, bh
+    }'
+}
+
+# motion_clip OUT WxH SECONDS EVENT...: the texture, still, with each EVENT
+# planted, over a 440 Hz tone, plus OUT with .mp4 replaced by .events.json listing
+# what was planted, sorted by time. The events, in any order:
+#   in:FRAME           a punch-in starts at FRAME: 1.00 -> 1.18 around the centre
+#   out:FRAME          a zoom-out starts at FRAME: 1.18 -> 1.00
+#   box:FRAME:END:ROW:TONE
+#                      an opaque box (12% of the frame, ROW lower|upper, TONE
+#                      dark|light) shows from FRAME up to END, or to the end if
+#                      END is "end"
+# A move takes motion_ease frames, so the first frame that shows it in full is
+# FRAME + motion_ease; that is `time_ms` and `frame_index` in the sidecar, the
+# convention of a cut and of `visual_events`. `start_ms` is where the move
+# begins. A box appears, or goes, in one frame.
+# The zoom is a scale (eval=frame) and a centred crop, so the real factor is the
+# scaled width over the frame width, which rounds to whole pixels: 637/540 =
+# 1.1796, not 1.18. The centre is the frame centre to within half a pixel.
+# The box is drawn after the zoom, so it does not scale. The encode has B-frames
+# and a keyframe every motion_gop frames, 28 unless set (4.0, 4.25, 6.0, 6.25 and
+# 8.0 s are frames 96, 102, 144, 150 and 192; the keyframes land on 84, 112, 140,
+# 168 and 196), so no keyframe lies inside a move or on a box's first frame, and a
+# decoder that skips frames, or a keyframe on an event, cannot be what finds one.
+motion_clip() (
+  video_codec=(-c:v libx264 -preset fast -crf 18 -profile:v high -g "${motion_gop:-28}" -bf 3 -sc_threshold 0 -pix_fmt yuv420p)
+  local out="$1" size="$2" seconds="$3"
+  shift 3
+  local w="${size%x*}" h="${size#*x}" frames=$(( seconds * motion_fps ))
+  local zoom_t="1" zoom_n="1" boxes="" events="" ev kind a b row tone x y bw bh colour
+  local dir sidecar="${out%.*}.events.json"
+  dir="$(mktemp -d -t reelctl-motion)"
+  texture_png "${dir}/texture.png" "$w" "$h"
+
+  # event_json KIND START_FRAME END_FRAME SCALE CENTER_X CENTER_Y AREA CHANGE
+  event_json() {
+    awk -v kind="$1" -v s="$2" -v e="$3" -v scale="$4" -v cx="$5" -v cy="$6" -v area="$7" -v change="$8" -v fps="$motion_fps" '
+      function num(v, d) { return v == "null" ? "null" : sprintf("%." d "f", v) }
+      BEGIN {
+        printf "    {\"kind\": \"%s\", \"start_ms\": %.0f, \"end_ms\": %.0f, \"time_ms\": %.0f, \"frame_index\": %d, ", kind, s * 1000 / fps, e * 1000 / fps, e * 1000 / fps, e
+        printf "\"start_frame\": %d, \"scale\": %s, \"center_x\": %s, \"center_y\": %s, \"area\": %s", s, num(scale, 4), num(cx, 4), num(cy, 4), num(area, 4)
+        if (change != "") printf ", \"change\": \"%s\"", change
+        printf "}"
+      }'
+  }
+  # Each line is "FRAME<tab>JSON" (the frame that shows the change in full), so
+  # the list can be sorted by time at the end.
+  add_event() { events+="$3"$'\t'"$(event_json "$@")"$'\n'; }
+
+  for ev in "$@"; do
+    IFS=: read -r kind a b row tone <<<"$ev"
+    case "$kind" in
+      in)
+        zoom_t+="+${motion_zoom}*$(ease_expr "round(t*${motion_fps})" "$a")"
+        zoom_n+="+${motion_zoom}*$(ease_expr n "$a")"
+        add_event punch_in "$a" $(( a + motion_ease )) "$(awk -v z="$motion_zoom" 'BEGIN { printf "%.4f", 1 + z }')" 0.5 0.5 null ""
+        ;;
+      out)
+        zoom_t+="-${motion_zoom}*$(ease_expr "round(t*${motion_fps})" "$a")"
+        zoom_n+="-${motion_zoom}*$(ease_expr n "$a")"
+        add_event zoom_out "$a" $(( a + motion_ease )) "$(awk -v z="$motion_zoom" 'BEGIN { printf "%.6f", 1 / (1 + z) }')" 0.5 0.5 null ""
+        ;;
+      box)
+        read -r x y bw bh < <(box_geometry "$w" "$h" "$row")
+        colour=0x101830; [ "$tone" = light ] && colour=0xF0F0E0
+        local stop="$b"; [ "$b" = end ] && stop=$(( frames + 1 ))
+        boxes+=",drawbox=x=${x}:y=${y}:w=${bw}:h=${bh}:color=${colour}:t=fill:enable='gte(n,${a})*lt(n,${stop})'"
+        local area cx cy
+        read -r area cx cy < <(awk -v x="$x" -v y="$y" -v bw="$bw" -v bh="$bh" -v w="$w" -v h="$h" \
+          'BEGIN { print bw * bh / (w * h), (x + bw / 2) / w, (y + bh / 2) / h }')
+        add_event overlay_change "$a" "$a" null "$cx" "$cy" "$area" appear
+        [ "$b" = end ] || add_event overlay_change "$b" "$b" null "$cx" "$cy" "$area" disappear
+        ;;
+      *)
+        echo "motion_clip: unknown event '${ev}'" >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  # The scaled size as a rounded pixel count; the crop centres on its own copy
+  # of the same size (see ease_expr for why there are two).
+  local sw="round(${w}*(${zoom_t}))" sh="round(${h}*(${zoom_t}))"
+  local cw="round(${w}*(${zoom_n}))" ch="round(${h}*(${zoom_n}))"
+  encode "$out" \
+    "[0:v]scale=w='${sw}':h='${sh}':eval=frame:flags=bicubic,crop=${w}:${h}:x='floor((${cw}-${w})/2)':y='floor((${ch}-${h})/2)'${boxes},format=yuv420p[v];[1:a]anull[a]" \
+    -loop 1 -framerate "$motion_fps" -t "$seconds" -i "${dir}/texture.png" \
+    -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=${seconds}"
+
+  # Sorted by frame (stable), then joined with commas.
+  events="$(printf '%s' "$events" | sort -n -s -k1,1 | cut -f2- | awk 'NR > 1 { printf ",\n" } { printf "%s", $0 }')"
+  {
+    printf '{\n  "fixture": "%s",\n  "width": %d,\n  "height": %d,\n  "fps": %d,\n  "duration_s": %d,\n  "events": [' \
+      "$(basename "${out%.*}")" "$w" "$h" "$motion_fps" "$seconds"
+    [ -n "$events" ] && printf '\n%s\n  ' "$events"
+    printf ']\n}\n'
+  } > "$sidecar"
+  rm -rf "$dir"
+)
+
+# 12 s, 540x960 portrait (a reel's shape): a punch-in at 4.0 s (frame 96), a
+# zoom-out at 6.0 s (frame 144) and a dark lower-third box from 8.0 s (frame
+# 192) to the end. No cut. still12 has the same picture and none of the edits.
+motion12() {
+  motion_clip "$1" 540x960 12 in:96 out:144 box:192:end:lower:dark
+}
+
+still12() {
+  motion_clip "$1" 540x960 12
+}
+
+# motion12 at 640x360 landscape, whose luma grid has other steps and a shape.
+motion12_wide() {
+  motion_clip "$1" 640x360 12 in:96 out:144 box:192:end:lower:dark
+}
+
+# 60 s, 540x960, for the cost of the scale fit (solid-colour bench60 never runs
+# it). A punch-in every 5 s from 2 s, each undone 1 s later, so a move every
+# 2.5 s; boxes 20-30 s (dark, lower), 40-45 s (light, upper) and from 54.2 s
+# (dark, lower), none within 6 frames of a zoom. Every 28th frame would put a
+# keyframe inside seven of the 24 moves (found by listing the keyframes against
+# the sidecar); a keyframe every 95 frames lands inside none.
+bench60_textured() {
+  local motion_gop=95 args=() k
+  for k in $(seq 0 11); do
+    args+=("in:$(( 48 + 120 * k ))" "out:$(( 72 + 120 * k ))")
+  done
+  motion_clip "$1" 540x960 60 "${args[@]}" box:480:720:lower:dark box:960:1080:upper:light box:1300:end:lower:dark
+}
+
+# motion_clip wants its events in time order; this sorts them by start frame.
+motion_clip_sorted() {
+  local out="$1" size="$2" seconds="$3"
+  shift 3
+  local sorted=()
+  while IFS= read -r line; do sorted+=("$line"); done < <(printf '%s\n' "$@" | awk -F: '{ print $2, $0 }' | sort -n -k1,1 -s | cut -d' ' -f2-)
+  motion_clip "$out" "$size" "$seconds" "${sorted[@]}"
+}
+
 cmd="${1:-}"
 out="${2:-}"
 case "$cmd" in
@@ -279,6 +480,18 @@ case "$cmd" in
   noisy12)
     noisy12 "$out"
     ;;
+  motion12)
+    motion12 "$out"
+    ;;
+  still12)
+    still12 "$out"
+    ;;
+  motion12_wide)
+    motion12_wide "$out"
+    ;;
+  bench60_textured)
+    bench60_textured "$out"
+    ;;
   speech12)
     speech12 "$out"
     ;;
@@ -304,9 +517,13 @@ case "$cmd" in
     quiet12 "${dir}/quiet_12s.mp4"
     lecture70 "${dir}/lecture_70s.mp4"
     bench60 "${dir}/bench_60s.mp4"
+    motion12 "${dir}/motion12.mp4"
+    still12 "${dir}/still12.mp4"
+    motion12_wide "${dir}/motion12_wide.mp4"
+    bench60_textured "${dir}/bench60_textured.mp4"
     ;;
   *)
-    echo "usage: generate.sh draft12|draft12_10bit|draft12_44k|textured_cuts12|textured_cuts12_hevc|textured_cuts12_hevc8|textured_cuts12_hevc_full|resize12_hevc|shrink12_hevc|depth12_hevc|outlier12|noisy12|quiet12|lecture70|bench60|speech12|tonespeech|all [out.mp4]" >&2
+    echo "usage: generate.sh draft12|draft12_10bit|draft12_44k|textured_cuts12|textured_cuts12_hevc|textured_cuts12_hevc8|textured_cuts12_hevc_full|resize12_hevc|shrink12_hevc|depth12_hevc|outlier12|noisy12|quiet12|lecture70|bench60|motion12|still12|motion12_wide|bench60_textured|speech12|tonespeech|all [out.mp4]" >&2
     exit 2
     ;;
 esac
