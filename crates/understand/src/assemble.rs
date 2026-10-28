@@ -4,7 +4,11 @@ use edit_dna::Cut;
 
 use crate::backend::VlmReply;
 use crate::clips::ClipOutcome;
-use crate::types::{RunSettings, Segment, Understanding};
+use crate::types::{
+    Beat, CutLabel, ModelRun, RawBeat, RunSettings, Segment, Source, Summary, Understanding,
+    VisualEvent, VlmLabel, SCHEMA_VERSION,
+};
+use crate::{FRAME_CUT_OFFSET_MS, FRAME_MERGE_MS};
 
 /// Everything `assemble` needs. All of it is measured or already checked.
 #[derive(Debug, Clone)]
@@ -27,44 +31,159 @@ pub struct AssembleInput<'a> {
 /// each event's `t_s` snaps to the nearest sampled frame time (`seen_at_ms`), each cut
 /// gets the `vlm_label` of the event seen in the frame at its time plus or minus
 /// [`crate::FRAME_CUT_OFFSET_MS`], and every quote is copied from `segments`.
+///
+/// Where the contract leaves a choice, this is what happens:
+/// - A beat is dropped when either of its segment IDs is not in `segments`, when
+///   `start_segment` is after `end_segment`, or when the start time it gets is after
+///   the end time it gets. The model supplies no time and no quote, so nothing is
+///   repaired. The other beats keep the model's order.
+/// - When `segments` repeats an ID, the first one is used.
+/// - An event's `t_s` snaps to the nearest frame time; a tie goes to the earlier frame,
+///   whatever order `frame_times_ms` is in. A time before the first frame or after the
+///   last snaps to it, and so does an infinite one. An event with a `NaN` time, or with
+///   no frame times to snap to, is dropped.
+/// - `visual_events` is sorted by `seen_at_ms`; events at the same frame keep the
+///   model's order, so "first in the model's order" is the first of them.
+/// - A cut's frame is the nearest frame to its target (cut time plus the offset, then
+///   minus it), kept only if it lies within [`crate::FRAME_MERGE_MS`] of the target
+///   (100 ms counts). A frame without an event does not stop the search: the
+///   after-frame is tried first, and the before-frame is used when it has no label.
+///   The before-target is not clamped at 0, so a cut near the start cannot match a
+///   frame that is further away than the window.
+/// - Every cut gets an entry, in the order given.
 pub fn assemble(input: AssembleInput<'_>) -> Understanding {
-    // Stub: the mapping is built in its own task.
-    let _ = input;
+    let AssembleInput {
+        source_path,
+        duration_ms,
+        model_id,
+        segments,
+        cuts,
+        frame_times_ms,
+        reply,
+        clips,
+        settings,
+        cost_upper_bound_usd,
+    } = input;
+    let raw = &reply.reply;
+    let summary = &raw.video_summary;
+
+    let beats = raw
+        .beats
+        .iter()
+        .filter_map(|beat| place_beat(beat, segments))
+        .collect();
+
+    let mut visual_events: Vec<VisualEvent> = raw
+        .edit_events
+        .iter()
+        .filter_map(|event| {
+            Some(VisualEvent {
+                seen_at_ms: nearest_frame(frame_times_ms, event.t_s * 1_000.0)?,
+                kind: event.kind,
+                note: event.note.clone(),
+            })
+        })
+        .collect();
+    // A stable sort, so events at one frame stay in the model's order.
+    visual_events.sort_by_key(|event| event.seen_at_ms);
+
+    let cuts = cuts
+        .iter()
+        .map(|cut| CutLabel {
+            frame_index: cut.frame_index,
+            time_ms: cut.time_ms,
+            vlm_label: cut_label(cut, frame_times_ms, &visual_events),
+        })
+        .collect();
+
     Understanding {
-        schema_version: crate::types::SCHEMA_VERSION,
-        source: crate::types::Source {
-            path: String::new(),
-            duration_ms: 0,
+        schema_version: SCHEMA_VERSION,
+        source: Source {
+            path: source_path.to_string(),
+            duration_ms,
         },
-        model: crate::types::ModelRun {
-            id: String::new(),
-            provider: String::new(),
-            quantization: None,
-            input_tokens: 0,
-            output_tokens: 0,
-            cost_usd: None,
-            cost_upper_bound_usd: 0.0,
-            elapsed_ms: 0,
+        model: ModelRun {
+            id: model_id.to_string(),
+            provider: reply.provider.clone(),
+            quantization: reply.quantization.clone(),
+            input_tokens: reply.input_tokens,
+            output_tokens: reply.output_tokens,
+            cost_usd: reply.cost_usd,
+            cost_upper_bound_usd,
+            elapsed_ms: reply.elapsed_ms,
         },
-        settings: RunSettings {
-            every_s: 0,
-            sheet: String::new(),
-            segment_pause_ms: 0,
-            quant: Vec::new(),
+        settings,
+        segments: segments.to_vec(),
+        summary: Summary {
+            topic: summary.topic.clone(),
+            language: summary.language.clone(),
+            speaker_count: summary.speaker_count,
+            visual_formats: summary.visual_formats.clone(),
         },
-        segments: Vec::new(),
-        summary: crate::types::Summary {
-            topic: String::new(),
-            language: String::new(),
-            speaker_count: 0,
-            visual_formats: Vec::new(),
-        },
-        beats: Vec::new(),
-        visual_events: Vec::new(),
-        cuts: Vec::new(),
-        clips: Vec::new(),
-        rejected: Vec::new(),
+        beats,
+        visual_events,
+        cuts,
+        clips: clips.clips,
+        rejected: clips.rejected,
     }
+}
+
+/// The beat with its times taken from its segments, or `None` if it cannot be placed.
+fn place_beat(beat: &RawBeat, segments: &[Segment]) -> Option<Beat> {
+    if beat.start_segment > beat.end_segment {
+        return None;
+    }
+    let start = segments.iter().find(|s| s.id == beat.start_segment)?;
+    let end = segments.iter().find(|s| s.id == beat.end_segment)?;
+    if start.start_ms > end.end_ms {
+        return None;
+    }
+    Some(Beat {
+        start_segment: beat.start_segment,
+        end_segment: beat.end_segment,
+        start_ms: start.start_ms,
+        end_ms: end.end_ms,
+        kind: beat.kind.clone(),
+        summary: beat.summary.clone(),
+        visual: beat.visual.clone(),
+        insight_density: beat.insight_density,
+    })
+}
+
+/// The sampled frame time nearest to `target_ms`, the earlier one on a tie. `None`
+/// when there are no frames or the target is `NaN`.
+fn nearest_frame(frames: &[u64], target_ms: f64) -> Option<u64> {
+    if target_ms.is_nan() {
+        return None;
+    }
+    let first = frames.iter().copied().min()? as f64;
+    let last = frames.iter().copied().max()? as f64;
+    // Clamping keeps an infinite target at the end it points to.
+    let target = target_ms.clamp(first, last);
+    let distance = |frame: u64| (frame as f64 - target).abs();
+    frames
+        .iter()
+        .copied()
+        .min_by(|&a, &b| distance(a).total_cmp(&distance(b)).then(a.cmp(&b)))
+}
+
+/// The label of the first event seen in the frame after the cut, else in the frame before.
+fn cut_label(cut: &Cut, frames: &[u64], events: &[VisualEvent]) -> Option<VlmLabel> {
+    let time = cut.time_ms as f64;
+    let offset = FRAME_CUT_OFFSET_MS as f64;
+    [time + offset, time - offset]
+        .into_iter()
+        .find_map(|target| {
+            let frame = nearest_frame(frames, target)?;
+            if (frame as f64 - target).abs() > FRAME_MERGE_MS as f64 {
+                return None;
+            }
+            let event = events.iter().find(|event| event.seen_at_ms == frame)?;
+            Some(VlmLabel {
+                kind: event.kind,
+                note: event.note.clone(),
+            })
+        })
 }
 
 #[cfg(test)]
