@@ -68,7 +68,7 @@ Apple M3 MacBook Air, release build of `feature/visual-motion` ([spec](specs/vis
 | `motion12` (540×960 portrait, still texture, planted punch-in 1.18 at frame 102, zoom-out at frame 150, box covering 12.0% at frame 192) | Exactly three events at frames 102, 150 and 192, no cut: `punch_in` scale 1.1794 (planted 1.18, centre 0.5, 0.5), `zoom_out` scale 0.8479 (0.8475), `overlay_change` area 0.1162 (0.1204) |
 | `motion12_wide` (640×360 landscape copy) | The same three events at the same frames, scales 1.1794 and 0.8479, area 0.1161 |
 | `still12`, `draft12` (solid colour, one planted cut) | No event; the cut stays a cut |
-| `textured_cuts12` (probe the spec asked for: one shot zooms by itself over 300 frames, one has moving elements) | Cuts 3, 6, 9 s as before, no event: the slow source zoom is not a move that completes within 12 frames, which is the rule |
+| `textured_cuts12` (probe the spec asked for: one shot zooms by itself over 300 frames, one has moving elements) | Cuts 3, 6, 9 s as before, no event: the slow source zoom is not a move that completes within 600 ms, which is the rule (a run over 600 ms) |
 | `signal_ms` with the module against without it (release, median of 10 runs, 5 for the real files) | 60 s solid-colour `bench60`: 247 against 252 ms. `bench60_textured` (a punch-in every 5 s, where the scale fit runs): 397 against 370 ms (+7%). `motion12`: 160 against 158. The 180 s lecture proxy: 104 against 98. The 38.5 s NEET reel: 490 against 489 |
 | The 38.5 s NEET reel | The cut at 8.47 s as before and one `overlay_change` at 14.1 s covering 25% of the frame: checked by eye, the question card is swapped and the face shrinks above it |
 | The milk clip (15 s) | No event |
@@ -77,7 +77,7 @@ Apple M3 MacBook Air, release build of `feature/visual-motion` ([spec](specs/vis
 | Mutation check on the wiring | Pointing `visual_events` at an empty list fails the planted-event and the `diff` tests |
 | `cargo test --workspace` | 436 pass, 2 ignored (the whisper model tests); the detector adds 51 unit tests, `p0_fixture.rs` three end-to-end tests, and `edit-dna` four and `diff` five |
 
-Known limits: the thresholds are tuned on the planted clips and these four recordings and are untested on fast-cut footage; a speaker walking across a static background can be read as an overlay; a board that is written on reads as `overlay_change`, not as a slide change; a move slower than about 12 to 16 frames (a run over 600 ms) is not an event; `punch_in` is reported once at the frame where the move completes, so its start is not recorded.
+Known limits: the thresholds are tuned on the planted clips and these four recordings and are untested on fast-cut footage; a speaker walking across a static background can be read as an overlay; a board that is written on reads as `overlay_change`, not as a slide change; a move slower than 600 ms is not an event; `punch_in` is reported once at the frame where the move completes, so its start is not recorded.
 
 ## Long-to-short clipper, 2026-10-28
 
