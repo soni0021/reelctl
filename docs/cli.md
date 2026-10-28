@@ -209,11 +209,11 @@ reelctl understand --input talk.mp4 --dna talk.edit_dna.json --out talk.understa
 Without `--dry-run`, stdout gets two lines, the plan and the result:
 
 ```
-frames=346 images=87 sheet=2x2 segments=535 context_tokens=262144 input_tokens_estimate=139077 cost_upper_bound_usd=0.0276 max_cost_usd=0.50
+frames=346 images=87 sheet=2x2 segments=535 context_tokens=262144 input_tokens_estimate=139315 cost_upper_bound_usd=0.0277 max_cost_usd=0.50
 clips=3 rejected=1 model=qwen/qwen3.5-9b provider=Parasail cost_usd=0.0082 out=Reels/out/understand_runs/qwen35-9b.understanding.json
 ```
 
-`cost_upper_bound_usd` is an upper bound: it prices every input token at the highest eligible price and counts 1,445 tokens per image or sheet. Both lines above are real output for the 28.6-minute lecture (Qwen3.5-9B, 2026-10-28; the run wrote its file under `Reels/out/`): the bound was $0.0276 and the response reported $0.0082, with 65,852 input tokens against the 139,077 estimated, so the bound overestimates by about 2×. The 87 sheets and the transcript together billed 65,852 tokens, so a 2×2 sheet billed at most 757, well under 1,445.
+`cost_upper_bound_usd` is an upper bound: it prices every input token at the highest eligible price and counts 1,445 tokens per image or sheet. Both lines above are real output for the 28.6-minute lecture (Qwen3.5-9B, 2026-10-28; the run wrote its file under `Reels/out/`). The first is the `--dry-run` of the final prompt. The second is from the first live run, which used the first prompt: its bound was $0.0276 and the response reported $0.0082, with 65,852 input tokens against the 139,077 estimated then, so the bound overestimates by about 2×. The 87 sheets and the transcript together billed 65,852 tokens, so a 2×2 sheet billed at most 757, well under 1,445.
 
 What is sent to the model: a system prompt built for this video (its clip-length limit is counted in this video's segments, as a span of at most M segments counting both ends; a video under 70 s asks for one candidate with no 45–60 s aim; see [ADR-016](decisions/ADR-016-state-the-clip-length-in-segments-not-seconds.md)), the sampled frames (448 px JPEGs, each preceded by its time) and the transcript as numbered segments. Every request carries `data_collection: deny` and `require_parameters: true`. The API key is read only from the environment, sent only as a header, and never printed or written.
 
