@@ -10,33 +10,119 @@ use crate::IMAGE_TOKEN_ESTIMATE;
 const SYSTEM_PROMPT: &str = include_str!("prompt.md");
 const REPLY_SCHEMA: &str = include_str!("reply_schema.json");
 
+const LENGTH_RULE: &str = include_str!("length_rule.md");
+const LENGTH_RULE_SHORT: &str = include_str!("length_rule_short.md");
+
+/// A video shorter than this cannot hold a 45 to 60 s clip with room to spare, so it
+/// gets the one-candidate rule instead of the length aim.
+const SHORT_VIDEO_S: f64 = 70.0;
+
+/// `1 segment`, `2 segments`.
+fn segments_phrase(count: u32) -> String {
+    if count == 1 {
+        "1 segment".to_string()
+    } else {
+        format!("{count} segments")
+    }
+}
+
 /// The system prompt (the Component 3 rubric). The length guidance is counted in
 /// segments, because a model can count IDs but cannot add up times over thousands of
 /// tokens: it uses this video's mean segment length (first start to last end over the
-/// number of segments, pauses included). With no usable segments it assumes 3 s.
+/// number of segments, pauses included), printed as measured and never clamped. With
+/// no usable segments it assumes 3 s. A span counts both its ends, so M segments last
+/// M times the mean. A video under 70 s gets a different rule: one candidate, no
+/// 45 to 60 s aim. Segments longer than 12 s on average get no payoff offset, and over
+/// 20 s the limit is stated in plain terms (a span of one or two segments).
 pub fn system_prompt(segments: &[Segment]) -> String {
-    let mean_s = mean_segment_seconds(segments);
-    let count = |seconds: f64| format!("{}", (seconds / mean_s).round().max(1.0));
-    SYSTEM_PROMPT
-        .replace("{SEGMENT_SECONDS}", &format!("{mean_s:.1}"))
-        .replace("{SEGMENTS_AT_50S}", &count(50.0))
-        .replace(
-            "{SEGMENTS_AT_60S}",
-            &format!("{}", (60.0 / mean_s).floor().max(1.0)),
+    let guide = length_guide(segments);
+    let (candidates, rule) = if guide.video_s > 0.0 && guide.video_s < SHORT_VIDEO_S {
+        (
+            "one self-contained span",
+            LENGTH_RULE_SHORT
+                .trim_end()
+                .replace("{VIDEO_SECONDS}", &format!("{:.1}", guide.video_s)),
         )
-        .replace("{PAYOFF_OFFSET}", &count(9.0))
+    } else {
+        let span_limit = match guide.max_segments {
+            1 => {
+                let mut text = "Segments here are long: a span is a single segment, so \
+                    cutoff_segment is start_segment."
+                    .to_string();
+                if guide.mean_s > 60.0 {
+                    text.push_str(" Even one segment is over 60 s, so choose the shortest one.");
+                }
+                text
+            }
+            2 => "Segments here are long: a span is one or two segments, so cutoff_segment \
+                is start_segment or the next ID."
+                .to_string(),
+            max => format!(
+                "A 50 s span is about {} counting both ends, so cutoff_segment is about {} IDs \
+                 after start_segment. Never use a span of more than {} counting both ends \
+                 (cutoff_segment - start_segment at most {}).",
+                segments_phrase(guide.aim_segments),
+                guide.aim_segments.saturating_sub(1),
+                segments_phrase(max),
+                max - 1
+            ),
+        };
+        let payoff = guide.payoff_offset.map_or_else(String::new, |offset| {
+            format!(
+                " Put payoff_segment about {} after start_segment (6 to 12 s in).",
+                segments_phrase(offset)
+            )
+        });
+        (
+            "3 to 5 self-contained spans",
+            LENGTH_RULE
+                .trim_end()
+                .replace("{SEGMENT_SECONDS}", &format!("{:.1}", guide.mean_s))
+                .replace("{SPAN_LIMIT}", &span_limit)
+                .replace("{PAYOFF_PLACEMENT}", &payoff),
+        )
+    };
+    SYSTEM_PROMPT
+        .replace("{CANDIDATE_COUNT}", candidates)
+        .replace("{LENGTH_RULE}", &rule)
 }
 
-fn mean_segment_seconds(segments: &[Segment]) -> f64 {
-    let (Some(first), Some(last)) = (segments.first(), segments.last()) else {
-        return 3.0;
+/// What the prompt says about span length, counted in this video's segments.
+#[derive(Debug, Clone, PartialEq)]
+struct LengthGuide {
+    /// Mean segment length, never clamped. 3 s when it cannot be measured.
+    mean_s: f64,
+    /// First start to last end, in seconds; 0 with no usable segments.
+    video_s: f64,
+    /// The most segments, counting both ends, whose span at the mean is at most 60 s
+    /// (at least 1, even when one segment is longer than that).
+    max_segments: u32,
+    /// Segments, counting both ends, of a 50 s span; never above `max_segments`.
+    aim_segments: u32,
+    /// Segments after `start_segment` that put the payoff about 9 s in; `None` when
+    /// one segment is already more than 12 s, so no offset can land in 6 to 12 s.
+    payoff_offset: Option<u32>,
+}
+
+fn length_guide(segments: &[Segment]) -> LengthGuide {
+    let video_s = match (segments.first(), segments.last()) {
+        (Some(first), Some(last)) => last.end_ms.saturating_sub(first.start_ms) as f64 / 1000.0,
+        _ => 0.0,
     };
-    let span_ms = last.end_ms.saturating_sub(first.start_ms);
-    let mean = span_ms as f64 / 1000.0 / segments.len() as f64;
-    if mean.is_finite() && mean >= 0.5 {
-        mean.min(30.0)
+    let measured = video_s / segments.len().max(1) as f64;
+    let mean_s = if measured.is_finite() && measured > 0.0 {
+        measured
     } else {
         3.0
+    };
+    let whole = |seconds: f64| seconds.max(1.0) as u32;
+    let max_segments = whole((60.0 / mean_s + 1e-9).floor());
+    LengthGuide {
+        mean_s,
+        video_s,
+        max_segments,
+        aim_segments: whole((50.0 / mean_s).round()).min(max_segments),
+        payoff_offset: (mean_s <= 12.0).then(|| whole((9.0 / mean_s).round())),
     }
 }
 
@@ -394,11 +480,6 @@ mod tests {
         assert_eq!(required, keys);
     }
 
-    #[test]
-    fn the_system_prompt_is_not_empty() {
-        assert!(system_prompt(&[]).contains("segment"));
-    }
-
     fn timed(count: u32, each_ms: u64) -> Vec<Segment> {
         (0..count)
             .map(|i| Segment {
@@ -416,27 +497,154 @@ mod tests {
         let prompt = system_prompt(&timed(100, 3_000));
         assert!(prompt.contains("about 3.0 s each"), "{prompt}");
         assert!(
-            prompt.contains("a 50 s span is about 17 segments"),
+            prompt.contains("A 50 s span is about 17 segments counting both ends"),
             "{prompt}"
         );
-        assert!(prompt.contains("never more than 20"), "{prompt}");
+        assert!(
+            prompt.contains("cutoff_segment is about 16 IDs after start_segment"),
+            "{prompt}"
+        );
+        assert!(
+            prompt.contains("more than 20 segments counting both ends"),
+            "{prompt}"
+        );
+        assert!(
+            prompt.contains("cutoff_segment - start_segment at most 19"),
+            "{prompt}"
+        );
         assert!(
             prompt.contains("about 3 segments after start_segment"),
             "{prompt}"
         );
         let long = system_prompt(&timed(100, 10_000));
-        assert!(long.contains("a 50 s span is about 5 segments"), "{long}");
-        assert!(long.contains("never more than 6"), "{long}");
+        assert!(
+            long.contains("A 50 s span is about 5 segments counting both ends"),
+            "{long}"
+        );
+        assert!(
+            long.contains("more than 6 segments counting both ends"),
+            "{long}"
+        );
+    }
+
+    /// The span of `count` consecutive segments from index `start`, in seconds.
+    fn span_seconds(segments: &[Segment], start: usize, count: u32) -> f64 {
+        let last = start + count as usize - 1;
+        (segments[last].end_ms - segments[start].start_ms) as f64 / 1000.0
+    }
+
+    #[test]
+    fn the_largest_span_the_prompt_allows_never_exceeds_sixty_seconds_at_the_mean() {
+        for mean_s in [0.5, 1.7, 3.0, 3.2, 6.0, 10.0, 20.0, 30.0] {
+            let segments = timed(1_000, (mean_s * 1000.0) as u64);
+            let guide = length_guide(&segments);
+            assert!(guide.max_segments >= 1);
+            let longest = span_seconds(&segments, 0, guide.max_segments);
+            assert!(
+                longest <= 60.0,
+                "mean {mean_s}: {} segments last {longest} s",
+                guide.max_segments
+            );
+            // Tight: one more segment would go over.
+            assert!(
+                span_seconds(&segments, 0, guide.max_segments + 1) > 60.0,
+                "mean {mean_s}: {} is not the largest",
+                guide.max_segments
+            );
+            assert!(guide.aim_segments <= guide.max_segments);
+            let prompt = system_prompt(&segments);
+            if guide.max_segments > 2 {
+                let stated = format!(
+                    "more than {} segments counting both ends",
+                    guide.max_segments
+                );
+                assert!(prompt.contains(&stated), "mean {mean_s}: {prompt}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_mean_over_sixty_seconds_still_allows_one_segment_and_says_it_is_too_long() {
+        let segments = timed(10, 70_000);
+        assert_eq!(length_guide(&segments).max_segments, 1);
+        let prompt = system_prompt(&segments);
+        assert!(prompt.contains("about 70.0 s each"), "{prompt}");
+        assert!(prompt.contains("a span is a single segment"), "{prompt}");
+        assert!(prompt.contains("over 60 s"), "{prompt}");
+    }
+
+    #[test]
+    fn a_video_under_seventy_seconds_gets_a_one_candidate_rule_without_the_aim() {
+        let short = system_prompt(&timed(10, 4_000));
+        assert!(short.contains("lasts only about 40.0 s"), "{short}");
+        assert!(short.contains("Return one candidate"), "{short}");
+        assert!(short.contains("one self-contained span"), "{short}");
+        assert!(!short.contains("aim for 45 to 60 s"), "{short}");
+        assert!(!short.contains("3 to 5"), "{short}");
+        assert!(!short.contains("segments after start_segment"), "{short}");
+        assert!(!short.contains('{'), "{short}");
+        let edge = system_prompt(&timed(10, 6_990));
+        assert!(edge.contains("Return one candidate"), "{edge}");
+    }
+
+    #[test]
+    fn a_video_of_seventy_seconds_or_more_keeps_the_forty_five_to_sixty_aim() {
+        for segments in [timed(10, 7_000), timed(30, 3_000)] {
+            let prompt = system_prompt(&segments);
+            assert!(prompt.contains("aim for 45 to 60 s"), "{prompt}");
+            assert!(prompt.contains("3 to 5 self-contained spans"), "{prompt}");
+            assert!(!prompt.contains("Return one candidate"), "{prompt}");
+            assert!(!prompt.contains('{'), "{prompt}");
+        }
+    }
+
+    #[test]
+    fn long_segments_are_described_honestly_without_a_clamp_or_an_impossible_payoff() {
+        // A mean over 30 s is printed as it is, not as 30.0.
+        let prompt = system_prompt(&timed(10, 45_000));
+        assert!(prompt.contains("about 45.0 s each"), "{prompt}");
+        assert!(!prompt.contains("about 30.0 s each"), "{prompt}");
+        // 25 s segments: a span is one or two, so no payoff offset is given.
+        let twenty = system_prompt(&timed(10, 25_000));
+        assert!(twenty.contains("a span is one or two segments"), "{twenty}");
+        assert!(!twenty.contains("segments after start_segment"), "{twenty}");
+        // Over 12 s one segment is already past the payoff window: the clause is dropped.
+        let fifteen = system_prompt(&timed(100, 15_000));
+        assert!(!fifteen.contains("Put payoff_segment about"), "{fifteen}");
+        assert!(!fifteen.contains("(6 to 12 s in)"), "{fifteen}");
+        // At 12 s or less it is kept, and one is singular.
+        let ten = system_prompt(&timed(100, 10_000));
+        assert!(
+            ten.contains("Put payoff_segment about 1 segment after start_segment"),
+            "{ten}"
+        );
+    }
+
+    #[test]
+    fn a_count_of_one_is_never_written_as_a_plural() {
+        for each_ms in [
+            500, 1_700, 3_000, 6_000, 8_000, 10_000, 12_000, 15_000, 20_000, 30_000, 45_000, 70_000,
+        ] {
+            let prompt = system_prompt(&timed(100, each_ms));
+            assert!(!prompt.contains(" 1 segments"), "{each_ms}: {prompt}");
+        }
     }
 
     #[test]
     fn no_placeholder_survives_and_odd_input_falls_back_to_three_seconds() {
-        for segments in [timed(0, 0), timed(5, 0), timed(5, 100), timed(100, 3_000)] {
+        for segments in [
+            timed(0, 0),
+            timed(5, 0),
+            timed(100, 0),
+            timed(5, 100),
+            timed(100, 3_000),
+            timed(10, 4_000),
+        ] {
             let prompt = system_prompt(&segments);
             assert!(!prompt.contains('{'), "{prompt}");
         }
         assert!(system_prompt(&[]).contains("about 3.0 s each"));
-        assert!(system_prompt(&timed(5, 100)).contains("about 3.0 s each"));
+        assert!(system_prompt(&timed(100, 0)).contains("about 3.0 s each"));
     }
 
     // Labels and parts.

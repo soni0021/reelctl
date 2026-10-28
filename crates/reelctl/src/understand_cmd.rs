@@ -285,6 +285,24 @@ fn images_for(args: &UnderstandArgs, plan: &Plan) -> Result<(Vec<EncodedImage>, 
     Ok((images, frame_times))
 }
 
+/// The request sent to the model: this video's system prompt (its length limit is
+/// counted in this video's segments), the frames and transcript, and the settings.
+fn build_request(
+    args: &UnderstandArgs,
+    segments: &[understand::Segment],
+    images: &[EncodedImage],
+) -> VlmRequest {
+    VlmRequest {
+        model: args.model.clone(),
+        system: system_prompt(segments),
+        parts: build_parts(images, segments),
+        schema: response_schema(),
+        max_tokens: DEFAULT_MAX_TOKENS,
+        effort: args.effort.map(|effort| effort.as_str().to_string()),
+        quantizations: args.quant.clone(),
+    }
+}
+
 pub fn understand(args: UnderstandArgs) -> Result<()> {
     let dna: EditDna = read_json(&args.dna, "edit DNA")?;
     if dna.asr_backend != AsrBackend::WhisperCpp {
@@ -375,15 +393,7 @@ pub fn understand(args: UnderstandArgs) -> Result<()> {
     };
 
     let (images, frame_times) = images_for(&args, &plan)?;
-    let request = VlmRequest {
-        model: args.model.clone(),
-        system: system_prompt(&plan.segments),
-        parts: build_parts(&images, &plan.segments),
-        schema: response_schema(),
-        max_tokens: DEFAULT_MAX_TOKENS,
-        effort: args.effort.map(|effort| effort.as_str().to_string()),
-        quantizations: args.quant.clone(),
-    };
+    let request = build_request(&args, &plan.segments, &images);
     let mut reply = backend.analyze(&request).context("the model call failed")?;
     reply.quantization = plan
         .endpoints
@@ -437,4 +447,69 @@ pub fn understand(args: UnderstandArgs) -> Result<()> {
         args.out.display()
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use understand::backend::Part;
+    use understand::Segment;
+
+    fn args() -> UnderstandArgs {
+        UnderstandArgs {
+            input: PathBuf::from("in.mp4"),
+            dna: PathBuf::from("edit_dna.json"),
+            out: PathBuf::from("understanding.json"),
+            model: "vendor/model".to_string(),
+            quant: vec!["fp8".to_string()],
+            every_s: 5,
+            sheet: SheetArg::Auto,
+            effort: Some(EffortArg::High),
+            max_cost_usd: 0.50,
+            dry_run: false,
+            decoder: DecoderArg::Auto,
+            replay: None,
+            catalog: None,
+        }
+    }
+
+    /// 100 segments of 4 s each, so this video's mean segment length is 4.0 s.
+    fn four_second_segments() -> Vec<Segment> {
+        (0..100u32)
+            .map(|i| Segment {
+                id: i + 1,
+                start_ms: u64::from(i) * 4_000,
+                end_ms: u64::from(i + 1) * 4_000,
+                text: "hello".to_string(),
+                ends_sentence: true,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_request_carries_this_videos_prompt_not_a_generic_one() {
+        let segments = four_second_segments();
+        let request = build_request(&args(), &segments, &[]);
+        assert!(
+            request.system.contains("about 4.0 s each"),
+            "{}",
+            request.system
+        );
+        assert!(!request.system.contains('{'), "{}", request.system);
+        assert_eq!(request.system, system_prompt(&segments));
+        assert_ne!(request.system, system_prompt(&[]));
+    }
+
+    #[test]
+    fn the_request_carries_the_model_settings_and_the_transcript() {
+        let request = build_request(&args(), &four_second_segments(), &[]);
+        assert_eq!(request.model, "vendor/model");
+        assert_eq!(request.quantizations, vec!["fp8".to_string()]);
+        assert_eq!(request.effort.as_deref(), Some("high"));
+        assert_eq!(request.max_tokens, DEFAULT_MAX_TOKENS);
+        assert!(request
+            .parts
+            .iter()
+            .any(|part| matches!(part, Part::Text(text) if text.contains("G100"))));
+    }
 }
