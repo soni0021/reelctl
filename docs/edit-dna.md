@@ -135,6 +135,6 @@ Only cuts count as cues. A zoom, caption, or graphic at 9 s is not detected.
 
 | Field | Value |
 |---|---|
-| `cube_lut` | `{"status": "unimplemented", "reason": "..."}`. `.cube` LUT synthesis is Pass 1b; the per-shot histograms are recorded instead. |
+| `cube_lut` | `{"status": "unimplemented", "reason": "..."}`. A `.cube` LUT needs two videos, so `edit_dna.json` reports `unimplemented` and `reelctl look --draft --outlier --out` makes one; the per-shot histograms are recorded instead. |
 
 `"unimplemented"` is the only `status` value today. Check `status` before reading this field. (`zoom_curves` used the same stub until version 4; see above.) See [ADR-004](decisions/ADR-004-report-missing-passes-in-the-output.md).

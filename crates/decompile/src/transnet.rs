@@ -38,6 +38,14 @@ const LONG_RUN_FRAMES: usize = 9_000;
 /// about 9, 13 at about 26); other machines differ.
 const MS_PER_FRAME: (usize, usize) = (7, 13);
 
+/// The `cut_detector_note` of a TransNetV2 run over `frames` frames.
+pub(crate) fn transnet_note(frames: usize) -> String {
+    format!(
+        "{TRANSNET_NOTE}{}",
+        long_run_warning(frames).unwrap_or_default()
+    )
+}
+
 /// What the note adds when the model ran over `frames` frames and that is long.
 pub(crate) fn long_run_warning(frames: usize) -> Option<String> {
     if frames < LONG_RUN_FRAMES {
@@ -55,8 +63,8 @@ that is {} to {} s, and other machines differ. --cut-detector scene is much fast
 fn too_long_error(seen: usize, limit: usize) -> DecompileError {
     DecompileError::Message(format!(
         "This clip has {seen} frames, which is too long for TransNetV2: it keeps at most \
-{limit} frames in memory ({} MB of 48x27 frames). Use --cut-detector scene for a clip this long.",
-        limit * FRAME_BYTES / 1_000_000
+{limit} frames in memory ({:.1} MB of 48x27 frames). Use --cut-detector scene for a clip this long.",
+        (limit * FRAME_BYTES) as f64 / 1_000_000.0
     ))
 }
 
@@ -690,6 +698,14 @@ mod tests {
         assert!(text.contains("--cut-detector scene"), "{text}");
         // 9,000 frames at 7 and 13 ms: 63 and 117 s.
         assert!(text.contains("63 to 117 s"), "{text}");
+    }
+
+    #[test]
+    fn the_note_of_a_run_carries_the_long_run_warning_only_when_long() {
+        assert_eq!(transnet_note(LONG_RUN_FRAMES - 1), TRANSNET_NOTE);
+        let long = transnet_note(LONG_RUN_FRAMES);
+        assert!(long.starts_with(TRANSNET_NOTE), "{long}");
+        assert!(long.contains("9000 frames"), "{long}");
     }
 
     #[test]
