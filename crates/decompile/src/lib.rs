@@ -24,7 +24,7 @@ mod transnet;
 mod whisper;
 mod worker;
 
-pub use decode::{decode_frames_at, DecoderSetting, SampledFrame};
+pub use decode::{decode_frames_at, probe_duration_ms, DecoderSetting, SampledFrame};
 pub use error::DecompileError;
 pub use pipeline::{decompile_file, DecompileOutput, DecompileRequest, StageProfile};
 pub use scene::{CutDetector, SCENE_SCORE_THRESHOLD};
