@@ -51,7 +51,7 @@ A directory with `niche.json`:
 ### Command
 
 ```
-watchtower run --data <dir> --out <dir> [--reelctl <path>] [--min-score 10] [--min-velocity 0.02] [--now <rfc3339>]
+watchtower run --data <dir> --out <dir> [--reelctl <path>] [--reelctl-timeout 5m] [--min-score 10] [--min-velocity 0.02] [--now <rfc3339>]
 ```
 
 Exit 0 with a digest even when some decompiles fail; exit 2 for a bad argument or an unreadable data directory; exit 1 for an internal error.
