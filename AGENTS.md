@@ -11,6 +11,7 @@ This repository is a Cargo workspace. P0 is the Rust decompiler and reel-diff CL
 - `crates/decompile` — decode, cuts, silence, loudness, per-shot color
 - `crates/diff` — pacing flags
 - `crates/filmstrip` — `timeline_view` PNGs at cut boundaries
+- `crates/timeline` — the OpenTimelineIO subset, edit operations and the ffmpeg filter-graph builder behind `reelctl timeline|transform|funnel|render|qa` (pure; the commands in `crates/reelctl/src/timeline_cmd.rs` run `ffprobe` and `ffmpeg`)
 - `crates/understand` — `reelctl understand`: transcript segments, frame plan, the model request and cost bound, clip rules, and `understanding.json` (no dependency on `decompile`)
 - `watchtower/` — the Go module for P1 (outlier and growth digest); `cd watchtower && go test ./...`; reads recorded data, calls the `reelctl` binary as a process, no network in tests
 - `fixtures/` — synthetic ffmpeg clips (no scraped Reels)

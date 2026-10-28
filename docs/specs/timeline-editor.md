@@ -1,6 +1,6 @@
 # Spec: OpenTimelineIO editing commands (`timeline-editor`, P2 first slice)
 
-Status: written 2026-10-28 under the user's "p1-p3" and the answer "OTIO JSON + ffmpeg render" for the first slice; the user has not reviewed it line by line. Branch: `feature/timeline-editor`. Follows [planer.md](../../planer.md) Components 4 to 5 and the P2 row. Smelter, manimgx and RobustVideoMatting are later slices (each needs its own spec); `reelctl motion mimic-2d` stays optional and out of scope.
+Status: built (see [status](../status.md#timeline-editor-2026-10-28)); written 2026-10-28 under the user's "p1-p3" and the answer "OTIO JSON + ffmpeg render" for the first slice; the user has not reviewed it line by line. Branch: `feature/timeline-editor`. Follows [planer.md](../../planer.md) Components 4 to 5 and the P2 row. Smelter, manimgx and RobustVideoMatting are later slices (each needs its own spec); `reelctl motion mimic-2d` stays optional and out of scope.
 
 ## Objective
 

@@ -59,6 +59,23 @@ Same machine, release builds of `main` and `feature/relative-silence` on the sam
 
 The real clip was re-cut from the original recording on 2026-10-25 with its audio copied, not re-encoded, so its word count (125) differs from the 2026-10-21 runs (183); see Known issues.
 
+## Timeline editor, 2026-10-28
+
+Apple M3 MacBook Air, ffmpeg 8.1 (Homebrew), debug build of `reelctl`, `crates/timeline` ([spec](specs/timeline-editor.md), [guide](timeline.md)).
+
+| Check | Result |
+|---|---|
+| `draft12`: init, `cut-silence`, render | The DNA pause was about 500 ms (the spec's "2 s" was wrong: `generate.sh` mutes 2.0–2.5 s). 14 frames (467 ms) removed; render 346 frames, video 11.533 s, audio 11.533 s; the step between neighbouring samples at the join is under 0.02 and the tone is present on both sides; `decompile` of the render finds no gap of 180 ms or more near the join |
+| Join inside a tone (hand-made DNA) | With the 30 ms dip the step is 0.0023; with `--fade-ms 0` it is 0.091. The silence-only click test does not tell the dip from none: this one does |
+| `punch-in` 1.5× at 7.5 s on `textured_cuts12` | Mean absolute difference to the source scaled 1.5× is 1.46, against 76.09 to the unscaled source; frame count unchanged at 288; frames outside the span differ from the source by under 4 |
+| `attach-bridge` on `draft12` | 259 + 75 frames = 334; the last frame has the card colour in the corner and over 200 light pixels where the URL is drawn |
+| Render time (`ffmpeg_ms`) | `draft12` cut 318 ms; punch-in on `textured_cuts12` 536–697 ms; cut, punch-in and bridge together 175 ms |
+| OpenTimelineIO compatibility | Verified: the files load in the reference library `opentimelineio` 0.18.1 (python 3.13 venv; 3.14 has no wheel). `textured_cuts12`: video and audio 4 items each, duration 267 frames at 24 fps; `draft12`: 5 items each, 324 frames, equal to the sum of the clips. Command: `/opt/homebrew/bin/python3.13 -m venv /tmp/otio-venv && /tmp/otio-venv/bin/pip install OpenTimelineIO && /tmp/otio-venv/bin/python crates/timeline/tests/otio_check.py edit.otio` |
+| Mutation checks | 14 mutants; one filler-snap mutant and the end-to-end `set_fades` mutant survived first and each got a test |
+| `cargo test --workspace` | Timeline lib 66, `reelctl` unit 13, `timeline_fixture.rs` 7 (all green in the build agent's run) |
+
+Known limits: one media file per project, one video and at most one audio track, media starting at 0; a punch-in is a centred zoom; the fade is a dip, not a crossfade; the bridge card uses a built-in bitmap font because this ffmpeg has no `drawtext`; filler removal is unit-tested only (no whisper model here); a render killed mid-run can leave `.PID.name.mp4.mp4` behind (a known defect, to fix); success criterion 3 (`decompile` detecting the punch-in) is checked by frame comparison, since `visual_events` is on another branch; Smelter, manimgx, RobustVideoMatting, reframe, captions and voice are later slices.
+
 ## Watchtower, 2026-10-28
 
 Go module `watchtower/` ([spec](specs/watchtower.md), [guide](watchtower.md)), built against recorded data. Apple M3 MacBook Air.

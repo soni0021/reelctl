@@ -221,6 +221,34 @@ Two flags are hidden from `--help`, like `whisper-worker`, and exist so the test
 
 Exit codes specific to this command: 2 for `--every-s 0`, a `--dna` with a duration of 0, or a `--dna` without whisper words or with no words at all (all checked before any network access, so no price listing is fetched), 3 when `OPENROUTER_API_KEY` is not set (and neither `--dry-run` nor `--replay` was given), 4 when the cost upper bound is over `--max-cost-usd`. A failed model call (an HTTP error, no matching provider, a reply that is not the schema, a reply cut off at `max_tokens`) exits with 1 and says which.
 
+## Editing: timeline, transform, funnel, render, qa
+
+Deterministic edits over an OpenTimelineIO project. Each command reads one `.otio`, applies one change, and writes one (atomically; `--out` may equal `--project`). Running a command twice with the same arguments gives the same file. The project format and metadata keys are in [timeline.md](timeline.md). `init` needs `ffprobe`; `render` and `qa inspect-boundaries` need `ffmpeg`; a missing tool exits 1 and names it.
+
+```
+reelctl timeline init --input take.mp4 [--dna take.edit_dna.json] --out edit.otio
+reelctl timeline cut-silence --project edit.otio --dna take.edit_dna.json [--min-gap-ms 180] [--fade-ms 30] [--fillers um,uh] --out edit.otio
+reelctl transform punch-in --project edit.otio --start-ms T1 --end-ms T2 --scale 1.18 --out edit.otio
+reelctl funnel attach-bridge --project edit.otio --target-url URL [--cutoff-pct 0.72] [--card-ms 2500] [--dna take.edit_dna.json] --out edit.otio
+reelctl render --project edit.otio --out out.mp4 [--size 1080x1920]
+reelctl qa inspect-boundaries --project edit.otio --out-dir views/
+```
+
+| Command | Stdout line |
+|---|---|
+| `timeline init` | `init: out= frames= fps= size= audio=` |
+| `timeline cut-silence` | `cut-silence: out= removed_spans= removed_ms= timeline_ms=` |
+| `transform punch-in` | `punch-in: out= frames=a..b clips= scale=` |
+| `funnel attach-bridge` | `attach-bridge: out= cut_ms= in_pause= card_ms= unchanged=` |
+| `render` | `render: out= frames= duration_ms= size= ffmpeg_ms=` |
+| `qa inspect-boundaries` | `inspect-boundaries: out_dir= joins=` |
+
+- `cut-silence` removes every silence gap of at least `--min-gap-ms` and, with whisper words in the DNA, whole words that equal a `--fillers` entry. Times come from the DNA and snap to the frame grid into the pause, never into a word. The audio gets a `--fade-ms` dip at each join (a fade-out and a fade-in, not an overlapping crossfade, so the audio keeps pace with the picture).
+- `punch-in` needs `1 < --scale <= 2` and a span of at least 12 frames: a centred zoom ramping in over 6 frames, held, and ramping out. A second punch-in over the same pieces replaces the first.
+- `attach-bridge` cuts at `--cutoff-pct` of the timeline (in a pause if the DNA has one within 400 ms after) and appends a card showing the URL, drawn with a built-in bitmap font (capitals, digits and a few symbols; other characters show as a box), because this ffmpeg build may lack `drawtext`. A different bridge on a project that already has one is refused.
+- `render` writes H.264 + AAC and scales and crops to `--size` (even sides; default the source size).
+- Exit 2: a bad argument, an unreadable or invalid project or DNA, a span outside the timeline, or a DNA that is not the media's. Exit 1: `ffmpeg` or `ffprobe` missing or failing.
+
 ## Exit codes
 
 | Code | Meaning |
