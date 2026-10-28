@@ -1675,6 +1675,29 @@ mod tests {
     }
 
     #[test]
+    fn a_push_that_accelerates_into_a_stop_is_no_event() {
+        let (cols, rows) = (160, 90);
+        // Slow at first, then fast, then a hard stop: only the fast end is a
+        // move, and the slow start before it must not count as part of it.
+        for (power, steps) in [
+            (2.0f32, 18usize),
+            (2.0, 24),
+            (2.0, 36),
+            (3.0, 24),
+            (3.0, 36),
+            (4.0, 30),
+            (4.0, 48),
+        ] {
+            let scales: Vec<f32> = (1..=steps)
+                .map(|k| 1.0 + 0.18 * (k as f32 / steps as f32).powf(power))
+                .collect();
+            let clip = zoom_clip(cols, rows, 1.0, &scales, (0.5, 0.5), 30, 40);
+            let events = run(cols, rows, &clip);
+            assert!(events.is_empty(), "power {power} steps {steps}: {events:?}");
+        }
+    }
+
+    #[test]
     fn a_scale_of_1_03_or_1_04_is_below_the_floor() {
         for (cols, rows) in SHAPES {
             for s in [1.03, 1.04] {
