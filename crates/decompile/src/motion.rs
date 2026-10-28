@@ -2044,4 +2044,260 @@ mod tests {
         assert_eq!(events.len(), 1, "{events:?}");
         assert_eq!(events[0].frame_index, 31);
     }
+
+    // ---- the overlay constants, each just inside and just outside ----
+
+    /// The overlay events among `events`.
+    fn overlays(events: &[DetectedEvent]) -> Vec<&DetectedEvent> {
+        events
+            .iter()
+            .filter(|e| e.kind == MotionKind::OverlayChange)
+            .collect()
+    }
+
+    /// Cells in the mask moved by `delta` levels (clamped).
+    fn with_offset(base: &[u8], mask: &[bool], delta: i16) -> Vec<u8> {
+        base.iter()
+            .zip(mask)
+            .map(|(v, m)| {
+                if *m {
+                    (i16::from(*v) + delta).clamp(0, 255) as u8
+                } else {
+                    *v
+                }
+            })
+            .collect()
+    }
+
+    /// A box with the top right corner cut away: `cut` of each side, so it
+    /// fills `1 - cut * cut` of its bounding box.
+    fn l_shape(cols: usize, rows: usize, cut: f32) -> Vec<bool> {
+        let (x0, y0, x1, y1) = (0.4f32, 0.4f32, 0.8f32, 0.8f32);
+        let outer = rect(cols, rows, x0, y0, x1, y1);
+        let corner = rect(
+            cols,
+            rows,
+            x1 - cut * (x1 - x0),
+            y0,
+            x1,
+            y0 + cut * (y1 - y0),
+        );
+        outer.iter().zip(&corner).map(|(o, c)| *o && !*c).collect()
+    }
+
+    #[test]
+    fn a_block_must_fill_about_half_of_its_bounding_box() {
+        for (cols, rows) in SHAPES {
+            let base = render(cols, rows, 1.0, 0.5, 0.5);
+            let bbox = count(&rect(cols, rows, 0.4, 0.4, 0.8, 0.8)) as f64;
+            // Fills 0.6 of its box: an overlay. Fills 0.4: not one.
+            for (cut, fill, expected) in [(0.63f32, 0.6f64, 1usize), (0.775, 0.4, 0)] {
+                let mask = l_shape(cols, rows, cut);
+                let got = count(&mask) as f64 / bbox;
+                assert!((got - fill).abs() < 0.03, "fill {got} vs {fill}");
+                let mut clip = Clip::default();
+                clip.hold(&base, 30).hold(&with_block(&base, &mask), 50);
+                let events = run(cols, rows, &clip);
+                assert_eq!(
+                    overlays(&events).len(),
+                    expected,
+                    "{cols}x{rows} fill {fill}: {events:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn strays_beyond_a_quarter_of_the_block_spoil_it() {
+        let (cols, rows) = (160, 90);
+        let base = render(cols, rows, 1.0, 0.5, 0.5);
+        // A 7.5% block (1080 cells) allows 270 cells + 0.5% of the frame (72)
+        // outside it. Strays at step 7 (about 270) are fine, step 5 (about
+        // 520) are too many.
+        for (step, expected) in [(7usize, 1usize), (5, 0)] {
+            let mask = union(&block_mask(cols, rows), &strays(cols, rows, step));
+            let mut clip = Clip::default();
+            clip.hold(&base, 30).hold(&with_block(&base, &mask), 50);
+            let events = run(cols, rows, &clip);
+            assert_eq!(overlays(&events).len(), expected, "step {step}: {events:?}");
+        }
+    }
+
+    #[test]
+    fn the_frame_share_allowed_outside_a_small_block_is_half_a_percent() {
+        let (cols, rows) = (160, 90);
+        let base = render(cols, rows, 1.0, 0.5, 0.5);
+        // A 2% block (about 280 cells) allows 70 + 72 cells outside it: strays
+        // at step 11 (about 130) are fine, step 8 (about 240) are too many.
+        let small = rect(cols, rows, 0.6, 0.6, 0.74, 0.74);
+        for (step, expected) in [(11usize, 1usize), (8, 0)] {
+            let mask = union(&small, &strays(cols, rows, step));
+            let mut clip = Clip::default();
+            clip.hold(&base, 30).hold(&with_block(&base, &mask), 50);
+            let events = run(cols, rows, &clip);
+            assert_eq!(overlays(&events).len(), expected, "step {step}: {events:?}");
+        }
+    }
+
+    #[test]
+    fn a_block_that_stays_just_under_the_flash_time_is_a_flash_and_longer_is_an_event() {
+        let (cols, rows) = (160, 90);
+        let base = render(cols, rows, 1.0, 0.5, 0.5);
+        let blk = with_block(&base, &block_mask(cols, rows));
+        // 17 frames (708 ms): it going is the picture coming back to the one
+        // 750 ms before. 20 frames (833 ms): it is not.
+        let mut short = Clip::default();
+        short.hold(&base, 30).hold(&blk, 17).hold(&base, 60);
+        let events = run(cols, rows, &short);
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert_eq!(events[0].frame_index, 30);
+        let mut long = Clip::default();
+        long.hold(&base, 30).hold(&blk, 20).hold(&base, 60);
+        let events = run(cols, rows, &long);
+        let frames: Vec<u64> = events.iter().map(|e| e.frame_index).collect();
+        assert_eq!(frames, vec![30, 50], "{events:?}");
+    }
+
+    #[test]
+    fn a_block_that_grows_inside_the_holding_time_is_judged_on_what_held() {
+        let (cols, rows) = (160, 90);
+        let base = render(cols, rows, 1.0, 0.5, 0.5);
+        let whole = rect(cols, rows, 0.5, 0.5, 0.85, 0.85);
+        let left = rect(cols, rows, 0.5, 0.5, 0.62, 0.85);
+        let want = |mask: &[bool]| count(mask) as f64 / (cols * rows) as f64;
+        let small = with_block(&base, &left);
+        let big = with_block(&base, &whole);
+        // It has grown 7 frames (290 ms) before the check, so the block held.
+        let mut early = Clip::default();
+        early.hold(&base, 30).hold(&small, 5).hold(&big, 45);
+        let events = run(cols, rows, &early);
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert_eq!(events[0].frame_index, 35);
+        assert!((events[0].area.expect("area") - want(&whole)).abs() < 0.005);
+        // It has grown 4 frames (170 ms) before the check: the whole did not
+        // hold, and the added cells are an overlay of their own.
+        let mut late = Clip::default();
+        late.hold(&base, 30).hold(&small, 8).hold(&big, 42);
+        let events = run(cols, rows, &late);
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert_eq!(events[0].frame_index, 42);
+        let added: Vec<bool> = whole.iter().zip(&left).map(|(w, l)| *w && !*l).collect();
+        assert!((events[0].area.expect("area") - want(&added)).abs() < 0.005);
+    }
+
+    #[test]
+    fn a_block_that_goes_back_to_most_of_what_it_was_is_a_flash() {
+        for (cols, rows) in SHAPES {
+            let base = render(cols, rows, 1.0, 0.5, 0.5);
+            let mask = block_mask(cols, rows);
+            let blk = with_block(&base, &mask);
+            // The block goes after 14 frames, but a strip of it (`part` of
+            // its width) goes to a third picture instead of the first.
+            for (part, expected) in [(0.4f32, 2usize), (0.2, 1)] {
+                let strip = rect(cols, rows, 0.55, 0.55, 0.55 + 0.25 * part, 0.85);
+                let third = with_delta(&base, &strip, 50);
+                let mut clip = Clip::default();
+                clip.hold(&base, 30).hold(&blk, 14).hold(&third, 60);
+                let events = run(cols, rows, &clip);
+                assert_eq!(
+                    events.len(),
+                    expected,
+                    "{cols}x{rows} part {part}: {events:?}"
+                );
+            }
+        }
+    }
+
+    /// 90 frames of the picture in which `part` steps by `delta` levels at
+    /// `step_at` and the block `mask` comes on top at frame 40.
+    fn step_then_block(
+        (cols, rows): (usize, usize),
+        part: &[bool],
+        delta: i16,
+        step_at: usize,
+        mask: &[bool],
+    ) -> Clip {
+        let base = render(cols, rows, 1.0, 0.5, 0.5);
+        let stepped = with_offset(&base, part, delta);
+        let mut clip = Clip::default();
+        for i in 0..90 {
+            let before = if i >= step_at { &stepped } else { &base };
+            clip.one(if i >= 40 {
+                with_block(before, mask)
+            } else {
+                before.clone()
+            });
+        }
+        clip
+    }
+
+    fn run_clip(shape: (usize, usize), clip: &Clip) -> Vec<DetectedEvent> {
+        run(shape.0, shape.1, clip)
+    }
+
+    #[test]
+    fn a_block_over_a_part_that_was_moving_by_eight_levels_or_more_is_no_event() {
+        for shape in SHAPES {
+            let mask = block_mask(shape.0, shape.1);
+            // The part steps 6 or 12 levels in the quiet window before the
+            // comparison grid.
+            let calm = run_clip(shape, &step_then_block(shape, &mask, 6, 33, &mask));
+            assert_eq!(calm.len(), 1, "6 levels: {calm:?}");
+            assert_eq!(calm[0].frame_index, 40);
+            let moved = run_clip(shape, &step_then_block(shape, &mask, 12, 33, &mask));
+            assert!(moved.is_empty(), "12 levels: {moved:?}");
+        }
+    }
+
+    #[test]
+    fn a_block_is_no_event_when_a_third_of_it_was_moving_but_one_in_five_is_fine() {
+        for shape in SHAPES {
+            let (cols, rows) = shape;
+            let mask = block_mask(cols, rows);
+            for (part, expected) in [(0.2f32, 1usize), (0.45, 0)] {
+                let strip = rect(cols, rows, 0.55, 0.55, 0.55 + 0.25 * part, 0.85);
+                let events = run_clip(shape, &step_then_block(shape, &strip, 20, 33, &mask));
+                assert_eq!(events.len(), expected, "{shape:?} part {part}: {events:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_quiet_window_before_the_comparison_grid_is_about_150_ms() {
+        for shape in SHAPES {
+            let mask = block_mask(shape.0, shape.1);
+            // The comparison grid is frame 34. A step at frame 31 is 3 frames
+            // (125 ms) before it: inside the window. A step at frame 27 is 7
+            // frames (290 ms) before it: outside.
+            let inside = run_clip(shape, &step_then_block(shape, &mask, 20, 31, &mask));
+            assert!(inside.is_empty(), "step at 31: {inside:?}");
+            let outside = run_clip(shape, &step_then_block(shape, &mask, 20, 27, &mask));
+            assert_eq!(outside.len(), 1, "step at 27: {outside:?}");
+        }
+    }
+
+    #[test]
+    fn grids_with_a_side_of_eight_or_more_are_measured_and_smaller_ones_are_not() {
+        for (cols, rows, expected) in [
+            (8usize, 8usize, 1usize),
+            (11, 11, 1),
+            (15, 15, 1),
+            (15, 40, 1),
+            (40, 15, 1),
+            (7, 40, 0),
+            (40, 7, 0),
+            (7, 7, 0),
+        ] {
+            let base = render(cols, rows, 1.0, 0.5, 0.5);
+            let mask = rect(cols, rows, 0.4, 0.4, 0.95, 0.95);
+            let mut clip = Clip::default();
+            clip.hold(&base, 30).hold(&with_block(&base, &mask), 50);
+            let events = run(cols, rows, &clip);
+            assert_eq!(
+                overlays(&events).len(),
+                expected,
+                "{cols}x{rows}: {events:?}"
+            );
+        }
+    }
 }
