@@ -61,7 +61,7 @@ The real clip was re-cut from the original recording on 2026-10-25 with its audi
 
 ## Long-to-short clipper, 2026-10-28 (in progress)
 
-Branch `feature/long-to-short-clipper` ([spec](specs/long-to-short-clipper.md)). Entries are added as each part lands.
+Branch `feature/long-to-short-clipper` ([spec](specs/long-to-short-clipper.md)). Entries are added as each part lands. The first live run shows the pipeline works and the rules do their job; the 9B model does not respect the 30–60 s length, so a prompt or model change is the next lever (Muse 1.2 was not run).
 
 | Check | Result |
 |---|---|
@@ -70,6 +70,7 @@ Branch `feature/long-to-short-clipper` ([spec](specs/long-to-short-clipper.md)).
 | Segmenter on the real 28.6-min lecture (whisper words) | 535 segments, median 1,720 ms, longest 27,990 ms, 2 over 15 s: the same counts as the prototype |
 | `--dry-run` on the real lecture, no key, public price listing only | 346 frames in 87 sheets of 2×2, 535 segments, about 139,000 input tokens, cost upper bound $0.0276 (default model, cap $0.50) |
 | Clip cut points on the real lecture's 535 segments, one clip per segment | The start lands in a measured pause for 380 of 535 and falls back to 100 ms before the first word for 155; the end lands in a pause for 56 and falls back to 150 ms after the last word for 479. The fallbacks never cut into a word, and the rule has no slack on whisper's word times, so most ends are not in a pause. Whether that leaves audible dead air at the edges is for the live run |
+| Live run, `qwen/qwen3.5-9b` on the 28.6-min lecture, 2026-10-28, user-approved, release build | 83.4 s for the model call, 95 s in all. Provider Parasail (bf16). 65,852 input and 6,502 output tokens; cost $0.0082 against a bound of $0.0276. 7 beats, 17 visual events, 1 cut (unlabelled). 3 clips and 1 rejected pick. **No clip met every rule**: both long picks were 2–4 minutes (tight 174 s and 97 s against a 60 s maximum) with the payoff 51–53 s in; the third was 25.8 s and its payoff segment lay outside it. The rejected pick had its cutoff before its hook. The rules flagged or rejected each one and changed nothing silently. Hooks and last lines are exact whisper text, because the model answers by segment ID |
 
 ## Comparative diff, 2026-10-26
 
