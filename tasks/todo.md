@@ -9,7 +9,7 @@ Plan: [plan.md](plan.md). Spec: [docs/specs/visual-motion.md](../docs/specs/visu
 ## Task 2: Detector
 - [x] Overlay rules (appear, grow, fade, vanish within persistence, brightness shift, moving block)
 - [x] Scale fit (about centre and corner, eased over frames, below floor, noise)
-- [x] Mutation checks on each threshold
+- [ ] Mutation checks on each threshold (the first audit found 23 of 34 constants unpinned; a fix is in progress)
 
 ## Task 3: Fixtures
 - [x] `motion12`, `still12`, `motion12_wide`, `bench60_textured` and the planted-event sidecar
@@ -21,4 +21,5 @@ Plan: [plan.md](plan.md). Spec: [docs/specs/visual-motion.md](../docs/specs/visu
 - [x] Planted events found within two frames; `textured_cuts12` probe recorded; `diff` splits
 
 ## Task 6: Real footage
-- [x] NEET video: first twenty events checked by eye; cost on `bench60_textured` and real reels; docs, status, capability map, README, CHANGELOG
+- [x] Cost on `bench60_textured` and the real reels; docs, status, capability map, README, CHANGELOG
+- [ ] The 18-minute NEET video's first twenty events checked by eye: that file is not on this machine; the 28.6-minute lecture's first eight were checked instead (5 of 8 right), and the 38.5 s reel's one event
