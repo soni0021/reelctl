@@ -10,7 +10,7 @@
 //!
 //! The pure parts (request body, event stream, listing, error mapping) are plain
 //! functions with offline tests. The HTTP calls are covered by a loopback server in
-//! the tests and by an ignored live test.
+//! the tests; the live call is made by hand.
 
 use std::fmt;
 use std::io::{BufRead, BufReader, Read};
