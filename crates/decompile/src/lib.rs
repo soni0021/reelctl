@@ -30,5 +30,5 @@ pub use decode::{decode_frames_at, DecoderSetting, SampledFrame};
 pub use error::DecompileError;
 pub use pipeline::{decompile_file, DecompileOutput, DecompileRequest, StageProfile};
 pub use scene::{CutDetector, SCENE_SCORE_THRESHOLD};
-pub use transnet::CutDetectorChoice;
+pub use transnet::{release_runtime as release_onnx_runtime, CutDetectorChoice};
 pub use worker::{run_whisper_worker, WhisperRunner};

@@ -173,6 +173,17 @@ fn library_hint() -> String {
 /// The process-wide environment; kept after the first success only.
 static ENVIRONMENT: Mutex<Option<Environment>> = Mutex::new(None);
 
+/// Release the shared ONNX Runtime environment. A process that ran the model
+/// must call this before it exits: with the environment still alive at exit,
+/// ONNX Runtime 1.21's static destructors abort the process ("mutex lock
+/// failed") and the exit status becomes 134 after the output was written.
+/// `ort` builds one environment per process for good, so the model cannot be
+/// opened again afterwards.
+pub fn release_runtime() {
+    let mut slot = ENVIRONMENT.lock().unwrap_or_else(PoisonError::into_inner);
+    *slot = None;
+}
+
 fn environment(library: Option<&OsStr>) -> Result<Environment, String> {
     let mut slot = ENVIRONMENT.lock().unwrap_or_else(PoisonError::into_inner);
     if let Some(environment) = slot.as_ref() {

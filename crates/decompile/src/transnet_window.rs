@@ -66,6 +66,8 @@ impl ModelFrames {
 }
 
 /// Frames after padding: 25 in front and `25 + 50 - (n % 50 or 50)` behind.
+/// `fill_window` pads by clamping the index instead; the tests check the two agree.
+#[cfg(test)]
 pub(crate) fn padded_len(frames: usize) -> usize {
     if frames == 0 {
         return 0;

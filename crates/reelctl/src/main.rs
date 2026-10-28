@@ -19,7 +19,10 @@ use edit_dna::EditDna;
 mod understand_cmd;
 
 fn main() {
-    if let Err(err) = run() {
+    let result = run();
+    // Before any exit: a live ONNX Runtime environment makes the process abort at exit.
+    decompile::release_onnx_runtime();
+    if let Err(err) = result {
         // Some failures have their own exit code (3: no API key, 4: over the cost cap).
         if let Some(exit) = err.downcast_ref::<understand_cmd::ExitWith>() {
             eprintln!("error: {exit}");
