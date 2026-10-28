@@ -1,6 +1,6 @@
 # edit_dna.json reference
 
-`reelctl decompile` writes one JSON object per video. The Rust types are in [crates/edit-dna/src/lib.rs](../crates/edit-dna/src/lib.rs), and the JSON Schema generated from them is [crates/edit-dna/schema/edit_dna.schema.json](../crates/edit-dna/schema/edit_dna.schema.json). After changing the types, regenerate the schema with `cargo run -p edit-dna --example schema`, and bump `SCHEMA_VERSION` when the format changes. Version 2 (2026-10-25) added `silence_threshold_db` and `noise_floor_db`. Version 1 files still parse: a missing `silence_threshold_db` reads as −40, the fixed threshold version 1 used, and a missing `noise_floor_db` reads as `null`. Version 3 added `visual_events`; a version 1 or 2 file has none and reads as an empty list. So `diff` accepts outlier files from any version.
+`reelctl decompile` writes one JSON object per video. The Rust types are in [crates/edit-dna/src/lib.rs](../crates/edit-dna/src/lib.rs), and the JSON Schema generated from them is [crates/edit-dna/schema/edit_dna.schema.json](../crates/edit-dna/schema/edit_dna.schema.json). After changing the types, regenerate the schema with `cargo run -p edit-dna --example schema`, and bump `SCHEMA_VERSION` when the format changes. Version 2 (2026-10-25) added `silence_threshold_db` and `noise_floor_db`. Version 1 files still parse: a missing `silence_threshold_db` reads as −40, the fixed threshold version 1 used, and a missing `noise_floor_db` reads as `null`. Version 3 added `visual_events`; a version 1 or 2 file has none and reads as an empty list. Version 4 turned `zoom_curves` from a stub into measured easing curves; a version 3 or earlier file holds the stub (`status: "unimplemented"`) and reads with `curves: []`. So `diff` accepts outlier files from any version.
 
 Every field is always present. Times are whole milliseconds. Video times count from the video stream's start time and audio times from the first decoded audio sample; these usually line up, but the code does not align them.
 
@@ -8,7 +8,7 @@ Every field is always present. Times are whole milliseconds. Video times count f
 
 | Field | Type | Meaning |
 |---|---|---|
-| `schema_version` | integer | Currently `3` |
+| `schema_version` | integer | Currently `4` |
 | `duration_ms` | integer | The longer of the container's duration and the last frame's time plus one frame |
 | `fps` | number | The stream's average frame rate, else its base rate, else 30 |
 | `frame_size` | object | `width` and `height` of the decoded frames, in pixels |
@@ -44,6 +44,31 @@ The scene-score detector applies the formula behind FFmpeg's `scene` value (from
 | `area` | The changed share of the frame, from 0 to 1. `null` for `punch_in` and `zoom_out` |
 
 A field that does not apply to the kind is `null`, never omitted. An event never lies on a frame that is also a cut. `diff` splits a `static_window` at every event time as it does at a cut; the cut rhythm in `comparison` counts cuts only. The detection is specified in [the visual-motion spec](specs/visual-motion.md).
+
+## Zoom curves
+
+`zoom_curves` holds the easing of each `punch_in` and `zoom_out` in `visual_events`: how the move gets from its start scale to its end scale. The scale is measured at every frame of the move (against the frame before it, about the event's centre), and a curve is fitted to those measurements.
+
+| Field | Meaning |
+|---|---|
+| `status` | `"measured"` in a new file, also when there is no zoom move; `"unimplemented"` in a version 3 or earlier file |
+| `reason` | Empty when measured; why not otherwise |
+| `curves` | One entry per `punch_in` or `zoom_out`, in the same order as `visual_events`; `[]` when there is none (and for `overlay_change`, which has no curve) |
+
+Each entry of `curves`:
+
+| Field | Meaning |
+|---|---|
+| `event_index` | Index of the move in `visual_events` |
+| `start_ms` | Time of the last frame before the move, as measured: the frame the run of change was compared with, or the last one after it still within 0.5% of the starting scale |
+| `end_ms` | Time of the first frame after which the picture stays within 1% of its final scale. This can be a frame or two later than the event's `time_ms`, which is the first frame within the noise floor of the last one |
+| `from_scale` | The scale at `start_ms`, relative to itself: always `1` |
+| `to_scale` | The total factor of the move, equal to the event's `scale` |
+| `bezier` | `[x1, y1, x2, y2]`, a CSS `cubic-bezier(x1, y1, x2, y2)`: the progress of the scale (0 at the start, 1 at the end, as a share of the change in scale) against the share of the move's time. `x1` is `1/3` and `x2` is `2/3` (rounded to 4 decimals) because the time control points are fixed, so `y1` and `y2` are the two fitted numbers. They lie between −0.5 and 1.5; `y2` above 1 means the scale overshoots its end and comes back. `null` when the move has fewer than 3 measured frames (a one-frame snap) or the measured frames cannot tell `y1` from `y2` |
+| `samples` | Frames from `start_ms` to `end_ms`, both included |
+| `fit_rms` | Root mean square of the measured progress minus the fitted curve, in units of progress. `null` when `bezier` is. A value near 0.01 is a good fit; above about 0.05 the move is not well described by one cubic |
+
+A move is at most about 12 to 16 frames, so the fit has few samples; a slow push-in that is not an event has no curve. See [the zoom-curves spec](specs/zoom-curves.md).
 
 ## Audio
 
@@ -108,7 +133,6 @@ Only cuts count as cues. A zoom, caption, or graphic at 9 s is not detected.
 
 | Field | Value |
 |---|---|
-| `zoom_curves` | `{"status": "unimplemented", "reason": "..."}`. Optical-flow Bézier zoom curves are Pass 1b. |
 | `cube_lut` | `{"status": "unimplemented", "reason": "..."}`. `.cube` LUT synthesis is Pass 1b; the per-shot histograms are recorded instead. |
 
-`"unimplemented"` is the only `status` value today. Check `status` before reading these fields. See [ADR-004](decisions/ADR-004-report-missing-passes-in-the-output.md).
+`"unimplemented"` is the only `status` value today. Check `status` before reading this field. (`zoom_curves` used the same stub until version 4; see above.) See [ADR-004](decisions/ADR-004-report-missing-passes-in-the-output.md).

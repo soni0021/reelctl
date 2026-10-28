@@ -284,6 +284,16 @@ ease_expr() {
   echo "(${p}*${p}*(3-2*${p}))"
 }
 
+# The 0..1 cubic-bezier(1/3, y1, 2/3, y2) progress that starts at frame $2 and
+# takes $3 frames, with y1 = $4 and y2 = $5: with the time control points at one
+# third and two thirds the curve's x is its own parameter, so the progress is
+# 3(1-p)^2 p y1 + 3(1-p) p^2 y2 + p^3 for p the share of the move done. $1 is the
+# frame number as for ease_expr. y2 above 1 overshoots.
+bezier_expr() {
+  local p="clip(($1-$2)/$3,0,1)"
+  echo "(3*(1-${p})*(1-${p})*${p}*$4+3*(1-${p})*${p}*${p}*$5+${p}*${p}*${p})"
+}
+
 # Box geometry for a frame of $1 x $2 pixels, as "x y w h": 89% of the width and
 # as tall as makes 12% of the frame, every value even so the 4:2:0 chroma
 # does not blend at its edges. $3 is lower (a lower third) or upper.
@@ -301,6 +311,9 @@ box_geometry() {
 # what was planted, sorted by time. The events, in any order:
 #   in:FRAME           a punch-in starts at FRAME: 1.00 -> 1.18 around the centre
 #   out:FRAME          a zoom-out starts at FRAME: 1.18 -> 1.00
+#   bin:FRAME:LEN:Y1:Y2   (and bout:...) the same, but over LEN frames and eased by
+#                      the cubic-bezier(1/3, Y1, 2/3, Y2) progress, which the
+#                      sidecar lists as "bezier" with "ease_frames" (ease12)
 #   box:FRAME:END:ROW:TONE
 #                      an opaque box (12% of the frame, ROW lower|upper, TONE
 #                      dark|light) shows from FRAME up to END, or to the end if
@@ -327,14 +340,15 @@ motion_clip() (
   dir="$(mktemp -d -t reelctl-motion)"
   texture_png "${dir}/texture.png" "$w" "$h"
 
-  # event_json KIND START_FRAME END_FRAME SCALE CENTER_X CENTER_Y AREA CHANGE
+  # event_json KIND START_FRAME END_FRAME SCALE CENTER_X CENTER_Y AREA CHANGE [Y1 Y2]
   event_json() {
-    awk -v kind="$1" -v s="$2" -v e="$3" -v scale="$4" -v cx="$5" -v cy="$6" -v area="$7" -v change="$8" -v fps="$motion_fps" '
+    awk -v kind="$1" -v s="$2" -v e="$3" -v scale="$4" -v cx="$5" -v cy="$6" -v area="$7" -v change="$8" -v y1="${9:-}" -v y2="${10:-}" -v fps="$motion_fps" '
       function num(v, d) { return v == "null" ? "null" : sprintf("%." d "f", v) }
       BEGIN {
         printf "    {\"kind\": \"%s\", \"start_ms\": %.0f, \"end_ms\": %.0f, \"time_ms\": %.0f, \"frame_index\": %d, ", kind, s * 1000 / fps, e * 1000 / fps, e * 1000 / fps, e
         printf "\"start_frame\": %d, \"scale\": %s, \"center_x\": %s, \"center_y\": %s, \"area\": %s", s, num(scale, 4), num(cx, 4), num(cy, 4), num(area, 4)
         if (change != "") printf ", \"change\": \"%s\"", change
+        if (y1 != "") printf ", \"bezier\": [0.3333, %s, 0.6667, %s], \"ease_frames\": %d", y1, y2, e - s
         printf "}"
       }'
   }
@@ -354,6 +368,16 @@ motion_clip() (
         zoom_t+="-${motion_zoom}*$(ease_expr "round(t*${motion_fps})" "$a")"
         zoom_n+="-${motion_zoom}*$(ease_expr n "$a")"
         add_event zoom_out "$a" $(( a + motion_ease )) "$(awk -v z="$motion_zoom" 'BEGIN { printf "%.6f", 1 / (1 + z) }')" 0.5 0.5 null ""
+        ;;
+      bin)
+        zoom_t+="+${motion_zoom}*$(bezier_expr "round(t*${motion_fps})" "$a" "$b" "$row" "$tone")"
+        zoom_n+="+${motion_zoom}*$(bezier_expr n "$a" "$b" "$row" "$tone")"
+        add_event punch_in "$a" $(( a + b )) "$(awk -v z="$motion_zoom" 'BEGIN { printf "%.4f", 1 + z }')" 0.5 0.5 null "" "$row" "$tone"
+        ;;
+      bout)
+        zoom_t+="-${motion_zoom}*$(bezier_expr "round(t*${motion_fps})" "$a" "$b" "$row" "$tone")"
+        zoom_n+="-${motion_zoom}*$(bezier_expr n "$a" "$b" "$row" "$tone")"
+        add_event zoom_out "$a" $(( a + b )) "$(awk -v z="$motion_zoom" 'BEGIN { printf "%.6f", 1 / (1 + z) }')" 0.5 0.5 null "" "$row" "$tone"
         ;;
       box)
         read -r x y bw bh < <(box_geometry "$w" "$h" "$row")
@@ -402,6 +426,20 @@ motion12() {
 
 still12() {
   motion_clip "$1" 540x960 12
+}
+
+# 12 s, 540x960 portrait, still texture, no cut and no box: three punch-ins that
+# each take 12 frames and plant a known easing, and a zoom-out after each that
+# takes the same easing back down, except the last, which would overshoot to a
+# picture smaller than the frame (scale 0.987) and so uses a gentle ease instead.
+# cubic-bezier(1/3, y1, 2/3, y2): an ease-in (0, 0.3) at frame 30, an ease-out
+# (0.6, 1.0) at 126 and an overshoot (0.1, 1.4, which peaks at 1.07 of the move)
+# at 192; the zoom-outs start at 72, 156 and 216 (the last with 0.4, 0.8).
+# A keyframe every 60 frames (0, 60, ... 240) lies inside none of the six moves and
+# on none of their first frames.
+ease12() {
+  local motion_gop=60
+  motion_clip "$1" 540x960 12 bin:30:12:0:0.3 bout:72:12:0:0.3 bin:126:12:0.6:1.0 bout:156:12:0.6:1.0 bin:192:12:0.1:1.4 bout:216:12:0.4:0.8
 }
 
 # motion12 at 640x360 landscape, whose luma grid has other steps and a shape.
@@ -492,6 +530,9 @@ case "$cmd" in
   bench60_textured)
     bench60_textured "$out"
     ;;
+  ease12)
+    ease12 "$out"
+    ;;
   speech12)
     speech12 "$out"
     ;;
@@ -521,9 +562,10 @@ case "$cmd" in
     still12 "${dir}/still12.mp4"
     motion12_wide "${dir}/motion12_wide.mp4"
     bench60_textured "${dir}/bench60_textured.mp4"
+    ease12 "${dir}/ease12.mp4"
     ;;
   *)
-    echo "usage: generate.sh draft12|draft12_10bit|draft12_44k|textured_cuts12|textured_cuts12_hevc|textured_cuts12_hevc8|textured_cuts12_hevc_full|resize12_hevc|shrink12_hevc|depth12_hevc|outlier12|noisy12|quiet12|lecture70|bench60|motion12|still12|motion12_wide|bench60_textured|speech12|tonespeech|all [out.mp4]" >&2
+    echo "usage: generate.sh draft12|draft12_10bit|draft12_44k|textured_cuts12|textured_cuts12_hevc|textured_cuts12_hevc8|textured_cuts12_hevc_full|resize12_hevc|shrink12_hevc|depth12_hevc|outlier12|noisy12|quiet12|lecture70|bench60|motion12|still12|motion12_wide|bench60_textured|ease12|speech12|tonespeech|all [out.mp4]" >&2
     exit 2
     ;;
 esac

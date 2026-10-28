@@ -111,7 +111,9 @@ fn decompile_and_diff_match_the_planted_cut_silence_and_static_shot() {
     assert!(draft.shot_histograms[0].mean_r > draft.shot_histograms[0].mean_b);
     assert!(draft.words_per_minute.is_finite());
     assert!(draft.asr_note.starts_with("No whisper model was given"));
-    assert_eq!(draft.zoom_curves.status.as_str(), "unimplemented");
+    // A clip without a zoom move has measured curves and none of them.
+    assert_eq!(draft.zoom_curves.status.as_str(), "measured");
+    assert!(draft.zoom_curves.curves.is_empty());
     assert!(draft.cube_lut.reason.contains(".cube"));
     assert!(draft.signal_ms > 0 || draft_line.contains("signal_ms="));
 
@@ -1000,5 +1002,177 @@ fn diff_splits_a_static_window_at_the_events_that_the_pixels_show() {
         })
         .collect();
     assert_eq!(spans, vec![(0, 4_250), (8_000, 12_000)], "{windows:?}");
+    let _ = fs::remove_dir_all(&root);
+}
+
+// Zoom curves: the easing of each punch-in and zoom-out, fitted to the scale measured at
+// every frame of the move. ease12 plants three cubic-bezier(1/3, y1, 2/3, y2) easings over 12
+// frames; motion12 plants a 6-frame smoothstep, which is the cubic (1/3 * 0, 1).
+
+/// The planted `[x1, y1, x2, y2]` of a sidecar event.
+fn planted_bezier(event: &serde_json::Value) -> [f64; 4] {
+    let b = event["bezier"].as_array().expect("bezier");
+    [0, 1, 2, 3].map(|i| b[i].as_f64().expect("number"))
+}
+
+/// Progress of cubic-bezier(1/3, y1, 2/3, y2) at normalised time `t`.
+fn cubic(y1: f64, y2: f64, t: f64) -> f64 {
+    let u = 1.0 - t;
+    3.0 * u * u * t * y1 + 3.0 * u * t * t * y2 + t * t * t
+}
+
+#[test]
+fn planted_easings_are_recovered_from_twelve_frame_moves() {
+    let root = scratch("ease");
+    let (dna, planted) = decompile_clip(&root, "ease12");
+    assert!(dna.cuts.is_empty(), "{:?}", dna.cuts);
+    let planted = planted["events"].as_array().expect("events");
+    assert_eq!(planted.len(), 6);
+    assert_eq!(dna.visual_events.len(), 6, "{:?}", dna.visual_events);
+    assert_eq!(dna.zoom_curves.status.as_str(), "measured");
+    assert_eq!(dna.zoom_curves.curves.len(), 6, "{:?}", dna.zoom_curves);
+    for (i, (want, curve)) in planted.iter().zip(&dna.zoom_curves.curves).enumerate() {
+        assert_eq!(
+            curve.event_index as usize, i,
+            "one curve per move, in order"
+        );
+        let event = &dna.visual_events[i];
+        assert_eq!(event.kind.as_str(), want["kind"].as_str().expect("kind"));
+        let [_, y1, _, y2] = planted_bezier(want);
+        let [x1, got1, x2, got2] = curve
+            .bezier
+            .unwrap_or_else(|| panic!("no curve: {curve:?}"));
+        assert!((x1 - 0.3333).abs() < 1e-9 && (x2 - 0.6667).abs() < 1e-9);
+        assert!(
+            (got1 - y1).abs() <= 0.1 && (got2 - y2).abs() <= 0.1,
+            "move {i}: fitted ({got1}, {got2}) against planted ({y1}, {y2}): {curve:?}"
+        );
+        assert!((-0.5..=1.5).contains(&got1) && (-0.5..=1.5).contains(&got2));
+        let rms = curve.fit_rms.expect("rms");
+        assert!(rms < 0.05, "move {i}: fit_rms {rms}");
+        assert!(curve.samples >= 11, "move {i}: {curve:?}");
+        // The move runs from the planted start to the planted end, to two frames.
+        let (start, end) = (
+            want["start_ms"].as_i64().expect("start"),
+            want["end_ms"].as_i64().expect("end"),
+        );
+        assert!(
+            (curve.start_ms as i64 - start).abs() <= 84 && (curve.end_ms as i64 - end).abs() <= 84,
+            "move {i}: {}..{} against {start}..{end}",
+            curve.start_ms,
+            curve.end_ms
+        );
+        assert_eq!(curve.from_scale, 1.0);
+        let scale = want["scale"].as_f64().expect("scale");
+        assert!(
+            (curve.to_scale - scale).abs() <= 0.03,
+            "move {i}: {curve:?}"
+        );
+        assert_eq!(curve.to_scale, event.scale.expect("scale"));
+    }
+    // The overshoot is there: the third pair of moves has a second control point above 1.
+    assert!(dna.zoom_curves.curves[4].bezier.expect("fit")[3] > 1.0);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn the_planted_smoothstep_of_motion12_is_reproduced_at_five_points() {
+    let root = scratch("smooth");
+    for kind in ["motion12", "motion12_wide"] {
+        let (dna, planted) = decompile_clip(&root, kind);
+        // The punch-in and the zoom-out each get a curve; the overlay does not.
+        assert_eq!(dna.visual_events.len(), 3, "{kind}");
+        assert_eq!(
+            dna.zoom_curves.curves.len(),
+            2,
+            "{kind}: {:?}",
+            dna.zoom_curves
+        );
+        let indexes: Vec<u32> = dna
+            .zoom_curves
+            .curves
+            .iter()
+            .map(|c| c.event_index)
+            .collect();
+        assert_eq!(indexes, vec![0, 1], "{kind}");
+        let moves: Vec<&serde_json::Value> = planted["events"]
+            .as_array()
+            .expect("events")
+            .iter()
+            .filter(|event| event["kind"] != "overlay_change")
+            .collect();
+        for (want, curve) in moves.iter().zip(&dna.zoom_curves.curves) {
+            let [_, y1, _, y2] = curve.bezier.unwrap_or_else(|| panic!("{kind}: {curve:?}"));
+            assert!(curve.fit_rms.expect("rms") < 0.05, "{kind}: {curve:?}");
+            let start = want["start_ms"].as_f64().expect("start");
+            let end = want["end_ms"].as_f64().expect("end");
+            for k in 1..=5 {
+                // The planted smoothstep at k/6 of its time, read off the fitted curve
+                // at the same instant.
+                let share = f64::from(k) / 6.0;
+                let at = start + share * (end - start);
+                let planted_progress = share * share * (3.0 - 2.0 * share);
+                let t =
+                    (at - curve.start_ms as f64) / (curve.end_ms as f64 - curve.start_ms as f64);
+                let got = cubic(y1, y2, t.clamp(0.0, 1.0));
+                assert!(
+                    (got - planted_progress).abs() <= 0.05,
+                    "{kind} at {k}/6: fitted {got} against planted {planted_progress}: {curve:?}"
+                );
+            }
+        }
+    }
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_still_clip_has_measured_curves_and_none_of_them() {
+    let root = scratch("still-curves");
+    let (still, _) = decompile_clip(&root, "still12");
+    assert_eq!(still.zoom_curves.status.as_str(), "measured");
+    assert!(
+        still.zoom_curves.curves.is_empty(),
+        "{:?}",
+        still.zoom_curves
+    );
+    let json: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("still12.edit_dna.json")).expect("json"))
+            .expect("json");
+    assert_eq!(json["schema_version"], 4);
+    assert_eq!(json["zoom_curves"]["curves"], serde_json::json!([]));
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_version_3_file_is_read_by_diff_with_its_zoom_curves_unimplemented() {
+    let root = scratch("v3");
+    let (dna, _) = decompile_clip(&root, "still12");
+    let mut value = serde_json::to_value(&dna).expect("json");
+    let object = value.as_object_mut().expect("object");
+    object.insert("schema_version".to_string(), 3.into());
+    object.insert(
+        "zoom_curves".to_string(),
+        serde_json::json!({
+            "status": "unimplemented",
+            "reason": "Optical-flow Bézier zoom curves are Pass 1b and are not computed on the timed structural path."
+        }),
+    );
+    let outlier = root.join("v3.edit_dna.json");
+    fs::write(&outlier, serde_json::to_vec(&value).expect("json")).expect("write");
+    let old: EditDna = serde_json::from_slice(&fs::read(&outlier).expect("read")).expect("v3");
+    assert_eq!(old.zoom_curves.status.as_str(), "unimplemented");
+    assert!(old.zoom_curves.curves.is_empty());
+    let output = reelctl()
+        .args(["diff", "--draft"])
+        .arg(root.join("still12.mp4"))
+        .arg("--outlier")
+        .arg(&outlier)
+        .output()
+        .expect("spawn diff");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let _ = fs::remove_dir_all(&root);
 }
