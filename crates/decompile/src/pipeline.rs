@@ -18,7 +18,9 @@ use crate::loudness::integrated_lufs;
 use crate::payoff::from_cuts;
 use crate::scene::{CutDetector, DetectorInput, SceneScoreDetector, SCENE_NOTE};
 use crate::silence;
-use crate::transnet::{select_detector, CutDetectorChoice, SelectedDetector, TRANSNET_NOTE};
+use crate::transnet::{
+    long_run_warning, select_detector, CutDetectorChoice, SelectedDetector, TRANSNET_NOTE,
+};
 use crate::worker::WhisperRunner;
 
 const PCM_HALF_WINDOW_MS: u64 = 1_500;
@@ -189,7 +191,10 @@ fn resolve_cuts(
                     Ok(ResolvedCuts {
                         cuts,
                         detector: detector.kind(),
-                        note: TRANSNET_NOTE.to_string(),
+                        note: format!(
+                            "{TRANSNET_NOTE}{}",
+                            long_run_warning(decoded.frames.len()).unwrap_or_default()
+                        ),
                         boundaries,
                     })
                 }

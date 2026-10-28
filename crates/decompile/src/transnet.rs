@@ -25,11 +25,39 @@ use ort::value::Tensor;
 use crate::error::DecompileError;
 use crate::scene::{CutDetector, DetectorInput, SceneScoreDetector};
 use crate::transnet_window::{
-    cut_points, cuts_at, predict, CUT_THRESHOLD, MODEL_HEIGHT, MODEL_WIDTH, WINDOW,
+    cut_points, cuts_at, predict, CUT_THRESHOLD, FRAME_BYTES, MODEL_HEIGHT, MODEL_WIDTH, WINDOW,
 };
 
 /// The environment variable that names the ONNX Runtime library (`ort`'s own name).
 pub const LIBRARY_ENV: &str = "ORT_DYLIB_PATH";
+
+/// Frames from which the note warns that the run was long: 5 minutes at 30 fps.
+const LONG_RUN_FRAMES: usize = 9_000;
+/// Milliseconds per video frame measured on an Apple M3 (7 at a load average of
+/// about 9, 13 at about 26); other machines differ.
+const MS_PER_FRAME: (usize, usize) = (7, 13);
+
+/// What the note adds when the model ran over `frames` frames and that is long.
+pub(crate) fn long_run_warning(frames: usize) -> Option<String> {
+    if frames < LONG_RUN_FRAMES {
+        return None;
+    }
+    let (fast, slow) = MS_PER_FRAME;
+    Some(format!(
+        " The model ran on {frames} frames; at the 7 to 13 ms per frame measured on an Apple M3 \
+that is {} to {} s, and other machines differ. --cut-detector scene is much faster.",
+        frames * fast / 1_000,
+        frames * slow / 1_000,
+    ))
+}
+
+fn too_long_error(seen: usize, limit: usize) -> DecompileError {
+    DecompileError::Message(format!(
+        "This clip has {seen} frames, which is too long for TransNetV2: it keeps at most \
+{limit} frames in memory ({} MB of 48x27 frames). Use --cut-detector scene for a clip this long.",
+        limit * FRAME_BYTES / 1_000_000
+    ))
+}
 
 /// The single-frame transition probability. The graph also has `535` (many-hot),
 /// which the official post-processing does not use.
@@ -131,6 +159,9 @@ pub(crate) fn detect_with(
     let frames = input.model_frames.ok_or_else(|| {
         DecompileError::Message("TransNetV2 was not given the 48x27 frames".to_string())
     })?;
+    if frames.exceeds_limit() {
+        return Err(too_long_error(frames.len(), frames.limit()));
+    }
     if frames.len() != input.frames.len() {
         return Err(DecompileError::Message(format!(
             "TransNetV2 got {} model frames for {} decoded frames",
@@ -501,6 +532,58 @@ mod tests {
             (216, 8_640, 5_760)
         );
         assert!((cuts[0].scene_score - 0.96).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_clip_over_the_frame_limit_is_an_error_before_the_model_runs() {
+        let (scored, _) = frames_for(8);
+        let mut model = ModelFrames::with_limit(8, 5);
+        for index in 0..8 {
+            model.push_with(|slot| slot.fill(index));
+        }
+        let input = DetectorInput {
+            frames: &scored,
+            model_frames: Some(&model),
+        };
+        let mut calls = 0;
+        let err = detect_with(&input, |_| {
+            calls += 1;
+            Ok(vec![0.0; WINDOW])
+        })
+        .expect_err("too long");
+        assert_eq!(calls, 0, "the model must not run");
+        let text = err.to_string();
+        assert!(text.contains("too long for TransNetV2"), "{text}");
+        assert!(text.contains("--cut-detector scene"), "{text}");
+        assert!(text.contains("8 frames"), "{text}");
+        assert!(text.contains('5'), "{text}");
+    }
+
+    #[test]
+    fn the_limit_is_checked_before_the_frame_count_mismatch() {
+        // 8 model frames seen but only 3 decoded-frame scores: still "too long".
+        let (scored, _) = frames_for(3);
+        let mut model = ModelFrames::with_limit(8, 5);
+        for index in 0..8 {
+            model.push_with(|slot| slot.fill(index));
+        }
+        let input = DetectorInput {
+            frames: &scored,
+            model_frames: Some(&model),
+        };
+        let err = detect_with(&input, |_| Ok(vec![0.0; WINDOW])).expect_err("too long");
+        assert!(err.to_string().contains("too long"), "{err}");
+    }
+
+    #[test]
+    fn a_long_run_is_warned_about_with_its_frame_count_and_the_measured_rate() {
+        assert_eq!(long_run_warning(LONG_RUN_FRAMES - 1), None);
+        let text = long_run_warning(LONG_RUN_FRAMES).expect("a warning");
+        assert!(text.contains(&format!("{LONG_RUN_FRAMES} frames")), "{text}");
+        assert!(text.contains("7 to 13 ms"), "{text}");
+        assert!(text.contains("--cut-detector scene"), "{text}");
+        // 9,000 frames at 7 and 13 ms: 63 and 117 s.
+        assert!(text.contains("63 to 117 s"), "{text}");
     }
 
     #[test]

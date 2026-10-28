@@ -32,29 +32,61 @@ const CONTEXT: usize = (WINDOW - STRIDE) / 2;
 pub(crate) const CUT_THRESHOLD: f32 = 0.5;
 /// Points read along each axis of an output pixel's cell.
 pub(crate) const SUBSAMPLES: usize = 4;
+/// The most frames kept for the model: 777.6 MB of 48x27 RGB (2 h 4 min at 27 fps
+/// is a little over 200,000). Past it the frames are counted and dropped.
+pub(crate) const MAX_MODEL_FRAMES: usize = 200_000;
+/// The most frames reserved up front from the container's duration (16 MB).
+pub(crate) const MAX_PREALLOCATED_FRAMES: usize = 4_096;
 
-/// The 48x27 RGB frames of a clip, one after the other, as bytes.
+/// The 48x27 RGB frames of a clip, one after the other, as bytes. At most
+/// `limit` frames are kept: once a clip passes it the buffer is freed and the
+/// frames are only counted, so a very long clip cannot exhaust memory and the
+/// detector can say how long the clip was.
 pub struct ModelFrames {
     data: Vec<u8>,
     count: usize,
+    limit: usize,
 }
 
 impl ModelFrames {
-    pub(crate) fn with_capacity(frames: usize) -> Self {
+    /// For about `expected` frames (from the container's duration, which a
+    /// damaged file can make absurd, so the reservation is capped), keeping at
+    /// most `MAX_MODEL_FRAMES`.
+    pub(crate) fn with_capacity(expected: usize) -> Self {
+        Self::with_limit(expected, MAX_MODEL_FRAMES)
+    }
+
+    pub(crate) fn with_limit(expected: usize, limit: usize) -> Self {
+        let reserved = expected.min(limit).min(MAX_PREALLOCATED_FRAMES);
         Self {
-            data: Vec::with_capacity(frames.saturating_mul(FRAME_BYTES)),
+            data: Vec::with_capacity(reserved * FRAME_BYTES),
             count: 0,
+            limit,
         }
     }
 
-    /// Append a frame, filled in place by `fill`.
+    /// Append a frame, filled in place by `fill`; past the limit, only count it.
     pub(crate) fn push_with(&mut self, fill: impl FnOnce(&mut [u8])) {
+        self.count += 1;
+        if self.exceeds_limit() {
+            self.data = Vec::new();
+            return;
+        }
         let start = self.data.len();
         self.data.resize(start + FRAME_BYTES, 0);
         fill(&mut self.data[start..]);
-        self.count += 1;
     }
 
+    /// Whether more frames were pushed than the limit allows (and so dropped).
+    pub(crate) fn exceeds_limit(&self) -> bool {
+        self.count > self.limit
+    }
+
+    pub(crate) fn limit(&self) -> usize {
+        self.limit
+    }
+
+    /// The frames pushed, kept or not.
     pub(crate) fn len(&self) -> usize {
         self.count
     }
@@ -410,6 +442,35 @@ mod tests {
             Ok(out)
         })
         .expect("context outputs are not read");
+    }
+
+    #[test]
+    fn a_huge_expected_frame_count_does_not_reserve_memory() {
+        let frames = ModelFrames::with_capacity(usize::MAX);
+        assert_eq!(frames.len(), 0);
+        assert!(frames.data.capacity() <= MAX_PREALLOCATED_FRAMES * FRAME_BYTES);
+    }
+
+    #[test]
+    fn the_frame_limit_is_about_780_megabytes() {
+        assert_eq!(MAX_MODEL_FRAMES, 200_000);
+        assert_eq!(MAX_MODEL_FRAMES * FRAME_BYTES, 777_600_000);
+    }
+
+    #[test]
+    fn frames_past_the_limit_are_counted_and_not_kept() {
+        let mut frames = ModelFrames::with_limit(10, 5);
+        for index in 0..5u8 {
+            frames.push_with(|slot| slot.fill(index));
+        }
+        assert!(!frames.exceeds_limit());
+        assert_eq!(frames.frame(4).map(|f| f[0]), Some(4));
+        frames.push_with(|slot| slot.fill(9));
+        frames.push_with(|slot| slot.fill(9));
+        assert!(frames.exceeds_limit());
+        assert_eq!(frames.len(), 7, "every frame seen is counted");
+        assert_eq!(frames.data.capacity(), 0, "the buffer is freed");
+        assert!(frames.frame(0).is_none());
     }
 
     #[test]

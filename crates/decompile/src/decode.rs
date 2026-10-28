@@ -57,6 +57,10 @@ const BEFORE_FRAMES: usize = 4;
 const AFTER_FRAMES: usize = 4;
 const HIST_TARGET_W: u32 = 32;
 const HIST_TARGET_H: u32 = 18;
+/// The most frames and PCM samples reserved up front from the container's
+/// duration, which a damaged file can make absurd. The vectors grow past it.
+const MAX_PREALLOCATED_FRAMES: usize = 20_000;
+const MAX_PREALLOCATED_SAMPLES: usize = 16_000_000;
 
 const DECODE_NOTE: &str = "\
 libavcodec frame-threaded software decode (thread_count auto, loop filter on \
@@ -794,14 +798,21 @@ fn expected_frame_count(duration_ms: u64, fps: Rational) -> usize {
     }
     let frames = u128::from(duration_ms) * u128::try_from(fps.numerator()).unwrap_or(30)
         / (1_000 * u128::try_from(fps.denominator()).unwrap_or(1));
-    (frames as usize).saturating_add(8).max(16)
+    usize::try_from(frames)
+        .unwrap_or(usize::MAX)
+        .saturating_add(8)
+        .clamp(16, MAX_PREALLOCATED_FRAMES)
 }
 
 fn expected_pcm(duration_ms: u64) -> usize {
     if duration_ms == 0 {
         return 48_000;
     }
-    (u128::from(duration_ms) * u128::from(SAMPLE_RATE) / 1_000) as usize + 4_096
+    let samples = u128::from(duration_ms) * u128::from(SAMPLE_RATE) / 1_000;
+    usize::try_from(samples)
+        .unwrap_or(usize::MAX)
+        .saturating_add(4_096)
+        .min(MAX_PREALLOCATED_SAMPLES)
 }
 
 fn frame_time_ms(
@@ -1872,6 +1883,16 @@ mod tests {
                 "right of row {row}"
             );
         }
+    }
+
+    #[test]
+    fn a_bogus_container_duration_does_not_size_the_buffers() {
+        let huge = expected_frame_count(u64::MAX, Rational::new(30, 1));
+        assert!(huge <= MAX_PREALLOCATED_FRAMES, "{huge}");
+        assert!(expected_pcm(u64::MAX) <= MAX_PREALLOCATED_SAMPLES);
+        // A real 60 s clip at 30 fps is still sized exactly (plus the margin).
+        assert_eq!(expected_frame_count(60_000, Rational::new(30, 1)), 1_808);
+        assert_eq!(expected_pcm(60_000), 60 * 48_000 + 4_096);
     }
 
     #[test]
