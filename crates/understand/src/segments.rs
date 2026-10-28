@@ -3,6 +3,7 @@
 use edit_dna::{SilenceGap, Word};
 
 use crate::types::Segment;
+use crate::{SEGMENT_PAUSE_MS, SEGMENT_SLACK_MS};
 
 /// Split `words` into segments with 1-based IDs.
 ///
@@ -11,10 +12,62 @@ use crate::types::Segment;
 /// [`crate::SEGMENT_SLACK_MS`] on whisper's word times). `text` joins the words with
 /// single spaces and is never changed; `ends_sentence` is set when the last word
 /// ends a sentence.
+///
+/// A gap lies between word *a* and the next word *b* when its duration is at least
+/// `SEGMENT_PAUSE_MS`, it starts no earlier than `a.end_ms - SEGMENT_SLACK_MS`, and it
+/// ends no later than `b.start_ms + SEGMENT_SLACK_MS`. Whisper ends a word at the next
+/// word's start or at the next gap's start, so a gap normally begins at or after `a`'s
+/// end; it may start earlier only by the slack. Both slack bounds are inclusive. A gap
+/// before the first word or after the last one adds no segment. `words` must be in
+/// time order.
 pub fn segment_words(words: &[Word], silence_gaps: &[SilenceGap]) -> Vec<Segment> {
-    // Stub: the segmenter is built in its own task.
-    let _ = (words, silence_gaps);
-    Vec::new()
+    let mut pauses: Vec<&SilenceGap> = silence_gaps
+        .iter()
+        .filter(|gap| gap.duration_ms >= SEGMENT_PAUSE_MS)
+        .collect();
+    pauses.sort_by_key(|gap| gap.start_ms);
+
+    let mut segments = Vec::new();
+    let mut first = 0;
+    for (index, word) in words.iter().enumerate() {
+        let closes = match words.get(index + 1) {
+            Some(next) => ends_sentence(word) || pause_between(&pauses, word, next),
+            None => true,
+        };
+        if closes {
+            let run = &words[first..=index];
+            segments.push(Segment {
+                id: u32::try_from(segments.len() + 1).unwrap_or(u32::MAX),
+                start_ms: run.first().map_or(word.start_ms, |w| w.start_ms),
+                end_ms: word.end_ms,
+                text: run
+                    .iter()
+                    .map(|w| w.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                ends_sentence: ends_sentence(word),
+            });
+            first = index + 1;
+        }
+    }
+    segments
+}
+
+fn ends_sentence(word: &Word) -> bool {
+    word.text.ends_with(['.', '?', '!'])
+}
+
+/// Whether one of `pauses` (at least `SEGMENT_PAUSE_MS` long, sorted by start) lies
+/// between `before` and `after`, as described on [`segment_words`].
+fn pause_between(pauses: &[&SilenceGap], before: &Word, after: &Word) -> bool {
+    let earliest_start = before.end_ms.saturating_sub(SEGMENT_SLACK_MS);
+    let latest_end = after.start_ms + SEGMENT_SLACK_MS;
+    let from = pauses.partition_point(|gap| gap.start_ms < earliest_start);
+    pauses
+        .iter()
+        .skip(from)
+        .take_while(|gap| gap.start_ms <= latest_end)
+        .any(|gap| gap.end_ms <= latest_end)
 }
 
 #[cfg(test)]
