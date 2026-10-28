@@ -86,6 +86,22 @@ textured_cuts_shots() {
     -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=12"
 }
 
+# 12 s, 640x360, 24 fps, with two soft transitions and no hard cut: a one-second
+# dissolve from testsrc2 to mandelbrot (frames 96-119) and a one-second fade
+# through black into testsrc (frames 192-215). The scene-score detector finds no
+# cut in it (every frame differs from the last by a small step); TransNetV2 marks
+# both transitions. Same encode as textured_cuts12.
+dissolve12() (
+  video_codec=(-c:v libx264 -preset fast -crf 22 -profile:v high -g 25 -bf 3 -sc_threshold 0 -pix_fmt yuv420p)
+  local shot="setpts=PTS-STARTPTS,format=yuv420p"
+  encode "$1" \
+    "[0:v]trim=duration=5,${shot}[s0];[1:v]trim=duration=5,${shot}[s1];[2:v]trim=duration=4,${shot}[s2];[s0][s1]xfade=transition=dissolve:duration=1:offset=4[s01];[s01][s2]xfade=transition=fadeblack:duration=1:offset=8[v];[3:a]anull[a]" \
+    -f lavfi -i "testsrc2=s=640x360:r=24" \
+    -f lavfi -i "mandelbrot=s=640x360:r=24" \
+    -f lavfi -i "testsrc=s=640x360:r=24" \
+    -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=12"
+)
+
 # textured_cuts12 as HEVC, for the media-engine decoder: 10-bit Main 10 (what an
 # iPhone records) and 8-bit Main. Keyframes every 25 frames, scene cuts off.
 textured_cuts12_hevc() (
@@ -449,6 +465,9 @@ case "$cmd" in
   textured_cuts12)
     textured_cuts12 "$out"
     ;;
+  dissolve12)
+    dissolve12 "$out"
+    ;;
   textured_cuts12_hevc)
     textured_cuts12_hevc "$out"
     ;;
@@ -511,6 +530,7 @@ case "$cmd" in
     draft12_10bit "${dir}/draft_12s_10bit.mp4"
     draft12_44k "${dir}/draft_12s_44k.mp4"
     textured_cuts12 "${dir}/textured_cuts_12s.mp4"
+    dissolve12 "${dir}/dissolve_12s.mp4"
     textured_cuts12_hevc "${dir}/textured_cuts_12s_hevc.mp4"
     textured_cuts12_hevc "${dir}/textured_cuts_12s_hevc8.mp4" yuv420p
     textured_cuts12_hevc_full "${dir}/textured_cuts_12s_hevc_full.mp4"
@@ -529,7 +549,7 @@ case "$cmd" in
     bench60_textured "${dir}/bench60_textured.mp4"
     ;;
   *)
-    echo "usage: generate.sh draft12|draft12_10bit|draft12_44k|textured_cuts12|textured_cuts12_hevc|textured_cuts12_hevc8|textured_cuts12_hevc_full|resize12_hevc|shrink12_hevc|depth12_hevc|outlier12|noisy12|quiet12|lecture70|bench60|motion12|still12|graded12|motion12_wide|bench60_textured|speech12|tonespeech|all [out.mp4]" >&2
+    echo "usage: generate.sh draft12|draft12_10bit|draft12_44k|textured_cuts12|dissolve12|textured_cuts12_hevc|textured_cuts12_hevc8|textured_cuts12_hevc_full|resize12_hevc|shrink12_hevc|depth12_hevc|outlier12|noisy12|quiet12|lecture70|bench60|motion12|still12|graded12|motion12_wide|bench60_textured|speech12|tonespeech|all [out.mp4]" >&2
     exit 2
     ;;
 esac

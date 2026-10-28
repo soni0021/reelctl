@@ -1,7 +1,7 @@
 # ADR-002: Detect cuts with FFmpeg's scene score while TransNetV2 is unlinked
 
 ## Status
-Accepted
+Accepted; superseded in part by [ADR-018](ADR-018-run-transnetv2-through-a-dynamically-loaded-onnx-runtime.md) (2026-10-28): `TransNetV2Detector` no longer always errors, the `CutDetector` trait takes a `DetectorInput`, and the `auto`/`transnet` rules are those in ADR-018 and [cli.md](../cli.md). The scene-score detector and the rest of this record stand.
 
 ## Date
 2026-10-18. Recorded on 2026-10-20 from [scene.rs](../../crates/decompile/src/scene.rs), [transnet.rs](../../crates/decompile/src/transnet.rs), and [AGENTS.md](../../AGENTS.md).

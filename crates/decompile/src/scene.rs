@@ -9,16 +9,17 @@
 use edit_dna::{Cut, CutDetectorKind};
 
 use crate::error::DecompileError;
+use crate::transnet_window::ModelFrames;
 
 /// Same default as `select='gt(scene,0.3)'`.
 pub const SCENE_SCORE_THRESHOLD: f64 = 0.30;
 
 pub const SCENE_NOTE: &str = "\
 FFmpeg scene score (libavfilter select/scene mafd formula) on a 160x90 luma \
-grid. A hard cut is a frame whose score is greater than 0.30. TransNetV2 via \
-ort is preferred when --transnet-weights points at an ONNX file that exists; \
-weights are not vendored and the ort runtime is not linked, so this detector \
-is the offline implementation of the CutDetector trait.";
+grid. A hard cut is a frame whose score is greater than 0.30. A dissolve or \
+fade is not a cut to this detector. TransNetV2 runs instead when \
+--transnet-weights names an ONNX file and ORT_DYLIB_PATH names an ONNX \
+Runtime library; neither is vendored.";
 
 #[derive(Debug, Clone, Copy)]
 pub struct ScoredFrame {
@@ -26,9 +27,26 @@ pub struct ScoredFrame {
     pub scene_score: f64,
 }
 
+/// What a detector may read: the per-frame scores, and, when the model runs,
+/// the 48x27 RGB frames.
+pub struct DetectorInput<'a> {
+    pub frames: &'a [ScoredFrame],
+    pub model_frames: Option<&'a ModelFrames>,
+}
+
+impl<'a> DetectorInput<'a> {
+    /// Scores only, as the scene-score detector needs.
+    pub fn scores(frames: &'a [ScoredFrame]) -> Self {
+        Self {
+            frames,
+            model_frames: None,
+        }
+    }
+}
+
 pub trait CutDetector {
     fn kind(&self) -> CutDetectorKind;
-    fn detect(&self, frames: &[ScoredFrame]) -> Result<Vec<Cut>, DecompileError>;
+    fn detect(&self, input: &DetectorInput<'_>) -> Result<Vec<Cut>, DecompileError>;
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -49,7 +67,8 @@ impl CutDetector for SceneScoreDetector {
         CutDetectorKind::FfmpegSceneScore
     }
 
-    fn detect(&self, frames: &[ScoredFrame]) -> Result<Vec<Cut>, DecompileError> {
+    fn detect(&self, input: &DetectorInput<'_>) -> Result<Vec<Cut>, DecompileError> {
+        let frames = input.frames;
         let mut indexes = Vec::new();
         for (index, frame) in frames.iter().enumerate() {
             if index > 0 && frame.scene_score > self.threshold {
@@ -61,12 +80,22 @@ impl CutDetector for SceneScoreDetector {
 }
 
 pub fn finalize_cuts(frames: &[ScoredFrame], indexes: &[usize]) -> Vec<Cut> {
-    let mut cuts = Vec::with_capacity(indexes.len());
+    let scored: Vec<(usize, f64)> = indexes
+        .iter()
+        .map(|&index| {
+            let score = frames.get(index).map(|item| item.scene_score);
+            (index, score.unwrap_or(0.0))
+        })
+        .collect();
+    cuts_with_scores(frames, &scored)
+}
+
+/// The cuts at these frames with these scores; times and intervals come from `frames`.
+pub fn cuts_with_scores(frames: &[ScoredFrame], cuts_at: &[(usize, f64)]) -> Vec<Cut> {
+    let mut cuts = Vec::with_capacity(cuts_at.len());
     let mut previous_ms = 0u64;
-    for &index in indexes {
-        let frame = frames.get(index);
-        let time_ms = frame.map(|item| item.time_ms).unwrap_or(0);
-        let scene_score = frame.map(|item| item.scene_score).unwrap_or(0.0);
+    for &(index, scene_score) in cuts_at {
+        let time_ms = frames.get(index).map(|item| item.time_ms).unwrap_or(0);
         cuts.push(Cut {
             frame_index: index as u64,
             time_ms,
@@ -119,7 +148,9 @@ mod tests {
                 scene_score: 0.8,
             },
         ];
-        let cuts = SceneScoreDetector::default().detect(&frames).expect("cuts");
+        let cuts = SceneScoreDetector::default()
+            .detect(&DetectorInput::scores(&frames))
+            .expect("cuts");
         assert_eq!(cuts.len(), 2);
         assert_eq!(cuts[0].frame_index, 1);
         assert_eq!(cuts[0].time_ms, 3_000);
