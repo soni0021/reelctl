@@ -378,7 +378,7 @@ motion_clip() (
   local sw="round(${w}*(${zoom_t}))" sh="round(${h}*(${zoom_t}))"
   local cw="round(${w}*(${zoom_n}))" ch="round(${h}*(${zoom_n}))"
   encode "$out" \
-    "[0:v]scale=w='${sw}':h='${sh}':eval=frame:flags=bicubic,crop=${w}:${h}:x='floor((${cw}-${w})/2)':y='floor((${ch}-${h})/2)'${boxes},format=yuv420p[v];[1:a]anull[a]" \
+    "[0:v]scale=w='${sw}':h='${sh}':eval=frame:flags=bicubic,crop=${w}:${h}:x='floor((${cw}-${w})/2)':y='floor((${ch}-${h})/2)'${boxes}${motion_grade:-},format=yuv420p[v];[1:a]anull[a]" \
     -loop 1 -framerate "$motion_fps" -t "$seconds" -i "${dir}/texture.png" \
     -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=${seconds}"
 
@@ -402,6 +402,17 @@ motion12() {
 
 still12() {
   motion_clip "$1" 540x960 12
+}
+
+# still12 with a known colour grade, for `reelctl look`: a warm colorbalance (red
+# up and blue down in the shadows, mid-tones and highlights) and a curves lift that
+# raises the blacks and softens the whites. Both act on each channel alone, so the
+# grade is a separable monotone map of still12's pixels and a per-channel match can
+# undo it. It is set as motion_grade, appended to the filter chain before the final
+# yuv420p conversion; unset (every other fixture) it adds nothing.
+graded12() {
+  motion_grade=",colorbalance=rs=0.14:gs=0:bs=-0.20:rm=0.20:gm=0.02:bm=-0.25:rh=0.10:bh=-0.18,curves=all='0/0.07 0.5/0.55 1/0.96'" \
+    motion_clip "$1" 540x960 12
 }
 
 # motion12 at 640x360 landscape, whose luma grid has other steps and a shape.
@@ -489,6 +500,9 @@ case "$cmd" in
   motion12_wide)
     motion12_wide "$out"
     ;;
+  graded12)
+    graded12 "$out"
+    ;;
   bench60_textured)
     bench60_textured "$out"
     ;;
@@ -519,11 +533,12 @@ case "$cmd" in
     bench60 "${dir}/bench_60s.mp4"
     motion12 "${dir}/motion12.mp4"
     still12 "${dir}/still12.mp4"
+    graded12 "${dir}/graded12.mp4"
     motion12_wide "${dir}/motion12_wide.mp4"
     bench60_textured "${dir}/bench60_textured.mp4"
     ;;
   *)
-    echo "usage: generate.sh draft12|draft12_10bit|draft12_44k|textured_cuts12|textured_cuts12_hevc|textured_cuts12_hevc8|textured_cuts12_hevc_full|resize12_hevc|shrink12_hevc|depth12_hevc|outlier12|noisy12|quiet12|lecture70|bench60|motion12|still12|motion12_wide|bench60_textured|speech12|tonespeech|all [out.mp4]" >&2
+    echo "usage: generate.sh draft12|draft12_10bit|draft12_44k|textured_cuts12|textured_cuts12_hevc|textured_cuts12_hevc8|textured_cuts12_hevc_full|resize12_hevc|shrink12_hevc|depth12_hevc|outlier12|noisy12|quiet12|lecture70|bench60|motion12|still12|graded12|motion12_wide|bench60_textured|speech12|tonespeech|all [out.mp4]" >&2
     exit 2
     ;;
 esac
