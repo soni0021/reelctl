@@ -94,9 +94,9 @@ func writeBlueprint(b *strings.Builder, bp *blueprint.Blueprint) {
 }
 
 func writeMetricTable(b *strings.Builder, metrics []blueprint.Metric) {
-	b.WriteString("| Metric | Baseline posts | Breakouts | Change |\n|---|---|---|---|\n")
+	b.WriteString("| Metric | Baseline posts → breakouts | Change |\n|---|---|---|\n")
 	for _, m := range metrics {
-		fmt.Fprintf(b, "| %s | %s | %s | %s |\n", m.Label, blueprint.Display(m.Unit, m.Before), blueprint.Display(m.Unit, m.After), changeCell(m))
+		fmt.Fprintf(b, "| %s | %s → %s | %s |\n", m.Label, blueprint.Display(m.Unit, m.Before), blueprint.Display(m.Unit, m.After), changeCell(m))
 	}
 	b.WriteString("\n")
 }

@@ -22,15 +22,15 @@ A creator is surging when a post has an outlier multiplier of at least 10, or fo
 - Silent share dropped from 1.9% to 0.2% (−89%) across 3 breakouts against 3 baseline posts.
 - Integrated loudness rose from -16.0 LUFS to -11.8 LUFS (+26%) across 3 breakouts against 3 baseline posts.
 
-| Metric | Baseline posts | Breakouts | Change |
-|---|---|---|---|
-| Mean shot length | 4.5 s | 1.6 s | −65% |
-| Median shot length | 4.7 s | 1.6 s | −66% |
-| Cuts per minute | 12.3 | 37.7 | +205% |
-| Pauses per minute | 2.7 | 0.7 | −75% |
-| Silent share | 1.9% | 0.2% | −89% |
-| Words per minute | 140.0 | 150.0 | +7% |
-| Integrated loudness | -16.0 LUFS | -11.8 LUFS | +26% |
+| Metric | Baseline posts → breakouts | Change |
+|---|---|---|
+| Mean shot length | 4.5 s → 1.6 s | −65% |
+| Median shot length | 4.7 s → 1.6 s | −66% |
+| Cuts per minute | 12.3 → 37.7 | +205% |
+| Pauses per minute | 2.7 → 0.7 | −75% |
+| Silent share | 1.9% → 0.2% | −89% |
+| Words per minute | 140.0 → 150.0 | +7% |
+| Integrated loudness | -16.0 LUFS → -11.8 LUFS | +26% |
 
 - visual_events was missing from 3 of 6 files, so visual events are not compared.
 

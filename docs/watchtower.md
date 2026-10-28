@@ -43,7 +43,7 @@ The tests need neither `reelctl` nor a network: `cd watchtower && go test ./...`
 | `creators[].handle` | yes | |
 | `snapshots[].date` | yes | `YYYY-MM-DD` |
 | `snapshots[].followers`, `total_views` | yes | Integers |
-| `posts[].id` | yes | Also names the file `dna/<id>.edit_dna.json`; characters other than letters, digits, `.`, `_`, `-` become `_` |
+| `posts[].id` | yes | Must be unique across the whole file: it also names the file `dna/<id>.edit_dna.json`; characters other than letters, digits, `.`, `_`, `-` become `_` |
 | `posts[].posted_at` | yes | RFC 3339 |
 | `posts[].views` | yes | Integer |
 | `posts[].url` | no | Copied to the digest |
@@ -92,7 +92,7 @@ A sentence is written only for a change of at least 25% (a fixed constant, repor
 
 ## Output
 
-`digest.json` and `digest.md` hold the same data. Both are byte-identical for identical inputs and `--now`, and neither contains a path of the machine that made them. `dna/<id>.edit_dna.json` holds each decompiled post, and `reelctl` also writes its `timeline_view` PNGs beside them.
+`digest.json` and `digest.md` hold the same data. In the Markdown, each metric is a row of `baseline → breakouts` with its change. Both are byte-identical for identical inputs and `--now`. They hold no path of the machine that made them, except where a `failures[].detail` quotes a message from `reelctl` or the OS, which may name a path. `dna/<id>.edit_dna.json` holds each decompiled post, and `reelctl` also writes its `timeline_view` PNGs beside them.
 
 Top level of `digest.json`: `generated_at`, `niche`, `min_score`, `min_velocity`, `creators[]`, `failures[]`.
 
