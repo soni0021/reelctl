@@ -1,0 +1,200 @@
+{
+  "schema_version": 3,
+  "asr_backend": "whisper_cpp",
+  "duration_ms": 60000,
+  "fps": 30.0,
+  "frame_size": {
+    "width": 720,
+    "height": 1280
+  },
+  "cuts": [
+    {
+      "frame_index": 60,
+      "time_ms": 2000,
+      "interval_ms": 2000,
+      "scene_score": 0.62
+    },
+    {
+      "frame_index": 120,
+      "time_ms": 4000,
+      "interval_ms": 2000,
+      "scene_score": 0.62
+    },
+    {
+      "frame_index": 180,
+      "time_ms": 6000,
+      "interval_ms": 2000,
+      "scene_score": 0.62
+    },
+    {
+      "frame_index": 240,
+      "time_ms": 8000,
+      "interval_ms": 2000,
+      "scene_score": 0.62
+    },
+    {
+      "frame_index": 300,
+      "time_ms": 10000,
+      "interval_ms": 2000,
+      "scene_score": 0.62
+    },
+    {
+      "frame_index": 360,
+      "time_ms": 12000,
+      "interval_ms": 2000,
+      "scene_score": 0.62
+    },
+    {
+      "frame_index": 420,
+      "time_ms": 14000,
+      "interval_ms": 2000,
+      "scene_score": 0.62
+    },
+    {
+      "frame_index": 480,
+      "time_ms": 16000,
+      "interval_ms": 2000,
+      "scene_score": 0.62
+    },
+    {
+      "frame_index": 540,
+      "time_ms": 18000,
+      "interval_ms": 2000,
+      "scene_score": 0.62
+    },
+    {
+      "frame_index": 600,
+      "time_ms": 20000,
+      "interval_ms": 2000,
+      "scene_score": 0.62
+    },
+    {
+      "frame_index": 660,
+      "time_ms": 22000,
+      "interval_ms": 2000,
+      "scene_score": 0.62
+    },
+    {
+      "frame_index": 720,
+      "time_ms": 24000,
+      "interval_ms": 2000,
+      "scene_score": 0.62
+    },
+    {
+      "frame_index": 780,
+      "time_ms": 26000,
+      "interval_ms": 2000,
+      "scene_score": 0.62
+    },
+    {
+      "frame_index": 840,
+      "time_ms": 28000,
+      "interval_ms": 2000,
+      "scene_score": 0.62
+    },
+    {
+      "frame_index": 900,
+      "time_ms": 30000,
+      "interval_ms": 2000,
+      "scene_score": 0.62
+    },
+    {
+      "frame_index": 960,
+      "time_ms": 32000,
+      "interval_ms": 2000,
+      "scene_score": 0.62
+    },
+    {
+      "frame_index": 1020,
+      "time_ms": 34000,
+      "interval_ms": 2000,
+      "scene_score": 0.62
+    },
+    {
+      "frame_index": 1080,
+      "time_ms": 36000,
+      "interval_ms": 2000,
+      "scene_score": 0.62
+    },
+    {
+      "frame_index": 1140,
+      "time_ms": 38000,
+      "interval_ms": 2000,
+      "scene_score": 0.62
+    },
+    {
+      "frame_index": 1200,
+      "time_ms": 40000,
+      "interval_ms": 2000,
+      "scene_score": 0.62
+    },
+    {
+      "frame_index": 1260,
+      "time_ms": 42000,
+      "interval_ms": 2000,
+      "scene_score": 0.62
+    },
+    {
+      "frame_index": 1320,
+      "time_ms": 44000,
+      "interval_ms": 2000,
+      "scene_score": 0.62
+    },
+    {
+      "frame_index": 1380,
+      "time_ms": 46000,
+      "interval_ms": 2000,
+      "scene_score": 0.62
+    },
+    {
+      "frame_index": 1440,
+      "time_ms": 48000,
+      "interval_ms": 2000,
+      "scene_score": 0.62
+    },
+    {
+      "frame_index": 1500,
+      "time_ms": 50000,
+      "interval_ms": 2000,
+      "scene_score": 0.62
+    },
+    {
+      "frame_index": 1560,
+      "time_ms": 52000,
+      "interval_ms": 2000,
+      "scene_score": 0.62
+    },
+    {
+      "frame_index": 1620,
+      "time_ms": 54000,
+      "interval_ms": 2000,
+      "scene_score": 0.62
+    },
+    {
+      "frame_index": 1680,
+      "time_ms": 56000,
+      "interval_ms": 2000,
+      "scene_score": 0.62
+    },
+    {
+      "frame_index": 1740,
+      "time_ms": 58000,
+      "interval_ms": 2000,
+      "scene_score": 0.62
+    }
+  ],
+  "silence_gaps": [],
+  "words_per_minute": 145,
+  "integrated_lufs": -12.5,
+  "visual_events": [
+    {
+      "time_ms": 6000,
+      "frame_index": 180,
+      "kind": "punch_in",
+      "scale": 1.15,
+      "center_x": 0.5,
+      "center_y": 0.4,
+      "area": null
+    }
+  ]
+}

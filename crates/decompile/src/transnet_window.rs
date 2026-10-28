@@ -51,7 +51,8 @@ pub struct ModelFrames {
 impl ModelFrames {
     /// For about `expected` frames (from the container's duration, which a
     /// damaged file can make absurd, so the reservation is capped), keeping at
-    /// most `MAX_MODEL_FRAMES`.
+    /// most `MAX_MODEL_FRAMES`. The decode loop passes its own limit to `with_limit`.
+    #[cfg(test)]
     pub(crate) fn with_capacity(expected: usize) -> Self {
         Self::with_limit(expected, MAX_MODEL_FRAMES)
     }

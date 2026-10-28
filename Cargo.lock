@@ -676,6 +676,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
+name = "look"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
 name = "matrixmultiply"
 version = "0.3.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -938,8 +945,10 @@ dependencies = [
  "edit-dna",
  "filmstrip",
  "image",
+ "look",
  "serde",
  "serde_json",
+ "timeline",
  "understand",
 ]
 
@@ -1255,6 +1264,16 @@ checksum = "7e689342a48d2ea927c87ea50cabf8594854bf940e9310208848d680d668ed85"
 dependencies = [
  "num-conv",
  "time-core",
+]
+
+[[package]]
+name = "timeline"
+version = "0.1.0"
+dependencies = [
+ "edit-dna",
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]

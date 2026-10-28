@@ -23,8 +23,10 @@
 use std::path::Path;
 use std::sync::OnceLock;
 
+mod probe;
 mod sample;
 
+pub use probe::probe_duration_ms;
 pub use sample::{decode_frames_at, SampledFrame};
 
 use ffmpeg_next::decoder::Audio as AudioDecoder;
@@ -1799,6 +1801,58 @@ mod tests {
         };
         let view = luma_view(y, width as u32, height as u32, &[128]);
         sad.push(&view).expect("score")
+    }
+
+    /// A 160x90 flat grey scene for 30 frames, then `strip` columns of it 100
+    /// levels brighter for 50 more, fed through `observe` as a clip. Returns
+    /// the score of the frame that changes and the events found.
+    fn observe_strip(strip: usize) -> (f64, Vec<DetectedEvent>) {
+        let (width, height) = (160usize, 90usize);
+        let flat = vec![60u8; width * height];
+        let mut changed = flat.clone();
+        for row in changed.chunks_exact_mut(width) {
+            for sample in &mut row[..strip] {
+                *sample = 160;
+            }
+        }
+        let mut sad = SadState::new();
+        let mut change_score = 0.0;
+        for index in 0..80u64 {
+            let data = if index < 30 { &flat } else { &changed };
+            let y = Plane::Eight {
+                data,
+                stride: width,
+            };
+            let view = luma_view(y, width as u32, height as u32, &[128]);
+            let score = sad
+                .observe(index, index * 1000 / 24, &view)
+                .expect("observe");
+            if index == 30 {
+                change_score = score;
+            }
+        }
+        (change_score, sad.finish_motion())
+    }
+
+    /// The detector is told which frames the scene score calls cuts: a change
+    /// that the scene score calls a cut is no event, and the same kind of
+    /// change just under the threshold is one.
+    #[test]
+    fn a_frame_the_scene_score_calls_a_cut_reaches_the_motion_detector_as_one() {
+        let (score, events) = observe_strip(56);
+        assert!(score > SCENE_SCORE_THRESHOLD, "score {score}");
+        assert!(events.is_empty(), "an event on a cut frame: {events:?}");
+
+        let (score, events) = observe_strip(32);
+        assert!(score < SCENE_SCORE_THRESHOLD, "score {score}");
+        // (A strip of a flat scene can also fit a scale; the overlay is the point.)
+        let overlays: Vec<&DetectedEvent> = events
+            .iter()
+            .filter(|e| e.kind == crate::motion::MotionKind::OverlayChange)
+            .collect();
+        assert_eq!(overlays.len(), 1, "{events:?}");
+        assert_eq!(overlays[0].frame_index, 30);
+        assert_eq!(overlays[0].time_ms, 30 * 1000 / 24);
     }
 
     /// The same picture at another size is the same picture, and a change in

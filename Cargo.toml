@@ -5,7 +5,9 @@ members = [
     "crates/decompile",
     "crates/diff",
     "crates/filmstrip",
+    "crates/look",
     "crates/understand",
+    "crates/timeline",
     "crates/reelctl",
 ]
 
