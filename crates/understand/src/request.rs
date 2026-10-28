@@ -25,7 +25,13 @@ pub fn response_schema() -> Value {
 pub struct EncodedImage {
     pub times_ms: Vec<u64>,
     pub jpeg: Vec<u8>,
+    /// Tiles of several frames. A sheet can hold a single frame (the last of a set), and it
+    /// is still labelled as a sheet, because the image has empty tiles.
+    pub sheet: bool,
 }
+
+/// Introduces the numbered segments in the user message.
+const TRANSCRIPT_HEADER: &str = "Transcript segments:\n";
 
 /// A time in tenths of a second, rounded half up.
 fn tenths(ms: u64) -> u64 {
@@ -75,13 +81,16 @@ pub fn build_parts(images: &[EncodedImage], segments: &[Segment]) -> Vec<Part> {
     let mut parts = Vec::with_capacity(images.len() * 2 + 1);
     for image in images {
         let label = match image.times_ms.as_slice() {
-            [time_ms] => frame_label(*time_ms),
+            [time_ms] if !image.sheet => frame_label(*time_ms),
             times_ms => sheet_label(times_ms),
         };
         parts.push(Part::Text(label));
         parts.push(Part::ImageJpeg(image.jpeg.clone()));
     }
-    parts.push(Part::Text(segment_lines(segments)));
+    parts.push(Part::Text(format!(
+        "{TRANSCRIPT_HEADER}{}",
+        segment_lines(segments)
+    )));
     parts
 }
 
@@ -404,10 +413,18 @@ mod tests {
             EncodedImage {
                 times_ms: vec![303_000],
                 jpeg: vec![1, 2, 3],
+                sheet: false,
             },
             EncodedImage {
                 times_ms: vec![0, 5_000],
                 jpeg: vec![4],
+                sheet: true,
+            },
+            // The last sheet of five frames in 2x2 tiles holds one frame.
+            EncodedImage {
+                times_ms: vec![25_000],
+                jpeg: vec![5],
+                sheet: true,
             },
         ];
         let segments = vec![
@@ -422,7 +439,12 @@ mod tests {
                 Part::ImageJpeg(vec![1, 2, 3]),
                 Part::Text(sheet_label(&[0, 5_000])),
                 Part::ImageJpeg(vec![4]),
-                Part::Text(segment_lines(&segments)),
+                Part::Text(sheet_label(&[25_000])),
+                Part::ImageJpeg(vec![5]),
+                Part::Text(format!(
+                    "Transcript segments:\n{}",
+                    segment_lines(&segments)
+                )),
             ]
         );
         assert_eq!(
@@ -436,7 +458,9 @@ mod tests {
         let segments = vec![seg(1, 0, 1_500, "Hi.", true)];
         assert_eq!(
             build_parts(&[], &segments),
-            vec![Part::Text("G1 [0:00.0-0:01.5] Hi.".to_string())]
+            vec![Part::Text(
+                "Transcript segments:\nG1 [0:00.0-0:01.5] Hi.".to_string()
+            )]
         );
     }
 
