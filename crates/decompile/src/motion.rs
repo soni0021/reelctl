@@ -266,7 +266,7 @@ impl MotionDetector {
             luma: buf,
         });
         while let Some(front) = self.ring.front() {
-            if self.ring.len() > MAX_FRAMES || front.time_ms + HISTORY_MS < time_ms {
+            if self.ring.len() > MAX_FRAMES || front.time_ms.saturating_add(HISTORY_MS) < time_ms {
                 if let Some(old) = self.ring.pop_front() {
                     self.spare.push(old.luma);
                 }
@@ -358,8 +358,8 @@ impl MotionDetector {
             end_time,
             cx: fit.cx,
             cy: fit.cy,
-            track_until: burst.last_time + BASE_MS,
-            resolve_at: burst.last_time + EXT_MS,
+            track_until: burst.last_time.saturating_add(BASE_MS),
+            resolve_at: burst.last_time.saturating_add(EXT_MS),
         });
     }
 
@@ -515,7 +515,7 @@ impl MotionDetector {
             cand_index: index,
             cand_time: time,
             ref_index: reference.index,
-            verify_at: time + PERSIST_MS,
+            verify_at: time.saturating_add(PERSIST_MS),
         });
     }
 
@@ -2275,5 +2275,583 @@ mod tests {
         let events = run(cols, rows, &clip);
         assert_eq!(events.len(), 1);
         assert!(events[0].track.is_empty());
+    }
+
+    // ---- the overlay constants, each just inside and just outside ----
+
+    /// The overlay events among `events`.
+    fn overlays(events: &[DetectedEvent]) -> Vec<&DetectedEvent> {
+        events
+            .iter()
+            .filter(|e| e.kind == MotionKind::OverlayChange)
+            .collect()
+    }
+
+    /// Cells in the mask moved by `delta` levels (clamped).
+    fn with_offset(base: &[u8], mask: &[bool], delta: i16) -> Vec<u8> {
+        base.iter()
+            .zip(mask)
+            .map(|(v, m)| {
+                if *m {
+                    (i16::from(*v) + delta).clamp(0, 255) as u8
+                } else {
+                    *v
+                }
+            })
+            .collect()
+    }
+
+    /// A box with the top right corner cut away: `cut` of each side, so it
+    /// fills `1 - cut * cut` of its bounding box.
+    fn l_shape(cols: usize, rows: usize, cut: f32) -> Vec<bool> {
+        let (x0, y0, x1, y1) = (0.4f32, 0.4f32, 0.8f32, 0.8f32);
+        let outer = rect(cols, rows, x0, y0, x1, y1);
+        let corner = rect(
+            cols,
+            rows,
+            x1 - cut * (x1 - x0),
+            y0,
+            x1,
+            y0 + cut * (y1 - y0),
+        );
+        outer.iter().zip(&corner).map(|(o, c)| *o && !*c).collect()
+    }
+
+    #[test]
+    fn a_block_must_fill_about_half_of_its_bounding_box() {
+        for (cols, rows) in SHAPES {
+            let base = render(cols, rows, 1.0, 0.5, 0.5);
+            let bbox = count(&rect(cols, rows, 0.4, 0.4, 0.8, 0.8)) as f64;
+            // Fills 0.6 of its box: an overlay. Fills 0.4: not one.
+            for (cut, fill, expected) in [(0.63f32, 0.6f64, 1usize), (0.775, 0.4, 0)] {
+                let mask = l_shape(cols, rows, cut);
+                let got = count(&mask) as f64 / bbox;
+                assert!((got - fill).abs() < 0.03, "fill {got} vs {fill}");
+                let mut clip = Clip::default();
+                clip.hold(&base, 30).hold(&with_block(&base, &mask), 50);
+                let events = run(cols, rows, &clip);
+                assert_eq!(
+                    overlays(&events).len(),
+                    expected,
+                    "{cols}x{rows} fill {fill}: {events:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn strays_beyond_a_quarter_of_the_block_spoil_it() {
+        let (cols, rows) = (160, 90);
+        let base = render(cols, rows, 1.0, 0.5, 0.5);
+        // A 7.5% block (1080 cells) allows 270 cells + 0.5% of the frame (72)
+        // outside it. Strays at step 7 (about 270) are fine, step 5 (about
+        // 520) are too many.
+        for (step, expected) in [(7usize, 1usize), (5, 0)] {
+            let mask = union(&block_mask(cols, rows), &strays(cols, rows, step));
+            let mut clip = Clip::default();
+            clip.hold(&base, 30).hold(&with_block(&base, &mask), 50);
+            let events = run(cols, rows, &clip);
+            assert_eq!(overlays(&events).len(), expected, "step {step}: {events:?}");
+        }
+    }
+
+    #[test]
+    fn the_frame_share_allowed_outside_a_small_block_is_half_a_percent() {
+        let (cols, rows) = (160, 90);
+        let base = render(cols, rows, 1.0, 0.5, 0.5);
+        // A 2% block (about 280 cells) allows 70 + 72 cells outside it: strays
+        // at step 11 (about 130) are fine, step 8 (about 240) are too many.
+        let small = rect(cols, rows, 0.6, 0.6, 0.74, 0.74);
+        for (step, expected) in [(11usize, 1usize), (8, 0)] {
+            let mask = union(&small, &strays(cols, rows, step));
+            let mut clip = Clip::default();
+            clip.hold(&base, 30).hold(&with_block(&base, &mask), 50);
+            let events = run(cols, rows, &clip);
+            assert_eq!(overlays(&events).len(), expected, "step {step}: {events:?}");
+        }
+    }
+
+    #[test]
+    fn a_block_that_stays_just_under_the_flash_time_is_a_flash_and_longer_is_an_event() {
+        let (cols, rows) = (160, 90);
+        let base = render(cols, rows, 1.0, 0.5, 0.5);
+        let blk = with_block(&base, &block_mask(cols, rows));
+        // 17 frames (708 ms): it going is the picture coming back to the one
+        // 750 ms before. 20 frames (833 ms): it is not.
+        let mut short = Clip::default();
+        short.hold(&base, 30).hold(&blk, 17).hold(&base, 60);
+        let events = run(cols, rows, &short);
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert_eq!(events[0].frame_index, 30);
+        let mut long = Clip::default();
+        long.hold(&base, 30).hold(&blk, 20).hold(&base, 60);
+        let events = run(cols, rows, &long);
+        let frames: Vec<u64> = events.iter().map(|e| e.frame_index).collect();
+        assert_eq!(frames, vec![30, 50], "{events:?}");
+    }
+
+    #[test]
+    fn a_block_that_grows_inside_the_holding_time_is_judged_on_what_held() {
+        let (cols, rows) = (160, 90);
+        let base = render(cols, rows, 1.0, 0.5, 0.5);
+        let whole = rect(cols, rows, 0.5, 0.5, 0.85, 0.85);
+        let left = rect(cols, rows, 0.5, 0.5, 0.62, 0.85);
+        let want = |mask: &[bool]| count(mask) as f64 / (cols * rows) as f64;
+        let small = with_block(&base, &left);
+        let big = with_block(&base, &whole);
+        // It has grown 7 frames (290 ms) before the check, so the block held.
+        let mut early = Clip::default();
+        early.hold(&base, 30).hold(&small, 5).hold(&big, 45);
+        let events = run(cols, rows, &early);
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert_eq!(events[0].frame_index, 35);
+        assert!((events[0].area.expect("area") - want(&whole)).abs() < 0.005);
+        // It has grown 4 frames (170 ms) before the check: the whole did not
+        // hold, and the added cells are an overlay of their own.
+        let mut late = Clip::default();
+        late.hold(&base, 30).hold(&small, 8).hold(&big, 42);
+        let events = run(cols, rows, &late);
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert_eq!(events[0].frame_index, 42);
+        let added: Vec<bool> = whole.iter().zip(&left).map(|(w, l)| *w && !*l).collect();
+        assert!((events[0].area.expect("area") - want(&added)).abs() < 0.005);
+    }
+
+    #[test]
+    fn a_block_that_goes_back_to_most_of_what_it_was_is_a_flash() {
+        for (cols, rows) in SHAPES {
+            let base = render(cols, rows, 1.0, 0.5, 0.5);
+            let mask = block_mask(cols, rows);
+            let blk = with_block(&base, &mask);
+            // The block goes after 14 frames, but a strip of it (`part` of
+            // its width) goes to a third picture instead of the first.
+            for (part, expected) in [(0.4f32, 2usize), (0.2, 1)] {
+                let strip = rect(cols, rows, 0.55, 0.55, 0.55 + 0.25 * part, 0.85);
+                let third = with_delta(&base, &strip, 50);
+                let mut clip = Clip::default();
+                clip.hold(&base, 30).hold(&blk, 14).hold(&third, 60);
+                let events = run(cols, rows, &clip);
+                assert_eq!(
+                    events.len(),
+                    expected,
+                    "{cols}x{rows} part {part}: {events:?}"
+                );
+            }
+        }
+    }
+
+    /// 90 frames of the picture in which `part` steps by `delta` levels at
+    /// `step_at` and the block `mask` comes on top at frame 40.
+    fn step_then_block(
+        (cols, rows): (usize, usize),
+        part: &[bool],
+        delta: i16,
+        step_at: usize,
+        mask: &[bool],
+    ) -> Clip {
+        let base = render(cols, rows, 1.0, 0.5, 0.5);
+        let stepped = with_offset(&base, part, delta);
+        let mut clip = Clip::default();
+        for i in 0..90 {
+            let before = if i >= step_at { &stepped } else { &base };
+            clip.one(if i >= 40 {
+                with_block(before, mask)
+            } else {
+                before.clone()
+            });
+        }
+        clip
+    }
+
+    fn run_clip(shape: (usize, usize), clip: &Clip) -> Vec<DetectedEvent> {
+        run(shape.0, shape.1, clip)
+    }
+
+    #[test]
+    fn a_block_over_a_part_that_was_moving_by_eight_levels_or_more_is_no_event() {
+        for shape in SHAPES {
+            let mask = block_mask(shape.0, shape.1);
+            // The part steps 6 or 12 levels in the quiet window before the
+            // comparison grid.
+            let calm = run_clip(shape, &step_then_block(shape, &mask, 6, 33, &mask));
+            assert_eq!(calm.len(), 1, "6 levels: {calm:?}");
+            assert_eq!(calm[0].frame_index, 40);
+            let moved = run_clip(shape, &step_then_block(shape, &mask, 12, 33, &mask));
+            assert!(moved.is_empty(), "12 levels: {moved:?}");
+        }
+    }
+
+    #[test]
+    fn a_block_is_no_event_when_a_third_of_it_was_moving_but_one_in_five_is_fine() {
+        for shape in SHAPES {
+            let (cols, rows) = shape;
+            let mask = block_mask(cols, rows);
+            for (part, expected) in [(0.2f32, 1usize), (0.45, 0)] {
+                let strip = rect(cols, rows, 0.55, 0.55, 0.55 + 0.25 * part, 0.85);
+                let events = run_clip(shape, &step_then_block(shape, &strip, 20, 33, &mask));
+                assert_eq!(events.len(), expected, "{shape:?} part {part}: {events:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_quiet_window_before_the_comparison_grid_is_about_150_ms() {
+        for shape in SHAPES {
+            let mask = block_mask(shape.0, shape.1);
+            // The comparison grid is frame 34. A step at frame 31 is 3 frames
+            // (125 ms) before it: inside the window. A step at frame 27 is 7
+            // frames (290 ms) before it: outside.
+            let inside = run_clip(shape, &step_then_block(shape, &mask, 20, 31, &mask));
+            assert!(inside.is_empty(), "step at 31: {inside:?}");
+            let outside = run_clip(shape, &step_then_block(shape, &mask, 20, 27, &mask));
+            assert_eq!(outside.len(), 1, "step at 27: {outside:?}");
+        }
+    }
+
+    #[test]
+    fn grids_with_a_side_of_eight_or_more_are_measured_and_smaller_ones_are_not() {
+        for (cols, rows, expected) in [
+            (8usize, 8usize, 1usize),
+            (11, 11, 1),
+            (15, 15, 1),
+            (15, 40, 1),
+            (40, 15, 1),
+            (7, 40, 0),
+            (40, 7, 0),
+            (7, 7, 0),
+        ] {
+            let base = render(cols, rows, 1.0, 0.5, 0.5);
+            let mask = rect(cols, rows, 0.4, 0.4, 0.95, 0.95);
+            let mut clip = Clip::default();
+            clip.hold(&base, 30).hold(&with_block(&base, &mask), 50);
+            let events = run(cols, rows, &clip);
+            assert_eq!(
+                overlays(&events).len(),
+                expected,
+                "{cols}x{rows}: {events:?}"
+            );
+        }
+    }
+
+    // ---- the scale constants, each just inside and just outside ----
+
+    /// 90 frames of a punch-in at frame 30, with a 30% block on the picture
+    /// from frame `block_at`.
+    fn punch_in_then_block(shape: (usize, usize), block_at: usize) -> Clip {
+        let (cols, rows) = shape;
+        let big = rect(cols, rows, 0.1, 0.1, 0.65, 0.65);
+        let plain = render(cols, rows, 1.0, 0.5, 0.5);
+        let zoomed = render(cols, rows, 1.18, 0.5, 0.5);
+        let mut clip = Clip::default();
+        for i in 0..90 {
+            let picture = if i < 30 { &plain } else { &zoomed };
+            clip.one(if i >= block_at {
+                with_block(picture, &big)
+            } else {
+                picture.clone()
+            });
+        }
+        clip
+    }
+
+    fn kinds_and_frames(events: &[DetectedEvent]) -> Vec<(MotionKind, u64)> {
+        events.iter().map(|e| (e.kind, e.frame_index)).collect()
+    }
+
+    #[test]
+    fn a_move_is_judged_on_the_picture_a_quarter_second_either_side() {
+        // The move shows from frame 30, compared with frame 27 (1125 ms). A
+        // quarter second before that is frame 21; its last moving frame is 32,
+        // and a quarter second after that is frame 38.
+        let punch_in = (MotionKind::PunchIn, 30);
+        for shape in SHAPES {
+            // A block already there in the picture a quarter second before the
+            // move does not spoil it; one that comes after that picture does.
+            let before = [
+                (19, vec![punch_in]),
+                (21, vec![punch_in]),
+                (23, vec![]),
+                (25, vec![]),
+            ];
+            // One that comes after the picture a quarter second after the move
+            // is a separate overlay; one that comes before it spoils the move.
+            let after = [
+                (36, vec![]),
+                (38, vec![]),
+                (40, vec![punch_in, (MotionKind::OverlayChange, 40)]),
+                (42, vec![punch_in, (MotionKind::OverlayChange, 42)]),
+            ];
+            for (block_at, expected) in before.into_iter().chain(after) {
+                let events = run_clip(shape, &punch_in_then_block(shape, block_at));
+                assert_eq!(
+                    kinds_and_frames(&events),
+                    expected,
+                    "{shape:?} block at {block_at}: {events:?}"
+                );
+            }
+        }
+    }
+
+    /// A step at frame 30 to a mix of the picture zoomed by 1.18 and the first
+    /// picture, which has the share `dissolve` of the mix.
+    fn half_done_punch_in(shape: (usize, usize), dissolve: f32) -> Clip {
+        let (cols, rows) = shape;
+        let plain = render(cols, rows, 1.0, 0.5, 0.5);
+        let zoomed = render(cols, rows, 1.18, 0.5, 0.5);
+        let mut clip = Clip::default();
+        clip.hold(&plain, 30)
+            .hold(&blend(&zoomed, &plain, dissolve), 50);
+        clip
+    }
+
+    #[test]
+    fn a_scale_must_cut_the_difference_to_three_fifths_to_be_an_event() {
+        for shape in SHAPES {
+            // With 35% of the first picture left, the best scale cuts the
+            // difference to half (an event); with 45% left, to 72% (not one).
+            let mostly = run_clip(shape, &half_done_punch_in(shape, 0.35));
+            assert_eq!(
+                kinds_and_frames(&mostly),
+                vec![(MotionKind::PunchIn, 30)],
+                "{shape:?}: {mostly:?}"
+            );
+            let barely = run_clip(shape, &half_done_punch_in(shape, 0.45));
+            assert!(barely.is_empty(), "{shape:?}: {barely:?}");
+        }
+    }
+
+    #[test]
+    fn the_cheap_gate_refines_a_fit_at_0_78_of_the_difference_and_not_at_0_9() {
+        for shape in SHAPES {
+            // With 48% of the first picture left the best coarse scale cuts the
+            // difference to 78%: worth refining, though not an event. With 64%
+            // left it cuts it to 90%: the motion is no scale and is not refined.
+            let before = REFINES.with(std::cell::Cell::get);
+            let _ = run_clip(shape, &half_done_punch_in(shape, 0.48));
+            assert!(
+                REFINES.with(std::cell::Cell::get) > before,
+                "{shape:?}: not refined"
+            );
+            let before = REFINES.with(std::cell::Cell::get);
+            let _ = run_clip(shape, &half_done_punch_in(shape, 0.64));
+            assert_eq!(
+                REFINES.with(std::cell::Cell::get),
+                before,
+                "{shape:?}: refined"
+            );
+        }
+    }
+
+    #[test]
+    fn a_move_larger_than_the_largest_scale_tried_is_reported_as_that_scale() {
+        for shape in SHAPES {
+            let (cols, rows) = shape;
+            for s in [1.30f32, 1.40] {
+                let clip = zoom_clip(cols, rows, 1.0, &[s], (0.5, 0.5), 30, 40);
+                let events = run_clip(shape, &clip);
+                let e = assert_one_move(&events, MotionKind::PunchIn, 1.26, (0.5, 0.5), 0.1);
+                assert!(e.scale.expect("scale") < 1.27, "{shape:?} {s}: {e:?}");
+                let clip = zoom_clip(cols, rows, s, &[1.0], (0.5, 0.5), 30, 40);
+                let events = run_clip(shape, &clip);
+                let e = assert_one_move(&events, MotionKind::ZoomOut, 1.0 / 1.26, (0.5, 0.5), 0.1);
+                assert!(e.scale.expect("scale") > 1.0 / 1.27, "{shape:?} {s}: {e:?}");
+            }
+        }
+    }
+
+    // ---- times at the edge of the range, and times that go back ----
+
+    /// `clip` fed with the frame times `time(i)`.
+    fn run_timed(
+        cols: usize,
+        rows: usize,
+        clip: &Clip,
+        time: impl Fn(usize) -> u64,
+    ) -> Vec<DetectedEvent> {
+        let mut det = MotionDetector::new(cols, rows);
+        for (i, frame) in clip.frames.iter().enumerate() {
+            det.push(i as u64, time(i), frame, clip.cuts.contains(&i));
+        }
+        det.finish()
+    }
+
+    /// An overlay at frame 30 and a punch-in at frame 60, 40 frames of tail.
+    fn overlay_and_punch_in(cols: usize, rows: usize) -> Clip {
+        let plain = render(cols, rows, 1.0, 0.5, 0.5);
+        let zoomed = render(cols, rows, 1.18, 0.5, 0.5);
+        let mask = block_mask(cols, rows);
+        let mut clip = Clip::default();
+        clip.hold(&plain, 30)
+            .hold(&with_block(&plain, &mask), 30)
+            .hold(&with_block(&zoomed, &mask), 70);
+        clip
+    }
+
+    #[test]
+    fn a_clip_that_ends_at_the_largest_time_gives_the_events_of_the_same_clip_at_zero() {
+        for (cols, rows) in SHAPES {
+            let clip = overlay_and_punch_in(cols, rows);
+            let at_zero = run_timed(cols, rows, &clip, time_of);
+            assert_eq!(
+                kinds_and_frames(&at_zero),
+                vec![(MotionKind::OverlayChange, 30), (MotionKind::PunchIn, 60)],
+                "{cols}x{rows}: {at_zero:?}"
+            );
+            let base = u64::MAX - time_of(clip.frames.len() - 1);
+            let at_the_end = run_timed(cols, rows, &clip, |i| base + time_of(i));
+            let moved: Vec<DetectedEvent> = at_zero
+                .iter()
+                .map(|e| DetectedEvent {
+                    time_ms: e.time_ms + base,
+                    track: e
+                        .track
+                        .iter()
+                        .map(|p| ScalePoint {
+                            time_ms: p.time_ms + base,
+                            scale: p.scale,
+                        })
+                        .collect(),
+                    ..e.clone()
+                })
+                .collect();
+            assert_eq!(at_the_end, moved);
+        }
+    }
+
+    #[test]
+    fn a_change_in_the_last_frames_before_the_largest_time_does_not_overflow() {
+        for (cols, rows) in SHAPES {
+            let plain = render(cols, rows, 1.0, 0.5, 0.5);
+            let zoomed = render(cols, rows, 1.18, 0.5, 0.5);
+            let blk = with_block(&plain, &block_mask(cols, rows));
+            // A move, an overlay, and both, ending on the last frame that
+            // can be timed, and again two frames before it.
+            for tail in [0usize, 1, 2, 12] {
+                for last in [&zoomed, &blk] {
+                    let mut clip = Clip::default();
+                    clip.hold(&plain, 40).hold(last, 1 + tail);
+                    let end = clip.frames.len() - 1;
+                    let events =
+                        run_timed(cols, rows, &clip, |i| u64::MAX - time_of(end) + time_of(i));
+                    assert!(events.iter().all(|e| e.frame_index <= end as u64));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_move_ending_at_the_largest_time_keeps_its_scale_track_without_overflow() {
+        for (cols, rows) in SHAPES {
+            let plain = render(cols, rows, 1.0, 0.5, 0.5);
+            let zoomed = render(cols, rows, 1.18, 0.5, 0.5);
+            // The jump is the last frame that can be timed, so the track's
+            // end (`last_time + BASE_MS`) and the resolve time pass u64::MAX.
+            for tail in [0usize, 1, 3] {
+                let mut clip = Clip::default();
+                clip.hold(&plain, 40).hold(&zoomed, 1 + tail);
+                let end = clip.frames.len() - 1;
+                let events = run_timed(cols, rows, &clip, |i| u64::MAX - time_of(end) + time_of(i));
+                for e in &events {
+                    assert_eq!(e.track.first().map(|p| p.scale), Some(1.0), "{e:?}");
+                    assert!(
+                        e.track.windows(2).all(|w| w[0].time_ms < w[1].time_ms),
+                        "{cols}x{rows}: {e:?}"
+                    );
+                }
+                assert!(events.iter().all(|e| e.frame_index <= end as u64));
+                assert_eq!(events.len(), 1, "{cols}x{rows} tail {tail}: {events:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_frame_whose_time_goes_back_is_taken_at_the_time_of_the_one_before() {
+        let (cols, rows) = (160, 90);
+        let clip = overlay_and_punch_in(cols, rows);
+        let clean = run_timed(cols, rows, &clip, time_of);
+        // Around the overlay (frame 30) and the move (frame 60), where a
+        // glitch lands on a comparison, and a few elsewhere.
+        let glitches = [2, 31, 33, 36, 61, 63, 66, 129];
+        for glitch in glitches {
+            // Frame `glitch` says 0 ms; it counts as its predecessor's time.
+            let went_back = run_timed(
+                cols,
+                rows,
+                &clip,
+                |i| {
+                    if i == glitch {
+                        0
+                    } else {
+                        time_of(i)
+                    }
+                },
+            );
+            let held = run_timed(cols, rows, &clip, |i| {
+                if i == glitch {
+                    time_of(i - 1)
+                } else {
+                    time_of(i)
+                }
+            });
+            assert_eq!(went_back, held, "glitch at {glitch}");
+            assert_eq!(
+                kinds_and_frames(&went_back),
+                kinds_and_frames(&clean),
+                "glitch at {glitch}"
+            );
+        }
+    }
+
+    // ---- a long history at a high frame rate ----
+
+    /// The flash-return clip of an earlier test at `fps` (a multiple of 24): a
+    /// block comes on at 1.25 s, stays 708 ms, and goes.
+    fn flash_clip_at(cols: usize, rows: usize, fps: usize) -> Clip {
+        let k = fps / 24;
+        let base = render(cols, rows, 1.0, 0.5, 0.5);
+        let blk = with_block(&base, &block_mask(cols, rows));
+        let mut clip = Clip::default();
+        clip.hold(&base, 30 * k)
+            .hold(&blk, 17 * k)
+            .hold(&base, 60 * k);
+        clip
+    }
+
+    #[test]
+    fn a_flash_that_comes_back_after_708_ms_is_recognised_at_120_fps() {
+        let (cols, rows) = (160, 90);
+        let events = run_at(cols, rows, &flash_clip_at(cols, rows, 120), 120);
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert_eq!(events[0].frame_index, 150);
+    }
+
+    #[test]
+    fn a_clean_move_is_measured_to_two_hundredths_of_scale_and_a_twentieth_of_the_frame() {
+        for (cols, rows) in SHAPES {
+            for (s, cx, cy) in [
+                (1.18f32, 0.3f32, 0.7f32),
+                (1.18, 0.2, 0.8),
+                (1.12, 0.7, 0.3),
+                (1.22, 0.5, 0.5),
+                (1.08, 0.25, 0.4),
+                (1.18, 0.0, 0.0),
+                (1.15, 0.8, 0.6),
+            ] {
+                let clip = zoom_clip(cols, rows, 1.0, &[s], (cx, cy), 30, 40);
+                let events = run(cols, rows, &clip);
+                assert_one_move(
+                    &events,
+                    MotionKind::PunchIn,
+                    f64::from(s),
+                    (f64::from(cx), f64::from(cy)),
+                    0.06,
+                );
+                let got = events[0].scale.expect("scale");
+                assert!(
+                    (got - f64::from(s)).abs() <= 0.02,
+                    "{cols}x{rows} want {s} about ({cx}, {cy}): {events:?}"
+                );
+            }
+        }
     }
 }

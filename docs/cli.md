@@ -133,7 +133,7 @@ The report is JSON on stdout: `flags`, then `comparison` (below). This is the ac
 | `kind` | Raised when | Fields |
 |---|---|---|
 | `dead_air` | A silence gap in the draft is longer than 180 ms | `start_ms`, `end_ms`, `duration_ms` |
-| `static_window` | The draft goes more than 2,500 ms without a cut; the start and end of the video count as boundaries | `start_ms`, `end_ms`, `duration_ms` |
+| `static_window` | The draft goes more than 2,500 ms without a cut or a `visual_events` entry; the start and end of the video count as boundaries | `start_ms`, `end_ms`, `duration_ms` |
 | `missing_payoff_cue` | The outlier has a cut between 8 and 10 s and the draft does not | `window_start_ms`, `window_end_ms` |
 
 Flags come in that order: all dead air, then all static windows, then the payoff flag. An empty `flags` array means nothing was flagged. Only `missing_payoff_cue` uses the outlier; the other two depend on the draft alone.
