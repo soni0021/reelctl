@@ -1,0 +1,13 @@
+[package]
+name = "timeline"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "OpenTimelineIO JSON subset, edit operations, and the ffmpeg filter-graph builder"
+
+[dependencies]
+edit-dna = { path = "../edit-dna" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

@@ -4,7 +4,7 @@ Last updated 2026-10-26. Update this page in the same commit as any change that 
 
 ## Summary
 
-P0, the Rust decompiler and reel-diff CLI, is built and its tests pass. It meets the 500 ms target on the synthetic 60-second benchmark clip but misses it on real footage: 60 s of an iPhone recording, converted to 8-bit H.264, took 2.1–2.8 s ([First real footage](#first-real-footage-2026-10-20)). Given a whisper model, `decompile` now produces real words timed with DTW, including Hinglish (merged into `main` on 2026-10-21). Silence is now detected relative to each recording's noise floor, so `diff` finds dead air under room noise (merged into `main` on 2026-10-25). Stretches whisper skips are transcribed again, and whisper runs in a child process so a whisper.cpp abort cannot end `reelctl` (merged into `main` on 2026-10-26). Since the merge of `feature/decode-inputs` on 2026-10-26, `decompile` reads 10-bit 4:2:0 video, such as iPhone HEVC HDR recordings (the original 87 s iPhone recording decompiles with the same cut and silence gaps as an 8-bit conversion) ([10-bit video](#10-bit-video-and-441-khz-audio-2026-10-26)). `diff` does not yet compare pacing against the outlier. P1–P3 in [planer.md](../planer.md) have not started.
+P0, the Rust decompiler and reel-diff CLI, is built and its tests pass (first slices of P1 and P2 are built on the P1–P2 branch: see the Watchtower and Timeline editor sections). It meets the 500 ms target on the synthetic 60-second benchmark clip but misses it on real footage: 60 s of an iPhone recording, converted to 8-bit H.264, took 2.1–2.8 s ([First real footage](#first-real-footage-2026-10-20)). Given a whisper model, `decompile` now produces real words timed with DTW, including Hinglish (merged into `main` on 2026-10-21). Silence is now detected relative to each recording's noise floor, so `diff` finds dead air under room noise (merged into `main` on 2026-10-25). Stretches whisper skips are transcribed again, and whisper runs in a child process so a whisper.cpp abort cannot end `reelctl` (merged into `main` on 2026-10-26). Since the merge of `feature/decode-inputs` on 2026-10-26, `decompile` reads 10-bit 4:2:0 video, such as iPhone HEVC HDR recordings (the original 87 s iPhone recording decompiles with the same cut and silence gaps as an 8-bit conversion) ([10-bit video](#10-bit-video-and-441-khz-audio-2026-10-26)). `diff` does not yet compare pacing against the outlier. P1–P3 in [planer.md](../planer.md) have not started.
 
 ## Verified 2026-10-20
 
@@ -75,6 +75,72 @@ Apple M3 MacBook Air, branch `feature/zoom-curves` ([spec](specs/zoom-curves.md)
 
 Known limits: the trim tolerances (0.5% at the start, 1% at the end) were set after looking at `ease12` and sit near the scale-fit noise measured on synthetic footage (about 0.001), so real compressed video may widen the trimmed window; a move needs at least 4 usable samples (a 3-sample move has no curve: `bezier: null`); `end_ms` can be one or two frames after the event's `time_ms`; progress is linear in scale; zoom-outs that overshoot below the frame cannot be planted; the track uses the move's own centre, accurate to 0.05 of the frame, so an off-centre punch-in's track has a small centre error. No independent audit has run on this work yet.
 
+## TransNetV2, 2026-10-28
+
+Apple M3 MacBook Air, branch `feature/transnet-cuts` ([spec](specs/transnet-cuts.md), [ADR-018](decisions/ADR-018-run-transnetv2-through-a-dynamically-loaded-onnx-runtime.md)). Weights: `elya5/transnetv2` ONNX export of soCzech/TransNetV2 (MIT, 31,250,929 bytes, sha256 `c4d54a68…8e0c`), not committed. ONNX Runtime 1.21.0 from a conda wheel (`brew` has none here).
+
+| Check | Result |
+|---|---|
+| Cuts, scene score against TransNetV2 in `reelctl` (probability) | `textured_cuts12`: 72, 144, 216 against 72 (0.9628), 144 (0.9849), 216 (0.9910). `draft12`: 180 against 180 (0.9982). `dissolve12` (a dissolve over frames 96–119 and a fade through black over 192–215): none against 110 (0.875) and 208 (0.648). NEET reel (1,153 frames): 254 against 254, 434 (0.501), 653, 863. Milk reel: none against none |
+| Against an input scaled by `ffmpeg scale=48:27` (the official input) | The same cuts on every clip except frame 434 on the NEET reel (0.491 there, just under the threshold). Probabilities at the shared cuts differ by at most 0.028 (frame 863) and 0.0027 on the hard-cut fixtures; only cut frames were compared, not the whole track. Whether NEET frames 653 and 863, which the scene score missed, are real edits is not established: nobody has looked at them |
+| Decoder agreement | `textured_cuts12_hevc_full` gives identical cuts and scores on the media engine and with `--decoder software` |
+| Scene-score path | Old against new binary on 19 fixture clips: every field equal except `signal_ms`, `asr_ms` and `cut_detector_note`; all PNGs byte-identical (`speech12`, `tonespeech`, `bench60_textured` not run) |
+| Cost | About 7 ms per frame at load 9 and 13 ms at load 26, each frame run about twice (stride-50 windows): the NEET reel took `analyze_ms` of 8.1–8.4 s. A 60 s reel at 30 fps would take roughly 13–23 s, far over the 500 ms budget, so `auto` uses TransNetV2 only when a weights path is given. Collecting the 48×27 frames costs 0–20 ms per 1,153 frames |
+| Build | `ort 2.0.0-rc.15` (no stable 2.0 exists), features `std`, `load-dynamic`, `api-17`; new crates `ort`, `ort-sys`, `libloading`; the `reelctl` binary grew 6,061,664 → 6,274,368 bytes (+3.5%); no onnxruntime in `otool -L` |
+| Tests | Offline, no model and no library. `transnet_window.rs` has 28 `#[test]`s (windows and padding, runs and cuts, sampling positions, probabilities outside 0 to 1, the frame limit), `transnet.rs` 21 (error messages, detector choice, a fake model, the frame limit, the long-run note), `pipeline.rs` 5 (a fake `WindowModel` run through the real decode loop: the frames reach it window by window; `transnet` returns an error and writes nothing when the model fails or the clip is over the limit; `auto` falls back with the reason), `p0_fixture.rs` 5 end-to-end (no library, a relative library path and no weights exit 1 before decoding; `auto` falls back with the reason; the default path finds nothing on `dissolve12`). The real-model run is a documented manual command (spec and `cli.md`), not part of `cargo test`. `cargo test --workspace` on 2026-10-29: 206 decompile, 42 diff, 7 edit-dna, 1 filmstrip, 3 reelctl, 22 `p0_fixture`, 12 `understand_fixture`, 1 `whisper_fixture` (2 ignored), 204 understand; all green |
+
+Known limits: portrait reels are squashed to 48×27 like the official input and only two reels were tried; a dissolve's cut is the model's peak inside the transition, not its first frame; the motion detector may still report an `overlay_change` near a TransNetV2 cut; ONNX Runtime 1.21.0 is the only library tried; the model frames take 3,888 bytes each (126 MB for 18 minutes); a clip over 200,000 frames (777.6 MB, a little over 2 hours at 27 fps) is refused with "too long for TransNetV2" before the model runs (`transnet` exits 1, `auto` falls back to the scene score), and a run of 9,000 frames or more adds its frame count and the measured 7 to 13 ms per frame to `cut_detector_note`; a clip just under the limit would take roughly 23 to 43 minutes of model time (computed from that rate, not measured); the buffers sized from the container's duration are capped, so a damaged duration cannot abort the process; a probability from the model that is not a number from 0 to 1 is an error; `ORT_DYLIB_PATH` must be an absolute path; ONNX Runtime's static destructors abort the process at exit unless `release_onnx_runtime()` runs first, and `ort` allows one environment per process, so the model cannot be reopened after the release.
+
+Merged 2026-10-29 into `main` after the audit fixes: the full suite on the merged tree is 701 passed, 2 ignored (the whisper model tests), Apple M3 MacBook Air. The first merge attempt left a test-only constructor (`ModelFrames::with_capacity`) that `cargo check` warned was unused; it is now `#[cfg(test)]`.
+
+## Cube LUT, 2026-10-28
+
+Apple M3 MacBook Air, release build of `feature/cube-lut` ([spec](specs/cube-lut.md)), command `reelctl look`.
+
+| Check | Result |
+|---|---|
+| `graded12` (the still textured clip with a warm `colorbalance` and a `curves` lift) matched to `still12`, then `ffmpeg lut3d` applied to `graded12`, sizes 17, 33 and 65 | Mean absolute pixel error against the plain clip falls 86–89% in every channel (R 28.6 → 3.6, G 11.4 → 1.3, B 19.8 → 2.8 at size 33). Mean absolute CDF difference falls at least 95% (R 0.1117 → 0.0018, G 0.0445 → 0.0018, B 0.0772 → 0.0033). The largest single CDF gap falls 99% in R and G and 80–86% in B (0.1108 → 0.0198 at size 33): the spec's "90%" was not tied to a metric, and the test gates on the mean difference, chosen after the largest-gap version failed on blue |
+| Identical inputs | Identity cube within 1/255; the shift reads 0.00 |
+| Determinism and ffmpeg | Same inputs give the same bytes (also with `--decoder software`); `ffmpeg lut3d` loads every size |
+| Time, release, 12 s 540×960 H.264 | 1.8–2.4 s warm at the default, 0.8 s with 10 samples, 3.4 s with 600; dominated by decoding to the last sampled frame |
+| The NEET explainer and the milk clip, both ways (default settings) | Milk to NEET: mean shifts R −17.70, G +2.33, B +0.27, 3.6 s. NEET to milk: R +17.53, G −13.41, B −1.33. Applied to one frame each (checked by eye): **the result is poor**. The milk clip graded toward the NEET reel (flat green-and-white graphic cards) turns high-contrast and posterized; the NEET reel graded toward the milk clip turns pink and banded. The two videos do not share content, so the match carries the content's colour statistics rather than a grade |
+| Mutation checks (agent that built it) | 38 mutants; the survivors (quantile interpolation, the mean shift weighting, the title quote, the sample count bound) got tests; one equivalent mutant remains |
+| `cargo test --workspace` | 479 pass, 2 ignored (the whisper model tests): the 436 of `visual-motion` plus look 30, probe 3, `look_cmd` 2 and `look_fixture.rs` 8 |
+
+Known limits: separable, per-channel RGB only; BT.601 assumed; a graded copy of the same content is the case that works; unlike content gives poor results, which a later version might soften with a strength setting or a match on shot-level statistics; the LUT cannot restore a clipped channel; `decode_frames_at` holds every sampled frame at once (about 330 MB for 600 portrait frames at 320 px).
+
+## Timeline editor, 2026-10-28
+
+Apple M3 MacBook Air, ffmpeg 8.1 (Homebrew), debug build of `reelctl`, `crates/timeline` ([spec](specs/timeline-editor.md), [guide](timeline.md)).
+
+| Check | Result |
+|---|---|
+| `draft12`: init, `cut-silence`, render | The DNA pause was about 500 ms (the spec's "2 s" was wrong: `generate.sh` mutes 2.0–2.5 s). 14 frames (467 ms) removed; render 346 frames, video 11.533 s, audio 11.533 s; the step between neighbouring samples at the join is under 0.02 and the tone is present on both sides; `decompile` of the render finds no gap of 180 ms or more near the join |
+| Join inside a tone (hand-made DNA) | With the 30 ms dip the step is 0.0023; with `--fade-ms 0` it is 0.091. The silence-only click test does not tell the dip from none: this one does |
+| `punch-in` 1.5× at 7.5 s on `textured_cuts12` | Mean absolute difference to the source scaled 1.5× is 1.46, against 76.09 to the unscaled source; frame count unchanged at 288; frames outside the span differ from the source by under 4 |
+| `attach-bridge` on `draft12` | 259 + 75 frames = 334; the last frame has the card colour in the corner and over 200 light pixels where the URL is drawn |
+| Render time (`ffmpeg_ms`) | `draft12` cut 318 ms; punch-in on `textured_cuts12` 536–697 ms; cut, punch-in and bridge together 175 ms |
+| OpenTimelineIO compatibility | Verified: the files load in the reference library `opentimelineio` 0.18.1 (python 3.13 venv; 3.14 has no wheel). `textured_cuts12`: video and audio 4 items each, duration 267 frames at 24 fps; `draft12`: 5 items each, 324 frames, equal to the sum of the clips. Command: `/opt/homebrew/bin/python3.13 -m venv /tmp/otio-venv && /tmp/otio-venv/bin/pip install OpenTimelineIO && /tmp/otio-venv/bin/python crates/timeline/tests/otio_check.py edit.otio` |
+| Mutation checks | 14 mutants; one filler-snap mutant and the end-to-end `set_fades` mutant survived first and each got a test |
+| `cargo test --workspace` | Timeline lib 66, `reelctl` unit 13, `timeline_fixture.rs` 7 (all green in the build agent's run) |
+
+Audit of the editor (2026-10-28) found: `qa inspect-boundaries` fetched a URL if the project named one (a loopback server logged the request), `cut-silence` could cut a real word inside a silence gap, `attach-bridge` skipped the DNA length check, the bridge cut after `cut-silence` landed mid-speech, a render's temp file had a wrong name and could leak, a second overlapping punch-in left a jump in the zoom, `--fade-ms` was ignored on a rerun, hand-edited huge durations overflowed, and `--size`, `--card-ms` and zero-frame projects were unbounded. All fixed: media must be a local regular file (`://`, `concat:`, `pipe:`, directories and devices exit 2, and ffmpeg runs with `-protocol_whitelist file`), words inside a silence are protected, and 99 timeline and 16 `timeline_fixture` tests pass. Of the nine mutants the audit found surviving, eight are now caught and one is equivalent (a sort tie key that a stable sort already makes irrelevant). `--size` is capped at 8192 a side and 33,177,600 pixels, `--card-ms` at 60000.
+
+Known limits: one media file per project, one video and at most one audio track, media starting at 0; a punch-in is a centred zoom; the fade is a dip, not a crossfade; the bridge card uses a built-in bitmap font because this ffmpeg has no `drawtext`; filler removal is unit-tested only (no whisper model here); success criterion 3 (`decompile` detecting the punch-in) is checked by frame comparison, since `visual_events` is on another branch; Smelter, manimgx, RobustVideoMatting, reframe, captions and voice are later slices.
+
+## Watchtower, 2026-10-28
+
+Go module `watchtower/` ([spec](specs/watchtower.md), [guide](watchtower.md)), built against recorded data. Apple M3 MacBook Air.
+
+| Check | Result |
+|---|---|
+| `go test ./...` (offline, no `reelctl` binary), `gofmt -l`, `go vet` | Pass. Unit tests for the median, multiplier, slope, surging rule, 25% sentence threshold and parser; integration tests through a stub `reelctl` against golden `digest.json` and `digest.md`; a separate test asserts values computed outside the program (multipliers 12.0, 23.8 and 26.1 for the breakouts, 1.0, 1.5 and 1.27 for the baseline posts, follower growth 319.6 a day) |
+| Mutation checks (agent that built it) | 33 mutations in scratch copies, all caught; some may have been caught only by the golden test |
+| One real run through `target/release/reelctl` on four fixture clips (`draft12`, `noisy12`, `outlier12`, `textured_cuts12`) arranged as one creator with 5 old posts, 2 baseline posts and 2 breakouts | `1 creators, 1 surging, 0 failures`; surging by multiplier (50× and 60×). Blueprint for 2 breakouts against 2 baseline posts: mean shot length 6.0 s → 3.5 s (−42%), cuts per minute 5.0 → 12.5, pauses per minute 5.0 → 0.0, loudness −21.7 → −21.8 LUFS. Words per minute are voiced bursts there (no whisper model), not a word rate |
+
+Audit of the module (2026-10-28) found a `media_path` that could leave the data directory, duplicate post ids that silently overwrote each other's measurements, burst rates labelled as word rates, no check of `schema_version` or required fields, NaN flags exiting 1, a signal-killed `reelctl` reported as "did not start", a missing timeout, a stale output file read after a silent success, and 3 surviving mutants. All fixed with about 60 new tests; of 64 mutants all are now caught (two survived the first run and got tests). Paths and ids are validated before they reach `reelctl` or a file name; each post's output is `dna/<id>.edit_dna.json`.
+
+Known limits: no Virlo client (no key, and its response format is not in the repo), so nothing has run on live data; the digest numbers are checked only against hand-made and recorded data and synthetic clips; the `visual_events` metrics are exercised by unit tests only, not by the golden digest; post ids must be unique across creators; `failures[].detail` may quote paths.
 ## Visual motion, 2026-10-28
 
 Apple M3 MacBook Air, release build of `feature/visual-motion` ([spec](specs/visual-motion.md)). Real footage is kept outside the repo.
@@ -258,7 +324,7 @@ Already listed in [AGENTS.md](../AGENTS.md) as P0 gaps:
 | Gap | Effect now | To close it |
 |---|---|---|
 | Word timing needs a model | Without `--whisper-model`, `words` are voiced bursts named `burst-N` and `words_per_minute` counts bursts | Closed 2026-10-21, merged into `main`: with a model, whisper.cpp gives real words timed with DTW ([ADR-007](decisions/ADR-007-whisper-cpp-word-timing.md)). `reelctl` never downloads a model |
-| TransNetV2 not linked | Every cut comes from the scene-score detector; `--cut-detector transnet` exits with an error | TransNetV2 ONNX weights and an `ort` dependency |
+| TransNetV2 | Linked through `ort` (2026-10-28, [spec](specs/transnet-cuts.md), [ADR-018](decisions/ADR-018-run-transnetv2-through-a-dynamically-loaded-onnx-runtime.md)): runs when you give it the weights file and an ONNX Runtime library; the default path is still the scene score | Closed; see the TransNetV2 section |
 | Zoom curves | Measured since 2026-10-29 (`zoom_curves`, schema 4); see the Zoom curves section | Closed |
 | `.cube` LUT | `cube_lut` reported as `"status": "unimplemented"` in `edit_dna.json` | A LUT needs two videos: `reelctl look` (separate branch) |
 
@@ -274,7 +340,7 @@ Not yet listed in AGENTS.md:
 ## Known issues
 
 - In a `timeline_view` PNG, the thumbnails and the waveform use different time scales. The 8 thumbnails cover about 0.27 s at 30 fps; the waveform and word ticks cover 1.5 s either side of the cut, across the same width.
-- The JSON value for TransNetV2 is `"trans_net_v2"`, but `CutDetectorKind::as_str()` returns `"transnet_v2"`. Nothing emits either until TransNetV2 is linked.
+- The JSON value for TransNetV2 is `"trans_net_v2"` (serde's snake case of `TransNetV2`), but `CutDetectorKind::as_str()` returns `"transnet_v2"`. Nothing on an output path calls `as_str()` (only two tests do), so no file or report contains the mismatching string; it is a latent inconsistency that bites the first caller that prints it.
 - Colors are converted from YUV with BT.601 coefficients, while most HD video uses BT.709, so absolute RGB values are slightly off.
 - Audio sampled above 48 kHz (88.2 or 96 kHz) can alias, because the resampler is linear interpolation with no low-pass filter. Unmeasured; the rates seen so far (44.1 and 48 kHz) are not affected.
 - The extra detection on the frame after a cut: in an earlier version of `textured_cuts12_hevc` (sources that change drastically between frames, since replaced), both decoders reported a second cut one frame after a real one. The detector, not the decoder, does that, so it is a property of `scene_score` on footage whose first frame in a shot is coded coarsely. Not investigated further.
@@ -296,4 +362,4 @@ Then, to finish P0 against its own success metric before starting P1. The [P0 ca
 2. Read 10-bit video, such as iPhone HDR recordings. Done, merged 2026-10-26 ([spec](specs/decode-inputs.md)): 10-bit 4:2:0 is read, audio is resampled as one stream, and the real recording decompiles.
 3. Detect silence relative to each recording's noise floor instead of at a fixed −40 dBFS. Done ([spec](specs/relative-silence.md)), merged 2026-10-25.
 4. Make `diff` comparative: accept one to three outliers and compare cut rhythm second by second. Done, merged 2026-10-26 ([spec](specs/comparative-diff.md)); thresholds untested on a fast-cut outlier.
-5. Link TransNetV2. It needs ONNX weights, a download that needs an explicit go-ahead.
+5. Link TransNetV2. Done 2026-10-28 (see the TransNetV2 section).

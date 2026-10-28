@@ -16,7 +16,8 @@ reelctl decompile --input <reel.mp4> --out <edit_dna.json> [options]
 | `--out <path>` | | required | Where to write `edit_dna.json`; missing parent directories are created |
 | `--filmstrip-dir <dir>` | | `<out stem>_timeline` beside `--out` | Where to write the `timeline_view` PNGs |
 | `--cut-detector <auto\|scene\|transnet>` | | `auto` | Which cut detector to run; see below |
-| `--transnet-weights <path>` | `REELCTL_TRANSNET_WEIGHTS` | none | TransNetV2 ONNX weights |
+| `--transnet-weights <path>` | `REELCTL_TRANSNET_WEIGHTS` | none | TransNetV2 ONNX weights (`transnetv2.onnx`, input `[1,100,27,48,3]`, output `534`); never downloaded or committed |
+| | `ORT_DYLIB_PATH` | none | Full path of an ONNX Runtime library (`libonnxruntime.dylib`, version 1.17 or newer; `brew install onnxruntime` gives `/opt/homebrew/lib/libonnxruntime.dylib`). Only read when TransNetV2 is asked for. No default directory is searched |
 | `--decoder <auto\|software>` | | `auto` | Video decoder. `auto` decodes HEVC on the Apple media engine (VideoToolbox) on macOS and everything else in software; if the media engine fails at any point, the file is decoded again in software and `decode_note` says why. `software` forces software. Both give the same cuts, scores, colors, and thumbnails ([ADR-012](decisions/ADR-012-decode-hevc-in-hardware-and-every-frame-exactly.md)). Also accepted by `diff` |
 | `--whisper-model <path>` | `REELCTL_WHISPER_MODEL` | none | ggml whisper.cpp model. With one, `words` come from whisper.cpp; without one, from the silence-burst estimator. A path that is missing, is not a ggml whisper model, or has a shape no DTW preset matches exits with code 1. See [Word timing](#word-timing) |
 
@@ -24,9 +25,18 @@ reelctl decompile --input <reel.mp4> --out <edit_dna.json> [options]
 
 Cut detectors:
 
-- `scene`: the scene-score detector ([ADR-002](decisions/ADR-002-scene-score-cut-detector.md)).
-- `transnet`: TransNetV2 or an error. Until ort is linked this always exits with code 1, for example `error: decompile: TransNetV2 ONNX weights were not provided. ...`
-- `auto`: TransNetV2 if `--transnet-weights` names an existing file, otherwise scene score. If TransNetV2 fails, which it does until ort is linked, decompile falls back to scene score and gives the reason in `cut_detector_note`.
+- `scene`: the scene-score detector ([ADR-002](decisions/ADR-002-scene-score-cut-detector.md)). Never looks at the weights or the library.
+- `transnet`: TransNetV2 or an error. The weights file, the library and the model are checked **before the video is decoded**; a problem exits with code 1 and writes nothing, for example `error: decompile: TransNetV2 needs the ONNX Runtime library: ORT_DYLIB_PATH is not set; set ORT_DYLIB_PATH to the full path of an ONNX Runtime library, version 1.17 or newer (macOS: brew install onnxruntime, ...)`. A relative `ORT_DYLIB_PATH` is an error (`ort` tries a relative path beside the executable first, so it could load a different file than the one checked), and so is a weights path that is a directory. An error while the model runs also exits with code 1: the model giving a probability that is not a number from 0 to 1, or a clip of more than 200,000 frames (777.6 MB of 48x27 frames), which fails before the model runs with a message that the clip is too long for TransNetV2 and suggests `--cut-detector scene`. It never returns scene-score cuts.
+- `auto`: TransNetV2 if `--transnet-weights` names an existing file and the library and model load; otherwise the scene score. With no weights path it is the scene score and `cut_detector_note` is the scene-score note. With a weights path that is missing, a library that cannot be loaded, a model that is not TransNetV2, an error while running, or a clip over the 200,000-frame limit, decompile falls back to the scene score and `cut_detector_note` starts `Fell back to the FFmpeg scene-score detector:` followed by the reason.
+
+TransNetV2 reads every frame, so it costs 7 to 13 ms per video frame (13 to 23 s for 60 s at 30 fps, depending on machine load) on the M3's CPU (see [the spec](specs/transnet-cuts.md#measured)), far outside the 500 ms structural budget, and `signal_ms` includes it. When the model ran on 9,000 frames or more (5 minutes at 30 fps), `cut_detector_note` adds the frame count and that rate. Manual end-to-end run on the real model (not part of `cargo test`):
+
+```bash
+export ORT_DYLIB_PATH=/opt/homebrew/lib/libonnxruntime.dylib      # or any libonnxruntime >= 1.17
+export REELCTL_TRANSNET_WEIGHTS=~/models/transnet/transnetv2.onnx
+bash fixtures/generate.sh dissolve12 /tmp/dissolve12.mp4
+target/release/reelctl decompile --cut-detector transnet --input /tmp/dissolve12.mp4 --out /tmp/dissolve12.edit_dna.json
+```
 
 ### Output
 
@@ -220,6 +230,48 @@ What is sent to the model: a system prompt built for this video (its clip-length
 Two flags are hidden from `--help`, like `whisper-worker`, and exist so the tests run with no network: `--replay <reply.json>` uses a recorded model reply instead of calling the model (no key needed), and `--catalog <catalog.json>` uses a model listing from a file instead of fetching it.
 
 Exit codes specific to this command: 2 for `--every-s 0`, a `--dna` with a duration of 0, or a `--dna` without whisper words or with no words at all (all checked before any network access, so no price listing is fetched), 3 when `OPENROUTER_API_KEY` is not set (and neither `--dry-run` nor `--replay` was given), 4 when the cost upper bound is over `--max-cost-usd`. A failed model call (an HTTP error, no matching provider, a reply that is not the schema, a reply cut off at `max_tokens`) exits with 1 and says which.
+
+## reelctl look
+
+```
+reelctl look --draft draft.mp4 --outlier outlier.mp4 --out outlier.cube [--size 17|33|65] [--samples 60] [--decoder auto|software]
+```
+
+Writes a `.cube` 3D LUT that moves the draft's colour toward the outlier's. It samples `--samples` frames (1 to 600, default 60) evenly from each video at 320 px wide, builds a 256-level histogram per colour channel from each, and maps the draft's cumulative distribution onto the outlier's channel by channel. The file is Adobe/Resolve `.cube` (`LUT_3D_SIZE`, red varying fastest) and loads with `ffmpeg -vf lut3d=outlier.cube`. It does not run on the timed `decompile` path and adds nothing to `signal_ms`.
+
+One line on stdout: `size=33 samples_draft=60 samples_outlier=60 mean_shift_r=-17.70 mean_shift_g=2.33 mean_shift_b=0.27 out=outlier.cube`. The three shifts are the change the LUT makes to each channel's mean over the draft's sampled frames, on a 0–255 scale. Identical inputs give an identity LUT. The same inputs give the same bytes.
+
+Exit codes: 2 for a bad argument or a missing or unreadable file (checked before any decoding), 1 for a file that does not decode. No `.cube` is written on failure.
+
+**Limits.** The match is separable and per channel in RGB: it moves tone and colour cast, and cannot reproduce split toning, a hue-selective grade or a saturation change. Colours use libswscale's BT.601 defaults and HDR is not tone-mapped. It matches distributions, not looks: on footage of the same kind (talking head to talking head, or a clip against a graded copy of itself) it transfers the grade; between very different content, such as a photographic clip and a flat-colour graphic reel, it transfers the content's colour statistics and posterizes or tints the result (see [status](status.md#cube-lut-2026-10-28)).
+## Editing: timeline, transform, funnel, render, qa
+
+Deterministic edits over an OpenTimelineIO project. Each command reads one `.otio`, applies one change, and writes one (atomically; `--out` may equal `--project`). Running a command twice with the same arguments gives the same file. The project format and metadata keys are in [timeline.md](timeline.md). `init` needs `ffprobe`; `render` and `qa inspect-boundaries` need `ffmpeg`; a missing tool exits 1 and names it.
+
+```
+reelctl timeline init --input take.mp4 [--dna take.edit_dna.json] --out edit.otio
+reelctl timeline cut-silence --project edit.otio --dna take.edit_dna.json [--min-gap-ms 180] [--fade-ms 30] [--fillers um,uh] --out edit.otio
+reelctl transform punch-in --project edit.otio --start-ms T1 --end-ms T2 --scale 1.18 --out edit.otio
+reelctl funnel attach-bridge --project edit.otio --target-url URL [--cutoff-pct 0.72] [--card-ms 2500, at most 60000] [--dna take.edit_dna.json] --out edit.otio
+reelctl render --project edit.otio --out out.mp4 [--size 1080x1920]
+reelctl qa inspect-boundaries --project edit.otio --out-dir views/
+```
+
+| Command | Stdout line |
+|---|---|
+| `timeline init` | `init: out= frames= fps= size= audio=` |
+| `timeline cut-silence` | `cut-silence: out= removed_spans= removed_ms= timeline_ms=` |
+| `transform punch-in` | `punch-in: out= frames=a..b clips= scale=` |
+| `funnel attach-bridge` | `attach-bridge: out= cut_ms= in_pause= card_ms= unchanged=` |
+| `render` | `render: out= frames= duration_ms= size= ffmpeg_ms=` |
+| `qa inspect-boundaries` | `inspect-boundaries: out_dir= joins=` |
+
+- `cut-silence` removes every silence gap of at least `--min-gap-ms` and, with whisper words in the DNA, whole words that equal a `--fillers` entry. Times come from the DNA and snap to the frame grid into the pause, never into a word. The audio gets a `--fade-ms` dip at each join (a fade-out and a fade-in, not an overlapping crossfade, so the audio keeps pace with the picture).
+- `punch-in` needs `1 < --scale <= 2` and a span of at least 12 frames: a centred zoom ramping in over 6 frames, held, and ramping out. A second punch-in over the same pieces replaces the first.
+- `attach-bridge` cuts at `--cutoff-pct` of the timeline (in a pause if the DNA has one within 400 ms after, or if `cut-silence` left a join there; the DNA must be the media's length within 100 ms) and appends a card showing the URL, drawn with a built-in bitmap font (capitals, digits and a few symbols; other characters show as a box), because this ffmpeg build may lack `drawtext`. A different bridge on a project that already has one is refused.
+- `render` writes H.264 + AAC and scales and crops to `--size` (even sides, at most 8192 each and 33177600 pixels in all; default the source size). `--out` needs an extension and may not be a directory. It writes `.<name>.<pid>.tmp.<ext>` beside `--out`, renames it, and removes it on any failure. A card URL too long for the frame is cut with `...` and a second stdout line says how many characters show.
+- Media paths must be plain local files (no `://`, `concat:` or `pipe:`; a directory or device is refused); `ffmpeg` and `ffprobe` run with only the `file` protocol allowed.
+- Exit 2: a bad argument, an unreadable or invalid project or DNA, a media file that is missing, not a regular file or not a local path, a file `ffprobe` cannot read, a span outside the timeline, a project with no frames or with values out of range, an oversize `--size` or `--card-ms`, or a DNA that is not the media's. Exit 1: `ffmpeg` or `ffprobe` missing, `ffmpeg` failing, or an `--out` that cannot be written.
 
 ## Exit codes
 

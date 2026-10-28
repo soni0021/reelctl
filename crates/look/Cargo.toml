@@ -1,0 +1,10 @@
+[package]
+name = "look"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Colour matching: per-channel histograms, a match curve, and a .cube 3D LUT writer and reader"
+
+[dependencies]
+thiserror.workspace = true

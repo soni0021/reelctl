@@ -15,6 +15,7 @@ fn reelctl() -> Command {
     command
         .env_remove("REELCTL_WHISPER_MODEL")
         .env_remove("REELCTL_TRANSNET_WEIGHTS")
+        .env_remove("ORT_DYLIB_PATH")
         .env_remove("OPENROUTER_API_KEY");
     command
 }
@@ -1002,6 +1003,160 @@ fn diff_splits_a_static_window_at_the_events_that_the_pixels_show() {
         })
         .collect();
     assert_eq!(spans, vec![(0, 4_250), (8_000, 12_000)], "{windows:?}");
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// A file that exists, standing in for a weights file; no test loads a model.
+fn stand_in_weights() -> PathBuf {
+    repo_root().join("fixtures/generate.sh")
+}
+
+#[test]
+fn transnet_without_the_onnx_runtime_library_fails_before_decoding() {
+    let root = std::env::temp_dir().join(format!("reelctl-tn-nolib-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("temp dir");
+    let json = root.join("out.edit_dna.json");
+    // The input does not exist: the library check must fail first, or the error
+    // would be about the input.
+    let output = reelctl()
+        .args([
+            "decompile",
+            "--cut-detector",
+            "transnet",
+            "--transnet-weights",
+        ])
+        .arg(stand_in_weights())
+        .arg("--input")
+        .arg(root.join("no-such-video.mp4"))
+        .arg("--out")
+        .arg(&json)
+        .env("ORT_DYLIB_PATH", root.join("no-such-libonnxruntime.dylib"))
+        .output()
+        .expect("spawn reelctl");
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("ORT_DYLIB_PATH"), "{stderr}");
+    assert!(stderr.contains("ONNX Runtime"), "{stderr}");
+    assert!(!json.exists(), "nothing is written");
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn transnet_with_a_relative_library_path_exits_1_even_when_the_file_exists() {
+    let root = std::env::temp_dir().join(format!("reelctl-tn-rellib-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("temp dir");
+    let json = root.join("out.edit_dna.json");
+    // The working directory is the repository root, so this relative path names a real file.
+    let output = reelctl()
+        .current_dir(repo_root())
+        .args([
+            "decompile",
+            "--cut-detector",
+            "transnet",
+            "--transnet-weights",
+        ])
+        .arg(stand_in_weights())
+        .arg("--input")
+        .arg(root.join("no-such-video.mp4"))
+        .arg("--out")
+        .arg(&json)
+        .env("ORT_DYLIB_PATH", "Cargo.toml")
+        .output()
+        .expect("spawn reelctl");
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("absolute path"), "{stderr}");
+    assert!(!json.exists(), "nothing is written");
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn transnet_without_weights_exits_1_and_says_how_to_pass_them() {
+    let root = std::env::temp_dir().join(format!("reelctl-tn-noweights-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("temp dir");
+    let output = reelctl()
+        .args(["decompile", "--cut-detector", "transnet", "--input"])
+        .arg(root.join("no-such-video.mp4"))
+        .arg("--out")
+        .arg(root.join("out.json"))
+        .output()
+        .expect("spawn reelctl");
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--transnet-weights"), "{stderr}");
+    assert!(stderr.contains("REELCTL_TRANSNET_WEIGHTS"), "{stderr}");
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn auto_with_weights_but_no_library_keeps_the_scene_score_cuts_and_says_why() {
+    let root = std::env::temp_dir().join(format!("reelctl-tn-auto-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("temp dir");
+    let mp4 = root.join("draft.mp4");
+    let json = root.join("draft.edit_dna.json");
+    generate("draft12", &mp4);
+    let output = reelctl()
+        .args(["decompile", "--cut-detector", "auto", "--transnet-weights"])
+        .arg(stand_in_weights())
+        .arg("--input")
+        .arg(&mp4)
+        .arg("--out")
+        .arg(&json)
+        .arg("--filmstrip-dir")
+        .arg(root.join("timeline"))
+        .output()
+        .expect("spawn reelctl");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let dna: EditDna = serde_json::from_slice(&fs::read(&json).expect("json")).expect("dna");
+    assert_eq!(dna.cut_detector.as_str(), "ffmpeg_scene_score");
+    assert!(
+        dna.cut_detector_note
+            .starts_with("Fell back to the FFmpeg scene-score detector"),
+        "{}",
+        dna.cut_detector_note
+    );
+    assert!(dna.cut_detector_note.contains("ORT_DYLIB_PATH"));
+    let found: Vec<u64> = dna.cuts.iter().map(|cut| cut.frame_index).collect();
+    assert_eq!(found, vec![180]);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn the_default_detector_is_the_scene_score_and_its_note_is_true() {
+    let root = std::env::temp_dir().join(format!("reelctl-tn-scene-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("temp dir");
+    let mp4 = root.join("dissolve.mp4");
+    generate("dissolve12", &mp4);
+    let json = root.join("dissolve.edit_dna.json");
+    let output = reelctl()
+        .args(["decompile", "--input"])
+        .arg(&mp4)
+        .arg("--out")
+        .arg(&json)
+        .arg("--filmstrip-dir")
+        .arg(root.join("timeline"))
+        .output()
+        .expect("spawn reelctl");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let dna: EditDna = serde_json::from_slice(&fs::read(&json).expect("json")).expect("dna");
+    assert_eq!(dna.cut_detector.as_str(), "ffmpeg_scene_score");
+    // The scene score sees no cut in a dissolve and a fade: the reason TransNetV2 exists.
+    assert!(dna.cuts.is_empty(), "{:?}", dna.cuts);
+    assert!(!dna.cut_detector_note.contains("not linked"));
+    assert!(dna.cut_detector_note.contains("TransNetV2 runs instead"));
     let _ = fs::remove_dir_all(&root);
 }
 

@@ -6,24 +6,27 @@ Read CONSTRAINTS.md before writing code. Do not weaken it to make a change pass.
 
 This repository is a Cargo workspace. P0 is the Rust decompiler and reel-diff CLI:
 
-- `crates/reelctl` — `reelctl decompile`, `reelctl diff`, and `reelctl understand`
+- `crates/reelctl` — `reelctl decompile`, `reelctl diff`, `reelctl understand`, and `reelctl look`
 - `crates/edit-dna` — serde types and JSON schema for `edit_dna.json`
 - `crates/decompile` — decode, cuts, silence, loudness, per-shot color
 - `crates/diff` — pacing flags
 - `crates/filmstrip` — `timeline_view` PNGs at cut boundaries
+- `crates/look` — `reelctl look`: per-channel histogram matching and the `.cube` writer and reader (pure)
+- `crates/timeline` — the OpenTimelineIO subset, edit operations and the ffmpeg filter-graph builder behind `reelctl timeline|transform|funnel|render|qa` (pure; the commands in `crates/reelctl/src/timeline_cmd.rs` run `ffprobe` and `ffmpeg`)
 - `crates/understand` — `reelctl understand`: transcript segments, frame plan, the model request and cost bound, clip rules, and `understanding.json` (no dependency on `decompile`)
+- `watchtower/` — the Go module for P1 (outlier and growth digest); `cd watchtower && go test ./...`; reads recorded data, calls the `reelctl` binary as a process, no network in tests
 - `fixtures/` — synthetic ffmpeg clips (no scraped Reels)
 
 `reelctl decompile` writes `edit_dna.json` and one `timeline_view` PNG per cut. `signal_ms` is structural extraction only. `asr_ms` is word timing and is not part of the 500ms gate.
 
-P1–P3 in planer.md (Go watchtower, OpenTimelineIO / Smelter / manimgx, Qwen3-VL) are specified there and are not implemented in this tree, except that `reelctl understand` gives the vision-language role a first, command-line implementation through a hosted model ([ADR-015](docs/decisions/ADR-015-combine-measured-time-with-a-model-that-answers-by-segment-id.md)). Do not vendor the reference repos listed in planer.md. Optional P2+ reel worker (spec only): `edenfunf/reelmimic` may restyle 2D explainer/B-roll from an outlier reference via `reelctl motion mimic-2d`; it is not P0 decompile and is not live-action, talking-head, face, or lip-sync.
+P1–P3 in planer.md (Go watchtower, OpenTimelineIO / Smelter / manimgx, Qwen3-VL) are specified there. Built so far: a first slice of P1 (`watchtower/`, recorded data, no live Virlo client) and of P2 (OpenTimelineIO edits and an ffmpeg render, no Smelter, manimgx or RobustVideoMatting); P3 is deferred. Also, `reelctl understand` gives the vision-language role a first, command-line implementation through a hosted model ([ADR-015](docs/decisions/ADR-015-combine-measured-time-with-a-model-that-answers-by-segment-id.md)). Do not vendor the reference repos listed in planer.md. Optional P2+ reel worker (spec only): `edenfunf/reelmimic` may restyle 2D explainer/B-roll from an outlier reference via `reelctl motion mimic-2d`; it is not P0 decompile and is not live-action, talking-head, face, or lip-sync.
 
 ## Verify
 
 - After a code change: `cargo check` on edit, `cargo test` once at task end. Do not re-run the suite on unchanged code.
 - The exception: after a task's commit, the `audit` subagent runs the suite again on a clean checkout of that commit. It catches a file that was never `git add`ed, which a run in the working tree cannot.
 - A green P0 run is the workspace unit tests plus `crates/reelctl/tests/p0_fixture.rs` (synthetic `fixtures/generate.sh` clips: planted cut, silence, a pause under noise, static shot, payoff, 10-bit HLG video) and `whisper_fixture.rs`. No network, no scraped Reels.
-- The whisper model test is `#[ignore]`d. After changing word timing, also run `REELCTL_WHISPER_MODEL=~/models/whisper/ggml-apex-hinglish-q8_0.bin cargo test -p reelctl --test whisper_fixture -- --include-ignored` (macOS only: it needs `say`). Tests that spawn `reelctl` must remove `REELCTL_WHISPER_MODEL`, `REELCTL_TRANSNET_WEIGHTS` and `OPENROUTER_API_KEY` from its environment.
+- The whisper model test is `#[ignore]`d. After changing word timing, also run `REELCTL_WHISPER_MODEL=~/models/whisper/ggml-apex-hinglish-q8_0.bin cargo test -p reelctl --test whisper_fixture -- --include-ignored` (macOS only: it needs `say`). Tests that spawn `reelctl` must remove `REELCTL_WHISPER_MODEL`, `REELCTL_TRANSNET_WEIGHTS`, `ORT_DYLIB_PATH` and `OPENROUTER_API_KEY` from its environment.
 - CLI: `reelctl decompile --input <reel.mp4> --out <edit_dna.json>` and `reelctl diff --draft <draft.mp4> --outlier <edit_dna.json>`.
 - `signal_ms` must be a measured structural duration (decode, cuts, silence, loudness, histograms, JSON write). Do not invent or pad it.
 
@@ -43,7 +46,7 @@ Update the docs in the same commit as every change, without waiting to be asked;
 ## P0 gaps (documented, do not implement here)
 
 - whisper.cpp runs only when `--whisper-model` or `REELCTL_WHISPER_MODEL` names a model; weights are never downloaded or committed. Without one, `asr_backend` is `silence_bursts` and `asr_ms` times that estimator.
-- TransNetV2 / `ort` is unlinked: weights are not vendored. `--cut-detector auto` uses the FFmpeg scene-score `CutDetector` unless a weight file exists (then detection still fails closed until an ort-backed build is wired).
+- TransNetV2 runs through `ort` with a user-supplied ONNX Runtime library (`ORT_DYLIB_PATH`) and weight file (`--transnet-weights` or `REELCTL_TRANSNET_WEIGHTS`); neither is vendored or downloaded by the build. It is slow (about 7 ms per frame, far over the 500 ms budget), so `--cut-detector auto` uses it only when a weights path is given, and falls back to the scene score with the reason in `cut_detector_note` if anything is missing. Library code that opens the model must call `decompile::release_onnx_runtime()` before exiting (ONNX Runtime's static destructors abort otherwise; `reelctl`'s `main` does).
 - Zoom curves are measured (`zoom_curves`, schema version 4): one cubic-bezier(1/3, y1, 2/3, y2) per punch-in and zoom-out. Slow drifts have no curve. The `.cube` LUT stays `StubbedPass` in `edit_dna.json`; `reelctl look` makes one from two videos. Punch-in zooms, zoom-outs and overlay changes are measured as edit events (`visual_events`, module `visual-motion` in [docs/specs/p0-capability-map.md](docs/specs/p0-capability-map.md)); only a move that completes within 600 ms (a longer run is a drift) counts, so a slow push-in is not an event.
 
 ## Learned User Preferences
