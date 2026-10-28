@@ -21,6 +21,7 @@ image.workspace = true
 look = { path = "../look" }
 serde.workspace = true
 serde_json.workspace = true
+timeline = { path = "../timeline" }
 understand = { path = "../understand" }
 
 [dev-dependencies]

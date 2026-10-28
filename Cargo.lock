@@ -848,6 +848,7 @@ dependencies = [
  "look",
  "serde",
  "serde_json",
+ "timeline",
  "understand",
 ]
 
@@ -1163,6 +1164,16 @@ checksum = "7e689342a48d2ea927c87ea50cabf8594854bf940e9310208848d680d668ed85"
 dependencies = [
  "num-conv",
  "time-core",
+]
+
+[[package]]
+name = "timeline"
+version = "0.1.0"
+dependencies = [
+ "edit-dna",
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]

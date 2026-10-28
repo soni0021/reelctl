@@ -12,12 +12,14 @@ This repository is a Cargo workspace. P0 is the Rust decompiler and reel-diff CL
 - `crates/diff` — pacing flags
 - `crates/filmstrip` — `timeline_view` PNGs at cut boundaries
 - `crates/look` — `reelctl look`: per-channel histogram matching and the `.cube` writer and reader (pure)
+- `crates/timeline` — the OpenTimelineIO subset, edit operations and the ffmpeg filter-graph builder behind `reelctl timeline|transform|funnel|render|qa` (pure; the commands in `crates/reelctl/src/timeline_cmd.rs` run `ffprobe` and `ffmpeg`)
 - `crates/understand` — `reelctl understand`: transcript segments, frame plan, the model request and cost bound, clip rules, and `understanding.json` (no dependency on `decompile`)
+- `watchtower/` — the Go module for P1 (outlier and growth digest); `cd watchtower && go test ./...`; reads recorded data, calls the `reelctl` binary as a process, no network in tests
 - `fixtures/` — synthetic ffmpeg clips (no scraped Reels)
 
 `reelctl decompile` writes `edit_dna.json` and one `timeline_view` PNG per cut. `signal_ms` is structural extraction only. `asr_ms` is word timing and is not part of the 500ms gate.
 
-P1–P3 in planer.md (Go watchtower, OpenTimelineIO / Smelter / manimgx, Qwen3-VL) are specified there and are not implemented in this tree, except that `reelctl understand` gives the vision-language role a first, command-line implementation through a hosted model ([ADR-015](docs/decisions/ADR-015-combine-measured-time-with-a-model-that-answers-by-segment-id.md)). Do not vendor the reference repos listed in planer.md. Optional P2+ reel worker (spec only): `edenfunf/reelmimic` may restyle 2D explainer/B-roll from an outlier reference via `reelctl motion mimic-2d`; it is not P0 decompile and is not live-action, talking-head, face, or lip-sync.
+P1–P3 in planer.md (Go watchtower, OpenTimelineIO / Smelter / manimgx, Qwen3-VL) are specified there. Built so far: a first slice of P1 (`watchtower/`, recorded data, no live Virlo client) and of P2 (OpenTimelineIO edits and an ffmpeg render, no Smelter, manimgx or RobustVideoMatting); P3 is deferred. Also, `reelctl understand` gives the vision-language role a first, command-line implementation through a hosted model ([ADR-015](docs/decisions/ADR-015-combine-measured-time-with-a-model-that-answers-by-segment-id.md)). Do not vendor the reference repos listed in planer.md. Optional P2+ reel worker (spec only): `edenfunf/reelmimic` may restyle 2D explainer/B-roll from an outlier reference via `reelctl motion mimic-2d`; it is not P0 decompile and is not live-action, talking-head, face, or lip-sync.
 
 ## Verify
 

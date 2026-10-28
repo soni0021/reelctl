@@ -1,6 +1,6 @@
 # Plan: visual-motion
 
-Spec: [docs/specs/visual-motion.md](../docs/specs/visual-motion.md), written 2026-10-28 under "Do all of them". Branch: `feature/visual-motion`. Checklist: [todo.md](todo.md).
+Spec: [docs/specs/visual-motion.md](../../../docs/specs/visual-motion.md), written 2026-10-28 under "Do all of them". Branch: `feature/visual-motion`. Checklist: [todo.md](todo.md).
 
 ## Overview
 Measure punch-ins, zoom-outs and overlay changes from the luma grids the decoder already builds, write them to `edit_dna.json` as `visual_events` (schema 3), and split `static_window` at them in `diff`.

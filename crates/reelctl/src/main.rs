@@ -17,6 +17,8 @@ use diff::{compare_many, render_text, NamedReel};
 use edit_dna::EditDna;
 
 mod look_cmd;
+mod card;
+mod timeline_cmd;
 mod understand_cmd;
 
 fn main() {
@@ -38,6 +40,11 @@ fn run() -> Result<()> {
         Command::Diff(args) => diff(args),
         Command::Understand(args) => understand_cmd::understand(args),
         Command::Look(args) => look_cmd::look(args),
+        Command::Timeline(command) => timeline_cmd::timeline(command),
+        Command::Transform(command) => timeline_cmd::transform(command),
+        Command::Funnel(command) => timeline_cmd::funnel(command),
+        Command::Render(args) => timeline_cmd::render(args),
+        Command::Qa(command) => timeline_cmd::qa(command),
         Command::WhisperWorker(args) => whisper_worker(args),
     }
 }
@@ -65,6 +72,16 @@ enum Command {
     /// Write a .cube 3D LUT that moves a draft's colour toward an outlier's, by
     /// per-channel histogram matching of sampled frames.
     Look(look_cmd::LookArgs),
+    /// Make and edit an OpenTimelineIO project: `init`, `cut-silence`.
+    Timeline(timeline_cmd::TimelineCommand),
+    /// Change the picture of a project: `punch-in`.
+    Transform(timeline_cmd::TransformCommand),
+    /// Add a funnel step to a project: `attach-bridge`.
+    Funnel(timeline_cmd::FunnelCommand),
+    /// Render a project to an mp4 with ffmpeg.
+    Render(timeline_cmd::RenderArgs),
+    /// Check a project: `inspect-boundaries`.
+    Qa(timeline_cmd::QaCommand),
     /// Internal: runs whisper passes for a parent `reelctl`, one JSON line in
     /// and one out per pass, so a whisper.cpp abort cannot end the parent.
     #[command(hide = true)]
