@@ -148,6 +148,13 @@ func TestLoadRejectsABadPostID(t *testing.T) {
 	}
 }
 
+func TestLoadSaysWhenAPostIDIsEmpty(t *testing.T) {
+	_, err := FileSource{Dir: writeNiche(t, nicheWithPosts(postWithID("")))}.Load()
+	if err == nil || !strings.Contains(err.Error(), "post 1") || !strings.Contains(err.Error(), "must not be empty") {
+		t.Fatalf("got %v", err)
+	}
+}
+
 func TestLoadRejectsADuplicatePostIDAcrossCreators(t *testing.T) {
 	body := `{"niche": "n", "creators": [
 	  {"handle": "a", "posts": [` + postWithID("p1") + `]},
