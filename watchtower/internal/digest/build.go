@@ -3,10 +3,10 @@ package digest
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"time"
 
@@ -26,8 +26,6 @@ const (
 	dnaDir = "dna"
 )
 
-var unsafeName = regexp.MustCompile(`[^A-Za-z0-9._-]`)
-
 // measured is a decompiled post.
 type measured struct {
 	scoredPost
@@ -46,6 +44,10 @@ type run struct {
 // recorded in the digest and does not stop the run. The error is for a problem
 // that stops it, such as an output directory that cannot be made.
 func Build(n niche.Niche, o Options, d Decompiler) (Digest, error) {
+	// A post id names a file under dna/, so it must be safe and unique.
+	if err := niche.CheckIDs(n); err != nil {
+		return Digest{}, err
+	}
 	if err := os.MkdirAll(filepath.Join(o.OutDir, dnaDir), 0o755); err != nil {
 		return Digest{}, err
 	}
@@ -77,8 +79,8 @@ func (r *run) creator(c niche.Creator, o Options) Creator {
 		Skipped:       a.skipped,
 	}
 	if best, ok := bestPost(a.scored); ok {
-		m := stats.Round(best.multiplier)
-		out.BestMultiplier, out.BestPostID = &m, best.post.ID
+		m, id := stats.Round(best.multiplier), best.post.ID
+		out.BestMultiplier, out.BestPostID = &m, &id
 	}
 	if !out.Surging {
 		out.Breakouts = []Breakout{}
@@ -122,17 +124,41 @@ func (r *run) decompileAll(handle string, scored []scoredPost, breakouts, baseli
 }
 
 func (r *run) decompile(handle string, s scoredPost) (measured, bool) {
-	rel := path.Join(dnaDir, unsafeName.ReplaceAllString(s.post.ID, "_")+".edit_dna.json")
-	if err := r.dec.Decompile(s.post.Media, filepath.Join(r.outDir, filepath.FromSlash(rel))); err != nil {
+	// The id was checked by niche.CheckIDs, so it is a safe, unique file name.
+	rel := path.Join(dnaDir, s.post.ID+".edit_dna.json")
+	file := filepath.Join(r.outDir, filepath.FromSlash(rel))
+	// A file left by an earlier run must not pass for this run's output.
+	if err := os.Remove(file); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		r.failures = append(r.failures, Failure{Creator: handle, Post: s.post.ID, Stage: StageDecompile, Cause: reelctl.CauseNotStarted,
+			Detail: "could not remove an earlier output: " + pathless(err)})
+		return measured{}, false
+	}
+	if err := r.dec.Decompile(s.post.Media, file); err != nil {
 		r.failures = append(r.failures, decompileFailure(handle, s.post.ID, err))
 		return measured{}, false
 	}
-	reel, err := readReel(filepath.Join(r.outDir, filepath.FromSlash(rel)))
+	reel, err := readReel(file)
 	if err != nil {
-		r.failures = append(r.failures, Failure{Creator: handle, Post: s.post.ID, Stage: StageReadDNA, Detail: err.Error()})
+		r.failures = append(r.failures, Failure{Creator: handle, Post: s.post.ID, Stage: StageReadDNA, Detail: readDetail(err)})
 		return measured{}, false
 	}
 	return measured{scoredPost: s, editDNA: rel, reel: reel}, true
+}
+
+// pathless is the message of err without the path of a *fs.PathError.
+func pathless(err error) string {
+	var pathErr *fs.PathError
+	if errors.As(err, &pathErr) {
+		return pathErr.Err.Error()
+	}
+	return err.Error()
+}
+
+func readDetail(err error) string {
+	if errors.Is(err, fs.ErrNotExist) {
+		return "reelctl exited successfully but wrote no edit_dna.json"
+	}
+	return err.Error()
 }
 
 func readReel(file string) (blueprint.Reel, error) {
@@ -144,10 +170,15 @@ func readReel(file string) (blueprint.Reel, error) {
 }
 
 func decompileFailure(handle, id string, err error) Failure {
-	f := Failure{Creator: handle, Post: id, Stage: StageDecompile, ExitCode: -1, Detail: err.Error()}
+	f := Failure{Creator: handle, Post: id, Stage: StageDecompile, Cause: reelctl.CauseNotStarted, Detail: err.Error()}
 	var runErr *reelctl.RunError
-	if errors.As(err, &runErr) {
-		f.ExitCode, f.Detail = runErr.ExitCode, runErr.Stderr
+	if !errors.As(err, &runErr) {
+		return f
+	}
+	f.Cause, f.Signal, f.Detail = runErr.Cause, runErr.Signal, runErr.Stderr
+	if runErr.Cause == reelctl.CauseExited {
+		code := runErr.ExitCode
+		f.ExitCode = &code
 	}
 	return f
 }

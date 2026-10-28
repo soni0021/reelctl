@@ -62,10 +62,13 @@ func join(parts ...[]int64) []int64 {
 // fakeDecompiler writes a small edit_dna.json for each media file, named by
 // the post id, with the words per minute in wpm (150 when absent).
 type fakeDecompiler struct {
-	wpm   map[string]float64
-	fail  map[string]error
-	bad   map[string]bool
-	calls []string
+	wpm    map[string]float64
+	fail   map[string]error
+	bad    map[string]bool
+	silent map[string]bool   // exits 0 and writes nothing
+	body   map[string]string // the whole file, instead of the standard one
+	asr    map[string]string // asr_backend (whisper_cpp when absent)
+	calls  []string
 }
 
 func (f *fakeDecompiler) Decompile(input, output string) error {
@@ -74,14 +77,24 @@ func (f *fakeDecompiler) Decompile(input, output string) error {
 	if err := f.fail[id]; err != nil {
 		return err
 	}
+	if f.silent[id] {
+		return nil
+	}
 	if f.bad[id] {
 		return os.WriteFile(output, []byte("{"), 0o644)
+	}
+	if body, ok := f.body[id]; ok {
+		return os.WriteFile(output, []byte(body), 0o644)
 	}
 	wpm, ok := f.wpm[id]
 	if !ok {
 		wpm = 150
 	}
-	body := fmt.Sprintf(`{"duration_ms": 30000, "cuts": [{"time_ms": 10000}, {"time_ms": 20000}], "silence_gaps": [], "words_per_minute": %v, "integrated_lufs": -14}`, wpm)
+	backend, ok := f.asr[id]
+	if !ok {
+		backend = "whisper_cpp"
+	}
+	body := fmt.Sprintf(`{"schema_version": 2, "duration_ms": 30000, "cuts": [{"time_ms": 10000}, {"time_ms": 20000}], "silence_gaps": [], "words_per_minute": %v, "asr_backend": %q, "integrated_lufs": -14}`, wpm, backend)
 	return os.WriteFile(output, []byte(body), 0o644)
 }
 
@@ -123,8 +136,8 @@ func TestPostsWithTooLittleHistoryAreListedWithTheirCount(t *testing.T) {
 	if !reflect.DeepEqual(c.Skipped, want) {
 		t.Fatalf("got %+v", c.Skipped)
 	}
-	if c.BestMultiplier == nil || *c.BestMultiplier != 1 || c.BestPostID != "c6" {
-		t.Fatalf("best: %v %q", c.BestMultiplier, c.BestPostID)
+	if c.BestMultiplier == nil || *c.BestMultiplier != 1 || c.BestPostID == nil || *c.BestPostID != "c6" {
+		t.Fatalf("best: %v %v", c.BestMultiplier, c.BestPostID)
 	}
 }
 
@@ -167,7 +180,7 @@ func TestVelocityMustBeStrictlyAboveMinVelocity(t *testing.T) {
 	if c.Velocity == nil || c.Velocity.Snapshots != 3 || c.Velocity.FollowersPerDay != 21 || c.Velocity.FollowersShare != 0.021 {
 		t.Errorf("velocity: %+v", c.Velocity)
 	}
-	if c.Velocity.ViewsPerDay != 210 || c.Velocity.ViewsShare != 0.021 {
+	if c.Velocity.ViewsPerDay == nil || *c.Velocity.ViewsPerDay != 210 || c.Velocity.ViewsShare == nil || *c.Velocity.ViewsShare != 0.021 {
 		t.Errorf("views velocity: %+v", c.Velocity)
 	}
 }
@@ -209,9 +222,10 @@ func surgerSpec(breakouts int) niche.Creator {
 }
 
 func TestADecompileFailureIsListedAndTheRunGoesOn(t *testing.T) {
-	dec := &fakeDecompiler{fail: map[string]error{"k9": &reelctl.RunError{ExitCode: 7, Stderr: "boom"}}}
+	dec := &fakeDecompiler{fail: map[string]error{"k9": &reelctl.RunError{Cause: reelctl.CauseExited, ExitCode: 7, Stderr: "boom"}}}
 	d := build(t, opts(t), dec, surgerSpec(3))
-	wantFailure := Failure{Creator: "k", Post: "k9", Stage: "decompile", ExitCode: 7, Detail: "boom"}
+	seven := 7
+	wantFailure := Failure{Creator: "k", Post: "k9", Stage: "decompile", Cause: "exited", ExitCode: &seven, Detail: "boom"}
 	if !reflect.DeepEqual(d.Failures, []Failure{wantFailure}) {
 		t.Fatalf("failures: %+v", d.Failures)
 	}

@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"time"
@@ -32,6 +33,7 @@ const (
 type config struct {
 	data, out, reelctl    string
 	minScore, minVelocity float64
+	reelctlTimeout        time.Duration
 	generatedAt           string
 }
 
@@ -68,7 +70,7 @@ func run(args []string, stdout, stderr io.Writer, clock func() time.Time) int {
 
 func parse(args []string, stderr io.Writer, clock func() time.Time) (config, error) {
 	if len(args) == 0 || args[0] != "run" {
-		return config{}, usageError{errors.New("usage: watchtower run --data <dir> --out <dir> [--reelctl <path>] [--min-score 10] [--min-velocity 0.02] [--now <rfc3339>]")}
+		return config{}, usageError{errors.New("usage: watchtower run --data <dir> --out <dir> [--reelctl <path>] [--min-score 10] [--min-velocity 0.02] [--reelctl-timeout 5m] [--now <rfc3339>]")}
 	}
 	var cfg config
 	var now string
@@ -79,6 +81,7 @@ func parse(args []string, stderr io.Writer, clock func() time.Time) (config, err
 	fs.StringVar(&cfg.reelctl, "reelctl", defaultReelctl, "path of the reelctl binary")
 	fs.Float64Var(&cfg.minScore, "min-score", defaultMinScore, "outlier multiplier that makes a post a breakout")
 	fs.Float64Var(&cfg.minVelocity, "min-velocity", defaultMinVelocity, "follower growth per day, as a share, that makes a creator surge")
+	fs.DurationVar(&cfg.reelctlTimeout, "reelctl-timeout", reelctl.DefaultTimeout, "longest one reelctl run may take")
 	fs.StringVar(&now, "now", "", "generated_at, RFC 3339 (default: the clock)")
 	if err := fs.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -103,15 +106,23 @@ func check(cfg config, extra int) error {
 		return errors.New("--data is required")
 	case cfg.out == "":
 		return errors.New("--out is required")
+	case !finite(cfg.minScore):
+		return errors.New("--min-score must be a finite number")
 	case cfg.minScore <= 0:
 		return errors.New("--min-score must be above 0")
+	case !finite(cfg.minVelocity):
+		return errors.New("--min-velocity must be a finite number")
 	case cfg.minVelocity < 0:
 		return errors.New("--min-velocity must not be negative")
+	case cfg.reelctlTimeout <= 0:
+		return errors.New("--reelctl-timeout must be above 0")
 	case extra > 0:
 		return errors.New("unexpected argument after the flags")
 	}
 	return nil
 }
+
+func finite(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }
 
 func generatedAt(now string, clock func() time.Time) (string, error) {
 	t := clock()
@@ -131,7 +142,7 @@ func execute(cfg config, stdout io.Writer) error {
 		return usageError{err}
 	}
 	opts := digest.Options{MinScore: cfg.minScore, MinVelocity: cfg.minVelocity, GeneratedAt: cfg.generatedAt, OutDir: cfg.out}
-	d, err := digest.Build(n, opts, reelctl.Runner{Binary: cfg.reelctl})
+	d, err := digest.Build(n, opts, reelctl.Runner{Binary: cfg.reelctl, Timeout: cfg.reelctlTimeout})
 	if err != nil {
 		return err
 	}

@@ -144,8 +144,8 @@ func TestDigestHoldsTheHandComputedValues(t *testing.T) {
 	if want := map[string]float64{"s8": 12, "s9": 23.8095, "s11": 26.087}; !reflect.DeepEqual(multipliers, want) {
 		t.Errorf("breakout multipliers %v, want %v", multipliers, want)
 	}
-	if *surger.BestMultiplier != 26.087 || surger.BestPostID != "s11" || surger.BaselinePosts != 3 {
-		t.Errorf("best %v %s, baseline %d", *surger.BestMultiplier, surger.BestPostID, surger.BaselinePosts)
+	if *surger.BestMultiplier != 26.087 || surger.BestPostID == nil || *surger.BestPostID != "s11" || surger.BaselinePosts != 3 {
+		t.Errorf("best %v %v, baseline %d", *surger.BestMultiplier, surger.BestPostID, surger.BaselinePosts)
 	}
 	if !reflect.DeepEqual(surger.SurgingBy, []string{"multiplier"}) || surger.Velocity.FollowersPerDay != 100 || surger.Velocity.FollowersShare != 0.001 {
 		t.Errorf("surger: %v %+v", surger.SurgingBy, surger.Velocity)
@@ -209,7 +209,8 @@ func TestADecompileFailureIsListedAndTheRestProceed(t *testing.T) {
 	out := t.TempDir()
 	standardRun(t, stub(t, "s9"), out)
 	d := readDigest(t, out)
-	want := []digest.Failure{{Creator: "surger", Post: "s9", Stage: "decompile", ExitCode: 4, Detail: "error: decode failed"}}
+	four := 4
+	want := []digest.Failure{{Creator: "surger", Post: "s9", Stage: "decompile", Cause: "exited", ExitCode: &four, Detail: "error: decode failed"}}
 	if !reflect.DeepEqual(d.Failures, want) {
 		t.Fatalf("failures %+v", d.Failures)
 	}
@@ -233,7 +234,7 @@ func TestAMissingReelctlBinaryIsFailuresNotACrash(t *testing.T) {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
 	d := readDigest(t, out)
-	if len(d.Failures) != 6 || d.Failures[0].ExitCode != -1 {
+	if len(d.Failures) != 6 || d.Failures[0].Cause != "not_started" || d.Failures[0].ExitCode != nil {
 		t.Fatalf("failures %+v", d.Failures)
 	}
 }
@@ -291,6 +292,16 @@ func TestBadArgumentsExitTwo(t *testing.T) {
 		"missing data dir":    {"run", "--data", filepath.Join(out, "absent"), "--out", out},
 		"extra positional":    {"run", "--data", data, "--out", out, "extra"},
 		"min-score not a num": {"run", "--data", data, "--out", out, "--min-score", "ten"},
+		"min-score NaN":       {"run", "--data", data, "--out", out, "--min-score", "NaN"},
+		"min-score Inf":       {"run", "--data", data, "--out", out, "--min-score", "Inf"},
+		"min-score +Inf":      {"run", "--data", data, "--out", out, "--min-score", "+Inf"},
+		"min-score infinity":  {"run", "--data", data, "--out", out, "--min-score", "infinity"},
+		"velocity NaN":        {"run", "--data", data, "--out", out, "--min-velocity", "nan"},
+		"velocity Inf":        {"run", "--data", data, "--out", out, "--min-velocity", "Inf"},
+		"velocity -Inf":       {"run", "--data", data, "--out", out, "--min-velocity", "-Inf"},
+		"timeout zero":        {"run", "--data", data, "--out", out, "--reelctl-timeout", "0s"},
+		"timeout negative":    {"run", "--data", data, "--out", out, "--reelctl-timeout", "-1m"},
+		"timeout not a time":  {"run", "--data", data, "--out", out, "--reelctl-timeout", "soon"},
 	}
 	for name, args := range cases {
 		if code, _, stderr := runWatchtower(t, args...); code != 2 || stderr == "" {

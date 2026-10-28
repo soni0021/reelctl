@@ -256,6 +256,7 @@
       "handle": "newbie",
       "surging": false,
       "surging_by": [],
+      "best_post_id": null,
       "best_multiplier": null,
       "velocity": null,
       "breakouts": [],

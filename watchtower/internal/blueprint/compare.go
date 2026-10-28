@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 
 	"github.com/soni0021/reelctl-watchtower/internal/stats"
 )
@@ -47,15 +48,22 @@ type spec struct {
 	pick             func(Reel) float64
 }
 
-var fixedSpecs = []spec{
-	{"mean_shot_length_ms", "Mean shot length", unitMs, func(r Reel) float64 { return r.MeanShotMs }},
-	{"median_shot_length_ms", "Median shot length", unitMs, func(r Reel) float64 { return r.MedianShotMs }},
-	{"cuts_per_minute", "Cuts per minute", unitPerMinute, func(r Reel) float64 { return r.CutsPerMinute }},
-	{"pauses_per_minute", "Pauses per minute", unitPerMinute, func(r Reel) float64 { return r.PausesPerMinute }},
-	{"silent_share", "Silent share", unitShare, func(r Reel) float64 { return r.SilentShare }},
-	{"words_per_minute", "Words per minute", unitPerMinute, func(r Reel) float64 { return r.WordsPerMinute }},
-	{"integrated_lufs", "Integrated loudness", unitLUFS, func(r Reel) float64 { return r.LUFS }},
-}
+var (
+	specsBeforeSpeech = []spec{
+		{"mean_shot_length_ms", "Mean shot length", unitMs, func(r Reel) float64 { return r.MeanShotMs }},
+		{"median_shot_length_ms", "Median shot length", unitMs, func(r Reel) float64 { return r.MedianShotMs }},
+		{"cuts_per_minute", "Cuts per minute", unitPerMinute, func(r Reel) float64 { return r.CutsPerMinute }},
+		{"pauses_per_minute", "Pauses per minute", unitPerMinute, func(r Reel) float64 { return r.PausesPerMinute }},
+		{"silent_share", "Silent share", unitShare, func(r Reel) float64 { return r.SilentShare }},
+	}
+	specsAfterSpeech = []spec{
+		{"integrated_lufs", "Integrated loudness", unitLUFS, func(r Reel) float64 { return r.LUFS }},
+	}
+	// The speech rate is a speaking rate only from whisper.cpp. Without it
+	// edit_dna.json counts bursts of sound, which is a different quantity.
+	wordsSpec  = spec{"words_per_minute", "Words per minute", unitPerMinute, func(r Reel) float64 { return r.WordsPerMinute }}
+	burstsSpec = spec{"voiced_bursts_per_minute", "Voiced bursts per minute", unitPerMinute, func(r Reel) float64 { return r.WordsPerMinute }}
+)
 
 // Compare sets the baseline reels against the breakout reels. Both must be
 // non-empty. Every metric is listed; a sentence is written only for a change
@@ -82,16 +90,53 @@ func Compare(baseline, breakouts []Reel) Blueprint {
 
 func specsFor(baseline, breakouts []Reel) ([]spec, []string) {
 	all := append(append([]Reel(nil), baseline...), breakouts...)
-	missing := countUnmeasured(all)
-	if missing > 0 {
-		note := fmt.Sprintf("visual_events was missing from %d of %d files, so visual events are not compared.", missing, len(all))
-		return fixedSpecs, []string{note}
+	speech, speechNotes := speechSpec(all)
+	specs := append([]spec(nil), specsBeforeSpeech...)
+	if speech != nil {
+		specs = append(specs, *speech)
 	}
-	specs := append([]spec(nil), fixedSpecs...)
-	for _, kind := range visualKinds(all) {
-		specs = append(specs, visualSpec(kind))
+	specs = append(specs, specsAfterSpeech...)
+	notes := []string{}
+	if missing := countUnmeasured(all); missing > 0 {
+		notes = append(notes, fmt.Sprintf("visual_events was missing from %d of %d files, so visual events are not compared.", missing, len(all)))
+	} else {
+		for _, kind := range visualKinds(all) {
+			specs = append(specs, visualSpec(kind))
+		}
 	}
-	return specs, []string{}
+	return specs, append(notes, speechNotes...)
+}
+
+// speechSpec picks the speech-rate metric when every file used the same known
+// asr_backend, and otherwise returns nil with a note saying why.
+func speechSpec(reels []Reel) (*spec, []string) {
+	counts := make(map[string]int)
+	for _, r := range reels {
+		counts[r.ASRBackend]++
+	}
+	if len(counts) == 1 {
+		switch reels[0].ASRBackend {
+		case BackendWhisper:
+			return &wordsSpec, nil
+		case BackendSilenceBursts:
+			return &burstsSpec, nil
+		}
+	}
+	names := make([]string, 0, len(counts))
+	for name := range counts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	parts := make([]string, len(names))
+	for i, name := range names {
+		label := name
+		if name == "" {
+			label = "missing"
+		}
+		parts[i] = fmt.Sprintf("%d %s", counts[name], label)
+	}
+	note := fmt.Sprintf("asr_backend cannot be compared across the files (%s), so the speech rate is not compared: a voiced-burst rate is not a speaking rate.", strings.Join(parts, ", "))
+	return nil, []string{note}
 }
 
 func countUnmeasured(reels []Reel) int {

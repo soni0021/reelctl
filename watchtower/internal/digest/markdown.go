@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/soni0021/reelctl-watchtower/internal/blueprint"
+	"github.com/soni0021/reelctl-watchtower/internal/reelctl"
 )
 
 // Markdown renders the digest for a person. It holds the same data as the JSON.
@@ -50,16 +51,23 @@ func writeCreator(b *strings.Builder, c Creator) {
 	} else {
 		b.WriteString("- Not surging.\n")
 	}
-	if c.BestMultiplier != nil {
-		fmt.Fprintf(b, "- Best post: %s at %.2fx the median of its earlier posts.\n", c.BestPostID, *c.BestMultiplier)
+	if c.BestMultiplier != nil && c.BestPostID != nil {
+		fmt.Fprintf(b, "- Best post: %s at %.2fx the median of its earlier posts.\n", *c.BestPostID, *c.BestMultiplier)
 	}
 	if v := c.Velocity; v != nil {
-		fmt.Fprintf(b, "- Followers: %+.1f a day (%.2f%% a day) over %d snapshots. Total views: %+.1f a day (%.2f%% a day).\n",
-			v.FollowersPerDay, v.FollowersShare*100, v.Snapshots, v.ViewsPerDay, v.ViewsShare*100)
+		fmt.Fprintf(b, "- Followers: %+.1f a day (%.2f%% a day) over %d snapshots. Total views: %s.\n",
+			v.FollowersPerDay, v.FollowersShare*100, v.Snapshots, viewsGrowth(v))
 	}
 	fmt.Fprintf(b, "- Breakouts: %s. Baseline posts: %d.\n\n", breakoutList(c.Breakouts), c.BaselinePosts)
 	writeBlueprint(b, c.Blueprint)
 	writeSkipped(b, c.Skipped)
+}
+
+func viewsGrowth(v *Velocity) string {
+	if v.ViewsPerDay == nil || v.ViewsShare == nil {
+		return "not computed"
+	}
+	return fmt.Sprintf("%+.1f a day (%.2f%% a day)", *v.ViewsPerDay, *v.ViewsShare*100)
 }
 
 func breakoutList(breakouts []Breakout) string {
@@ -138,9 +146,15 @@ func failureText(f Failure) string {
 	switch {
 	case f.Stage == StageReadDNA:
 		return "the edit_dna.json could not be used: " + f.Detail
-	case f.ExitCode == -1:
+	case f.Cause == reelctl.CauseNotStarted:
 		return "reelctl did not start: " + f.Detail
+	case f.Cause == reelctl.CauseSignaled:
+		return fmt.Sprintf("reelctl was ended by signal %s: %s", f.Signal, f.Detail)
+	case f.Cause == reelctl.CauseTimedOut:
+		return "reelctl timed out: " + f.Detail
+	case f.ExitCode != nil:
+		return fmt.Sprintf("reelctl exited with code %d: %s", *f.ExitCode, f.Detail)
 	default:
-		return fmt.Sprintf("reelctl exited with code %d: %s", f.ExitCode, f.Detail)
+		return "reelctl failed: " + f.Detail
 	}
 }

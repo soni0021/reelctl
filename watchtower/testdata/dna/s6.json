@@ -1,5 +1,6 @@
 {
   "schema_version": 2,
+  "asr_backend": "whisper_cpp",
   "duration_ms": 30000,
   "fps": 30.0,
   "frame_size": {

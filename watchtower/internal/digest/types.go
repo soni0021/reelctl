@@ -39,7 +39,7 @@ type Creator struct {
 	Handle         string               `json:"handle"`
 	Surging        bool                 `json:"surging"`
 	SurgingBy      []string             `json:"surging_by"`
-	BestPostID     string               `json:"best_post_id,omitempty"`
+	BestPostID     *string              `json:"best_post_id"`
 	BestMultiplier *float64             `json:"best_multiplier"`
 	Velocity       *Velocity            `json:"velocity"`
 	Breakouts      []Breakout           `json:"breakouts"`
@@ -49,13 +49,15 @@ type Creator struct {
 }
 
 // Velocity is the growth over the last 7 days of snapshots. Shares are the
-// slope divided by the first value in the window.
+// slope divided by the first value in the window. The two growths are computed
+// on their own: the views fields are null when total views could not be fitted
+// (for example a zero first value), and the follower fields stay.
 type Velocity struct {
-	Snapshots       int     `json:"snapshots"`
-	FollowersPerDay float64 `json:"followers_per_day"`
-	FollowersShare  float64 `json:"followers_share_per_day"`
-	ViewsPerDay     float64 `json:"views_per_day"`
-	ViewsShare      float64 `json:"views_share_per_day"`
+	Snapshots       int      `json:"snapshots"`
+	FollowersPerDay float64  `json:"followers_per_day"`
+	FollowersShare  float64  `json:"followers_share_per_day"`
+	ViewsPerDay     *float64 `json:"views_per_day"`
+	ViewsShare      *float64 `json:"views_share_per_day"`
 }
 
 // Breakout is a post at or above the minimum score. EditDNA is the path of its
@@ -77,13 +79,17 @@ type Skip struct {
 	Detail string `json:"detail"`
 }
 
-// Failure is a decompile that did not produce a usable edit_dna.json.
-// ExitCode is -1 when reelctl did not start, and absent for read_edit_dna.
+// Failure is a decompile that did not produce a usable edit_dna.json. For the
+// decompile stage, Cause says how reelctl ended: exited (ExitCode is set),
+// not_started, signaled (Signal is set) or timed_out. ExitCode is present only
+// when the process exited with a code. Cause is absent for read_edit_dna.
 type Failure struct {
 	Creator  string `json:"creator"`
 	Post     string `json:"post"`
 	Stage    string `json:"stage"`
-	ExitCode int    `json:"exit_code,omitempty"`
+	Cause    string `json:"cause,omitempty"`
+	ExitCode *int   `json:"exit_code,omitempty"`
+	Signal   string `json:"signal,omitempty"`
 	Detail   string `json:"detail"`
 }
 

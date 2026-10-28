@@ -35,15 +35,19 @@ func TestMarkdownOfAnEmptyRun(t *testing.T) {
 
 func TestMarkdownListsFailuresByStage(t *testing.T) {
 	d := Digest{Failures: []Failure{
-		{Creator: "k", Post: "k9", Stage: StageDecompile, ExitCode: 7, Detail: "boom"},
-		{Creator: "k", Post: "k8", Stage: StageDecompile, ExitCode: -1, Detail: "no such file"},
+		{Creator: "k", Post: "k9", Stage: StageDecompile, Cause: "exited", ExitCode: intp(7), Detail: "boom"},
+		{Creator: "k", Post: "k8", Stage: StageDecompile, Cause: "not_started", Detail: "no such file"},
 		{Creator: "k", Post: "k7", Stage: StageReadDNA, Detail: "not a valid edit_dna.json"},
+		{Creator: "k", Post: "k6", Stage: StageDecompile, Cause: "signaled", Signal: "killed", Detail: "partial"},
+		{Creator: "k", Post: "k5", Stage: StageDecompile, Cause: "timed_out", Detail: "slow"},
 	}}
 	got := d.Markdown()
 	for _, want := range []string{
 		"- k, post k9: reelctl exited with code 7: boom",
 		"- k, post k8: reelctl did not start: no such file",
 		"- k, post k7: the edit_dna.json could not be used: not a valid edit_dna.json",
+		"- k, post k6: reelctl was ended by signal killed: partial",
+		"- k, post k5: reelctl timed out: slow",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
@@ -56,8 +60,8 @@ func TestMarkdownShowsACreatorsNumbersAndBlueprint(t *testing.T) {
 	change := -0.5
 	d := Digest{Creators: []Creator{{
 		Handle: "a", Surging: true, SurgingBy: []string{"multiplier", "velocity"},
-		BestPostID: "p2", BestMultiplier: &m,
-		Velocity:  &Velocity{Snapshots: 7, FollowersPerDay: 150, FollowersShare: 0.03, ViewsPerDay: 1000, ViewsShare: 0.01},
+		BestPostID: strp("p2"), BestMultiplier: &m,
+		Velocity:  &Velocity{Snapshots: 7, FollowersPerDay: 150, FollowersShare: 0.03, ViewsPerDay: floatp(1000), ViewsShare: floatp(0.01)},
 		Breakouts: []Breakout{{ID: "p2", Multiplier: 12.5}}, BaselinePosts: 4,
 		Blueprint: &blueprint.Blueprint{
 			Breakouts: 3, Baseline: 4, ChangeThreshold: 0.25,
@@ -86,6 +90,18 @@ func TestMarkdownShowsACreatorsNumbersAndBlueprint(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}
+	}
+}
+
+func intp(v int) *int           { return &v }
+func strp(v string) *string     { return &v }
+func floatp(v float64) *float64 { return &v }
+
+func TestMarkdownSaysWhenTotalViewsGrowthWasNotComputed(t *testing.T) {
+	d := Digest{Creators: []Creator{{Handle: "a", SurgingBy: []string{}, Velocity: &Velocity{Snapshots: 3, FollowersPerDay: 10, FollowersShare: 0.01}}}}
+	got := d.Markdown()
+	if !strings.Contains(got, "- Followers: +10.0 a day (1.00% a day) over 3 snapshots. Total views: not computed.\n") {
+		t.Fatalf("got:\n%s", got)
 	}
 }
 

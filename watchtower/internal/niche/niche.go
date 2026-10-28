@@ -104,6 +104,9 @@ func (f FileSource) build(raw rawNiche) (Niche, error) {
 		}
 		n.Creators = append(n.Creators, c)
 	}
+	if err := CheckIDs(n); err != nil {
+		return Niche{}, err
+	}
 	return n, nil
 }
 
@@ -145,6 +148,12 @@ func buildSnapshot(position int, rs rawSnapshot) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("%s: field date: %w", label, err)
 	}
+	if *rs.Followers < 0 {
+		return Snapshot{}, fmt.Errorf("%s: field followers: must not be negative, got %d", label, *rs.Followers)
+	}
+	if *rs.TotalViews < 0 {
+		return Snapshot{}, fmt.Errorf("%s: field total_views: must not be negative, got %d", label, *rs.TotalViews)
+	}
 	return Snapshot{Date: date, Followers: *rs.Followers, TotalViews: *rs.TotalViews}, nil
 }
 
@@ -163,12 +172,12 @@ func (f FileSource) buildPost(position int, rp rawPost) (Post, error) {
 	if err != nil {
 		return Post{}, fmt.Errorf("%s: field posted_at: %w", label, err)
 	}
-	return Post{ID: *rp.ID, URL: rp.URL, PostedAt: at, Views: *rp.Views, Media: f.mediaFile(rp.MediaPath)}, nil
-}
-
-func (f FileSource) mediaFile(mediaPath string) string {
-	if mediaPath == "" {
-		return ""
+	if *rp.Views < 0 {
+		return Post{}, fmt.Errorf("%s: field views: must not be negative, got %d", label, *rp.Views)
 	}
-	return filepath.Join(f.Dir, mediaPath)
+	media, err := f.mediaFile(rp.MediaPath)
+	if err != nil {
+		return Post{}, fmt.Errorf("%s: field media_path: %w", label, err)
+	}
+	return Post{ID: *rp.ID, URL: rp.URL, PostedAt: at, Views: *rp.Views, Media: media}, nil
 }
