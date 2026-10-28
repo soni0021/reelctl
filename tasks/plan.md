@@ -24,10 +24,10 @@ A new crate, `understand`, plus a `reelctl understand` subcommand. The crate is 
 - [x] Task 0: Crate skeleton, types, traits, constants, stubs (compiles, no warnings)
 
 ### Phase 2: Pure modules (parallel, one agent each)
-- [ ] Task 1: Segmenter (`segments.rs`)
-- [ ] Task 2: Clip rules (`clips.rs`)
-- [ ] Task 3: Frame plan, sheets, JPEG, prompt, token estimate, cost bound (`frames.rs`, `request.rs`)
-- [ ] Task 4: Assembly (`assemble.rs`)
+- [x] Task 1: Segmenter (`segments.rs`)
+- [x] Task 2: Clip rules (`clips.rs`)
+- [x] Task 3: Frame plan, sheets, JPEG, prompt, token estimate, cost bound (`frames.rs`, `request.rs`)
+- [x] Task 4: Assembly (`assemble.rs`)
 
 ### Checkpoint A
 - [ ] Four branches merged into the feature branch; `cargo test -p understand` passes; `git check-ignore -v .env` still holds
@@ -35,7 +35,7 @@ A new crate, `understand`, plus a `reelctl understand` subcommand. The crate is 
 ### Phase 3: Wiring (main session)
 - [x] Task 5: `decompile::decode_frames_at`
 - [x] Task 6: `openrouter.rs` (backend and catalog) and the key rules
-- [ ] Task 7: `reelctl understand`: exit codes 1–4, `--dry-run`, `--replay`, `--catalog`, end-to-end tests, schema
+- [x] Task 7: `reelctl understand`: exit codes 1–4, `--dry-run`, `--replay`, `--catalog`, end-to-end tests, schema
 
 ### Checkpoint B
 - [ ] `cargo test --workspace` passes offline; `--dry-run` on the real lecture gives a cost bound

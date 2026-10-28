@@ -95,10 +95,13 @@
           "$ref": "#/$defs/SegmentRef"
         },
         "payoff_at_ms": {
-          "description": "The payoff's time into the clip once dead air is cut.",
+          "description": "The payoff's time into the clip once dead air is cut, or `None` when the payoff\nsegment is not inside the clip (which is also flagged).",
           "format": "uint64",
           "minimum": 0,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "rank": {
           "description": "The model's ranking, 1 = best. Rejected picks keep their rank too.",
@@ -112,7 +115,7 @@
           "type": "integer"
         },
         "tight_length_ms": {
-          "description": "`length_ms` minus every pause of at least 180 ms inside the clip.",
+          "description": "`length_ms` minus every pause of at least 180 ms, counting only the part of a pause\nthat lies inside the clip.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -138,7 +141,6 @@
         "hook",
         "payoff",
         "last",
-        "payoff_at_ms",
         "open_loop",
         "visual_suggestion",
         "why",

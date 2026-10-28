@@ -177,14 +177,16 @@ pub struct Clip {
     pub start_ms: u64,
     pub end_ms: u64,
     pub length_ms: u64,
-    /// `length_ms` minus every pause of at least 180 ms inside the clip.
+    /// `length_ms` minus every pause of at least 180 ms, counting only the part of a pause
+    /// that lies inside the clip.
     pub tight_length_ms: u64,
     pub dead_air: Vec<SilenceGap>,
     pub hook: SegmentRef,
     pub payoff: SegmentRef,
     pub last: SegmentRef,
-    /// The payoff's time into the clip once dead air is cut.
-    pub payoff_at_ms: u64,
+    /// The payoff's time into the clip once dead air is cut, or `None` when the payoff
+    /// segment is not inside the clip (which is also flagged).
+    pub payoff_at_ms: Option<u64>,
     pub open_loop: String,
     pub visual_suggestion: String,
     pub why: String,

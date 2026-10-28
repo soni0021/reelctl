@@ -216,7 +216,7 @@ fn a_recorded_reply_becomes_clips_with_exact_text_and_labelled_cuts() {
     assert_eq!(clip.end_ms, 49_850);
     assert_eq!(clip.dead_air.len(), 11);
     assert_eq!(clip.tight_length_ms, 41_850 - 11 * 300);
-    assert_eq!(clip.payoff_at_ms, 15_000 - 8_000 - 2 * 300);
+    assert_eq!(clip.payoff_at_ms, Some(15_000 - 8_000 - 2 * 300));
 
     // The short clip is kept and flagged, not changed; the impossible one is rejected.
     assert_eq!(understanding.clips.len(), 2);

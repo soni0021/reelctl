@@ -737,7 +737,7 @@ mod tests {
             hook: text_of(hook),
             payoff: text_of(payoff),
             last: text_of(last),
-            payoff_at_ms: 3_000,
+            payoff_at_ms: Some(3_000),
             open_loop: "what comes next".to_string(),
             visual_suggestion: "zoom on the diagram".to_string(),
             why: "strong open loop".to_string(),

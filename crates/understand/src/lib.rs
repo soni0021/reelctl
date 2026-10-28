@@ -105,7 +105,7 @@ mod tests {
     use super::*;
 
     /// The committed schema file is what the types generate. Regenerate it with
-    /// `cargo run -p understand --example schema`.
+    /// `cargo run -p understand --example understanding_schema`.
     #[test]
     fn the_schema_file_is_up_to_date() {
         let committed = include_str!("../schema/understanding.schema.json");

@@ -181,13 +181,55 @@ NO CUT 0.0-5.0 s: 1 of 1 outliers cut here, the draft does not
 PAUSES 5.0 per minute against 0.0 in the outliers
 ```
 
+## reelctl understand
+
+Pick Reel-sized clips from a long video and label its cuts, with a hosted vision-language model. It needs the video's `edit_dna.json` from `decompile` **with a whisper model** (the words, silence gaps, cuts, and duration are used; the audio is not decoded again) and an OpenRouter API key.
+
+```bash
+reelctl decompile --input talk.mp4 --out talk.edit_dna.json --whisper-model ~/models/whisper/ggml-apex-hinglish-q8_0.bin
+set -a; source .env; set +a          # exports OPENROUTER_API_KEY
+reelctl understand --input talk.mp4 --dna talk.edit_dna.json --out talk.understanding.json --dry-run
+reelctl understand --input talk.mp4 --dna talk.edit_dna.json --out talk.understanding.json
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--input <path>` | required | The long video (the one `--dna` came from) |
+| `--dna <path>` | required | Its `edit_dna.json`, made with whisper (`asr_backend` is `whisper_cpp`) |
+| `--out <path>` | required | Where to write `understanding.json` ([fields](understanding.md)) |
+| `--model <id>` | `qwen/qwen3.5-9b` | OpenRouter model. `meta/muse-spark-1.2 --quant unknown` is the higher-quality option |
+| `--quant <list>` | `fp8,bf16,fp16` | Provider quantizations allowed, comma-separated. If no endpoint of the model has one of them, the command fails and lists the providers that exist; it never retries with looser settings |
+| `--every-s <n>` | `5` | Seconds between sampled frames. A frame is also taken 300 ms before and after every cut |
+| `--sheet <auto\|1\|2\|3>` | `auto` | Single frames, or tiles of 2×2 or 3×3. `auto` tiles only when the request would not fit the model's context (the 28.6-minute lecture: 346 frames in 87 sheets of 2×2) |
+| `--effort <low\|medium\|high>` | none | Reasoning effort, for models that take one |
+| `--max-cost-usd <n>` | `0.50` | Refuse, with exit code 4, when the cost upper bound is over this |
+| `--dry-run` | off | Plan only: print the plan and the bound, and do not call the model. It needs no API key, but fetches the model's public price listing |
+| `--decoder <auto\|software>` | `auto` | As for `decompile` |
+
+Without `--dry-run`, stdout gets two lines, the plan and the result:
+
+```
+frames=346 images=87 sheet=2x2 segments=535 context_tokens=262144 input_tokens_estimate=139077 cost_upper_bound_usd=0.0276 max_cost_usd=0.50
+clips=3 rejected=1 model=qwen/qwen3.5-9b provider=DeepInfra cost_usd=0.0085 out=talk.understanding.json
+```
+
+`cost_upper_bound_usd` is an upper bound: it prices every input token at the highest eligible price and counts 1,445 tokens per image, where about 170–360 were billed. The first line above is the actual `--dry-run` output for the 28.6-minute lecture.
+
+What is sent to the model: the sampled frames (448 px JPEGs, each preceded by its time) and the transcript as numbered segments. Every request carries `data_collection: deny` and `require_parameters: true`. The API key is read only from the environment, sent only as a header, and never printed or written.
+
+Two flags are hidden from `--help`, like `whisper-worker`, and exist so the tests run with no network: `--replay <reply.json>` uses a recorded model reply instead of calling the model (no key needed), and `--catalog <catalog.json>` uses a model listing from a file instead of fetching it.
+
+Exit codes specific to this command: 2 for a `--dna` without whisper words or with no words at all, 3 when `OPENROUTER_API_KEY` is not set (and neither `--dry-run` nor `--replay` was given), 4 when the cost upper bound is over `--max-cost-usd`. A failed model call (an HTTP error, no matching provider, a reply that is not the schema, a reply cut off at `max_tokens`) exits with 1 and says which.
+
 ## Exit codes
 
 | Code | Meaning |
 |---|---|
 | 0 | Success |
 | 1 | Runtime error. stderr gets `error: ` and the cause chain, for example `error: decompile: open input: No such file or directory` or `error: decompile: whisper: model not found at /missing.bin` |
-| 2 | Invalid arguments, including more than three `--outlier` files or none; clap prints the usage |
+| 2 | Invalid arguments, including more than three `--outlier` files or none, or a `--dna` for `understand` without whisper words; clap prints the usage |
+| 3 | `reelctl understand` without `OPENROUTER_API_KEY` |
+| 4 | `reelctl understand` with a cost upper bound over `--max-cost-usd` |
 
 ## Input requirements
 

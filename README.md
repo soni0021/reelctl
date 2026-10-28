@@ -5,6 +5,8 @@
 - `reelctl decompile` turns an MP4 into `edit_dna.json`: cut times, silence gaps, loudness, per-shot color, whether there is a cut near the 9-second payoff mark, and, given a whisper model, timed words. It also writes a `timeline_view` PNG at each cut, so an agent can inspect cuts without opening the video.
 - `reelctl diff` decompiles a draft and flags dead air, long stretches with no cut, and a missing payoff cue. With one to three outliers (`--outlier` up to three times) it also compares cut rhythm in 5 s windows, pause density, speaking rate, and loudness, as JSON or as a text table (`--format text`).
 
+- `reelctl understand` takes a 20–60 minute video and its whisper-timed `edit_dna.json`, sends sampled frames and numbered transcript segments to a hosted vision-language model (OpenRouter; needs `OPENROUTER_API_KEY`), and writes `understanding.json`: 3–5 Reel-sized clips picked by segment ID and checked by code (hook, cliffhanger, length), and a label for what each cut really was. Every quote is whisper's text and every time is measured. See [docs/understanding.md](docs/understanding.md).
+
 This repository is P0 of the plan in [planer.md](planer.md). P1–P3 (trend watchtower, timeline editor, specialist video model) are specified there and not built. Current state, measurements, and known gaps are in [docs/status.md](docs/status.md).
 
 ## Quick start
@@ -42,16 +44,17 @@ Add `--whisper-model <model.bin>` to `decompile` for real words instead of voice
 | `cargo test` | Unit tests and the end-to-end tests; run once at the end of a task. Needs no whisper model |
 | `REELCTL_WHISPER_MODEL=<model.bin> cargo test -- --include-ignored` | Also run the whisper model tests on the `speech12` and `tonespeech` clips (macOS only) |
 | `cargo build --release` | Build `target/release/reelctl`; take timings with this build, not the debug one |
-| `bash fixtures/generate.sh draft12\|draft12_10bit\|draft12_44k\|textured_cuts12\|textured_cuts12_hevc\|textured_cuts12_hevc8\|textured_cuts12_hevc_full\|resize12_hevc\|shrink12_hevc\|depth12_hevc\|outlier12\|noisy12\|quiet12\|bench60\|speech12\|tonespeech <out.mp4>` | Generate one synthetic clip. `draft12_10bit` is `draft12` as 10-bit HEVC tagged HLG, like an iPhone recording. `draft12_44k` is 60 s of 44.1 kHz AAC audio with a planted pause at 50 s. `textured_cuts12` is four textured 3 s shots with B-frames and no keyframe at any of its three cuts, and `textured_cuts12_hevc` and `textured_cuts12_hevc8` are the same shots as 10-bit and 8-bit HEVC, `textured_cuts12_hevc_full` as full-range 8-bit HEVC, and `resize12_hevc` is raw HEVC that grows from 320×180 to 640×360 `shrink12_hevc` is the reverse, and `depth12_hevc` is raw HEVC that changes from 8-bit to 10-bit (write both to `.hevc` files). `noisy12` is `draft12` with white noise under its planted pause, like room noise. `quiet12` is a tone at −46 dB peak, quieter than the old −40 dB silence floor, with a planted 0.5 s mute. `speech12` is 12 s of `say` speech with a planted 1 s pause, and `tonespeech` is a 25 s tone followed by speech; both need macOS |
-| `bash fixtures/generate.sh all` | Generate `draft12`, `draft12_10bit`, `draft12_44k`, `textured_cuts12`, the HEVC variants (`textured_cuts12_hevc`, `_hevc8`, `_hevc_full`), `resize12_hevc`, `shrink12_hevc`, `depth12_hevc`, `outlier12`, `noisy12`, `quiet12`, and `bench60` into `fixtures/generated/` |
+| `bash fixtures/generate.sh draft12\|draft12_10bit\|draft12_44k\|textured_cuts12\|textured_cuts12_hevc\|textured_cuts12_hevc8\|textured_cuts12_hevc_full\|resize12_hevc\|shrink12_hevc\|depth12_hevc\|outlier12\|noisy12\|quiet12\|lecture70\|bench60\|speech12\|tonespeech <out.mp4>` | Generate one synthetic clip. `draft12_10bit` is `draft12` as 10-bit HEVC tagged HLG, like an iPhone recording. `draft12_44k` is 60 s of 44.1 kHz AAC audio with a planted pause at 50 s. `textured_cuts12` is four textured 3 s shots with B-frames and no keyframe at any of its three cuts, and `textured_cuts12_hevc` and `textured_cuts12_hevc8` are the same shots as 10-bit and 8-bit HEVC, `textured_cuts12_hevc_full` as full-range 8-bit HEVC, and `resize12_hevc` is raw HEVC that grows from 320×180 to 640×360 `shrink12_hevc` is the reverse, and `depth12_hevc` is raw HEVC that changes from 8-bit to 10-bit (write both to `.hevc` files). `noisy12` is `draft12` with white noise under its planted pause, like room noise. `quiet12` is a tone at −46 dB peak, quieter than the old −40 dB silence floor, with a planted 0.5 s mute. `lecture70` is 70 s with one hard cut at 35 s, for the `understand` tests. `speech12` is 12 s of `say` speech with a planted 1 s pause, and `tonespeech` is a 25 s tone followed by speech; both need macOS |
+| `bash fixtures/generate.sh all` | Generate `draft12`, `draft12_10bit`, `draft12_44k`, `textured_cuts12`, the HEVC variants (`textured_cuts12_hevc`, `_hevc8`, `_hevc_full`), `resize12_hevc`, `shrink12_hevc`, `depth12_hevc`, `outlier12`, `noisy12`, `quiet12`, `lecture70`, and `bench60` into `fixtures/generated/` |
 | `cargo run -p edit-dna --example schema` | Regenerate `crates/edit-dna/schema/edit_dna.schema.json` after changing the types |
+| `cargo run -p understand --example understanding_schema` | Regenerate `crates/understand/schema/understanding.schema.json` |
 | `REELCTL_PROFILE=1 target/release/reelctl decompile ...` | Also print per-stage timings to stderr |
 
 `cargo test` needs `bash` and `ffmpeg` on `PATH`, because the end-to-end test generates its clips when it runs. Tests use no network and no real reels.
 
 ## Architecture
 
-The Cargo workspace has five crates:
+The Cargo workspace has six crates:
 
 | Crate | Role |
 |---|---|
@@ -59,6 +62,7 @@ The Cargo workspace has five crates:
 | `decompile` | Decode with ffmpeg-next, then find cuts, silence, loudness, per-shot color, and the payoff cue |
 | `diff` | Pacing flags, and a comparison, for a draft against one to three outliers |
 | `filmstrip` | `timeline_view` PNGs at cut boundaries |
+| `understand` | Long-video understanding: transcript segments, frame plan, the model request and cost bound, clip rules, and `understanding.json` (no ffmpeg or whisper dependency) |
 | `reelctl` | The command-line tool |
 
 ```
@@ -67,6 +71,8 @@ reel.mp4 ──► decompile ──► edit_dna.json
 
 draft.mp4 ──► decompile (in memory) ──┐
 outlier edit_dna.json ────────────────┴──► diff ──► flags (JSON on stdout)
+
+long.mp4 + edit_dna.json (whisper) ──► understand ──► understanding.json (clips, labelled cuts)
 ```
 
 `decompile` makes one pass over the file, in-process, with no `ffmpeg` subprocess. Cut scores, color samples, and boundary thumbnails are taken from each video frame as it is decoded. Silence, loudness, and word timing then run on the audio, mixed to mono at 48 kHz. `signal_ms` in the output is the measured time of this structural work; word timing is measured separately as `asr_ms`.

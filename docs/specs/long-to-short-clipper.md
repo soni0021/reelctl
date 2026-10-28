@@ -57,7 +57,7 @@ reelctl understand --input talk.mp4 --dna talk.edit_dna.json --out talk.understa
 cargo test -p understand
 cargo test -p reelctl --test p0_fixture
 OPENROUTER_API_KEY=... cargo test -p reelctl --test understand_live -- --include-ignored   # live, ignored by default
-cargo run -p understand --example schema
+cargo run -p understand --example understanding_schema
 ```
 
 - **The key.** `OPENROUTER_API_KEY` is read from the environment, for example via `set -a; source .env; set +a`. It is never printed, logged, or written.

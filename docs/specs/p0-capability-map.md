@@ -14,6 +14,8 @@ P0's success metric ([planer.md](../../planer.md), section 7): decompile any 60 
 | `visual-motion` | Punch-in zoom curves and overlay or B-roll changes, so `static_window` stops flagging edited talking heads that have no camera cuts (the NEET video: 0 cuts in 18 min, but overlays and zooms throughout) | — | To spec, limited to edit events (decision 1) |
 | `transnet-cuts` | TransNetV2 cut detection through `ort` | — | Deferred (decision 2) |
 
+The long-to-short clipper (`reelctl understand`, [spec](long-to-short-clipper.md), [ADR-015](../decisions/ADR-015-combine-measured-time-with-a-model-that-answers-by-segment-id.md)) is P3's vision-language role and planer.md's Component 3, started ahead of `visual-motion` on 2026-10-28; its cut labels cover part of what `visual-motion` would add. `visual-motion` stays open.
+
 Build order: `whisper-coverage` → `decode-inputs` → `fast-decode` → `comparative-diff` → `visual-motion`. `transnet-cuts` is deferred. `whisper-coverage` goes first because it fixes wrong output from a feature already on `main`, and a Reel's hook is in its first seconds. The two decode modules share one code path, and `fast-decode` carries the most risk. `comparative-diff` only reads `edit_dna.json` files and could be built in parallel.
 
 Decisions, answered by the user on 2026-10-25 with the recommended options:

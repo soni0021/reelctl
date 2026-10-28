@@ -125,7 +125,7 @@ pub struct ClipOutcome {
 /// - `end_segment` never decides the end: the cutoff does. A later `end_segment` is
 ///   dropped, an earlier one is extended to the cutoff. Both are recorded.
 /// - A payoff outside the clip's segments is flagged, not rejected; `payoff_at_ms` is
-///   then 0 (before the clip) or the tight length (after it).
+///   then `None`.
 /// - Overlap compares the final cut points, and clips that only touch do not overlap.
 ///   It is checked against kept clips only, so a rejected pick is not one to overlap.
 pub fn build_clips(
@@ -346,13 +346,8 @@ fn plan_clip(
     let tight_length_ms = length_ms.saturating_sub(dead_ms);
 
     let payoff_inside = (first.index..=at.cutoff.index).contains(&at.payoff.index);
-    let payoff_at_ms = if payoff_inside {
-        tight_offset(at.payoff.seg.start_ms, start_ms, &dead_air)
-    } else if at.payoff.index < first.index {
-        0
-    } else {
-        tight_length_ms
-    };
+    let payoff_at_ms =
+        payoff_inside.then(|| tight_offset(at.payoff.seg.start_ms, start_ms, &dead_air));
 
     let mut flags = Vec::new();
     if let Some(back_ms) = mid_sentence_ms {
@@ -363,14 +358,16 @@ fn plan_clip(
     } else if tight_length_ms > CLIP_MAX_MS {
         flags.push(flag_tight_over(tight_length_ms, length_ms));
     }
-    if !payoff_inside {
-        flags.push(flag_payoff_outside(
+    match payoff_at_ms {
+        None => flags.push(flag_payoff_outside(
             at.payoff.seg.id,
             first.seg.id,
             at.cutoff.seg.id,
-        ));
-    } else if !(PAYOFF_MIN_MS..=PAYOFF_MAX_MS).contains(&payoff_at_ms) {
-        flags.push(flag_payoff_window(payoff_at_ms));
+        )),
+        Some(at_ms) if !(PAYOFF_MIN_MS..=PAYOFF_MAX_MS).contains(&at_ms) => {
+            flags.push(flag_payoff_window(at_ms));
+        }
+        Some(_) => {}
     }
     for higher in kept {
         if start_ms < higher.end_ms && higher.start_ms < end_ms {
@@ -1107,21 +1104,21 @@ mod tests {
     #[test]
     fn a_payoff_6000_ms_into_the_clip_is_in_range() {
         let clip = payoff_case(6_900, &[]);
-        assert_eq!(clip.payoff_at_ms, 6_000);
+        assert_eq!(clip.payoff_at_ms, Some(6_000));
         assert!(!has_flag(&clip, "payoff"));
     }
 
     #[test]
     fn a_payoff_5999_ms_into_the_clip_is_flagged() {
         let clip = payoff_case(6_899, &[]);
-        assert_eq!(clip.payoff_at_ms, 5_999);
+        assert_eq!(clip.payoff_at_ms, Some(5_999));
         assert!(has_flag(&clip, "payoff"));
     }
 
     #[test]
     fn a_payoff_12000_ms_into_the_clip_is_in_range() {
         let clip = payoff_case(12_900, &[]);
-        assert_eq!(clip.payoff_at_ms, 12_000);
+        assert_eq!(clip.payoff_at_ms, Some(12_000));
         assert!(!has_flag(&clip, "payoff"));
     }
 
@@ -1140,22 +1137,22 @@ mod tests {
     fn the_payoff_time_is_measured_after_dead_air_before_it_is_cut() {
         // 7,000 ms of raw time, of which a 1,000 ms pause is dead air: 6,000 tight.
         let clip = payoff_case(7_900, &[gap(2_100, 3_100)]);
-        assert_eq!(clip.payoff_at_ms, 6_000);
+        assert_eq!(clip.payoff_at_ms, Some(6_000));
         assert!(!has_flag(&clip, "payoff"));
         // 6,500 raw is in range, but 5,500 tight is not.
         let clip = payoff_case(7_400, &[gap(2_100, 3_100)]);
-        assert_eq!(clip.payoff_at_ms, 5_500);
+        assert_eq!(clip.payoff_at_ms, Some(5_500));
         assert!(has_flag(&clip, "payoff"));
         // 13,000 raw is out of range, but 11,000 tight is in.
         let clip = payoff_case(13_900, &[gap(2_100, 4_100)]);
-        assert_eq!(clip.payoff_at_ms, 11_000);
+        assert_eq!(clip.payoff_at_ms, Some(11_000));
         assert!(!has_flag(&clip, "payoff"));
     }
 
     #[test]
     fn dead_air_after_the_payoff_start_does_not_move_it() {
         let clip = payoff_case(7_900, &[gap(9_000, 9_800)]);
-        assert_eq!(clip.payoff_at_ms, 7_000);
+        assert_eq!(clip.payoff_at_ms, Some(7_000));
     }
 
     #[test]
@@ -1163,19 +1160,19 @@ mod tests {
         let segs = vec![seg(1, 1_000, 2_000, true), seg(2, 3_000, 4_000, true)];
         let clip = one_clip(build_clips(&[pick(1, 2, 1, 1, 2)], &segs, &[], 100_000));
         // The clip starts 100 ms before the first word.
-        assert_eq!(clip.payoff_at_ms, 100);
+        assert_eq!(clip.payoff_at_ms, Some(100));
         assert!(has_flag(&clip, "payoff"));
     }
 
     #[test]
-    fn a_payoff_before_the_clip_is_flagged_as_outside_and_sits_at_zero() {
+    fn a_payoff_before_the_clip_is_flagged_as_outside_and_has_no_time() {
         let segs = vec![
             seg(1, 0, 900, true),
             seg(2, 1_000, 1_900, true),
             seg(3, 3_000, 4_000, true),
         ];
         let clip = one_clip(build_clips(&[pick(2, 3, 2, 1, 3)], &segs, &[], 100_000));
-        assert_eq!(clip.payoff_at_ms, 0);
+        assert_eq!(clip.payoff_at_ms, None);
         assert!(has_flag(&clip, "outside the clip"));
         assert!(!has_flag(&clip, "payoff lands"));
         // The quote is still segment 1's own text.
@@ -1183,14 +1180,14 @@ mod tests {
     }
 
     #[test]
-    fn a_payoff_after_the_cutoff_is_flagged_as_outside_and_sits_at_the_end() {
+    fn a_payoff_after_the_cutoff_is_flagged_as_outside_and_has_no_time() {
         let segs = vec![
             seg(1, 1_000, 2_000, true),
             seg(2, 3_000, 4_000, true),
             seg(3, 5_000, 6_000, true),
         ];
         let clip = one_clip(build_clips(&[pick(1, 2, 1, 3, 2)], &segs, &[], 100_000));
-        assert_eq!(clip.payoff_at_ms, clip.tight_length_ms);
+        assert_eq!(clip.payoff_at_ms, None);
         assert!(has_flag(&clip, "outside the clip"));
     }
 
@@ -1358,7 +1355,7 @@ mod tests {
         let clip = one_clip(build_clips(&[pick(2, 4, 2, 3, 4)], &segs, &pauses, 100_000));
         assert_eq!(clip.start_ms, 5_000);
         assert_eq!(clip.end_ms, 45_150);
-        assert_eq!(clip.payoff_at_ms, 9_000);
+        assert_eq!(clip.payoff_at_ms, Some(9_000));
         assert!(clip.flags.is_empty(), "{:?}", clip.flags);
         assert!(clip.adjustments.is_empty());
     }
