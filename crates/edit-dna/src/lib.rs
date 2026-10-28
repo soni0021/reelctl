@@ -9,8 +9,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Bump when the format changes. Version 2 added `silence_threshold_db` and
-/// `noise_floor_db`; version 1 files still parse, with those fields' defaults.
-pub const SCHEMA_VERSION: u32 = 2;
+/// `noise_floor_db`; version 3 added `visual_events`. Older files still parse,
+/// with those fields' defaults.
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// The silence threshold every version 1 file used.
 pub const LEGACY_SILENCE_THRESHOLD_DB: f64 = -40.0;
@@ -37,6 +38,47 @@ pub struct Cut {
     /// FFmpeg scene score in `0..=1` for the scene-score detector.
     /// TransNetV2 would store its cut probability here.
     pub scene_score: f64,
+}
+
+/// What a [`VisualEvent`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum VisualEventKind {
+    /// A fast scale-up of the picture (`scale` above 1).
+    PunchIn,
+    /// A fast scale-down of the picture (`scale` below 1).
+    ZoomOut,
+    /// A block of the frame changed and stayed changed (a caption, a graphic).
+    OverlayChange,
+}
+
+impl VisualEventKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::PunchIn => "punch_in",
+            Self::ZoomOut => "zoom_out",
+            Self::OverlayChange => "overlay_change",
+        }
+    }
+}
+
+/// A change inside a shot that is not a cut. `time_ms` and `frame_index` are
+/// the first frame that shows the change in full, as for a cut. A field that
+/// does not apply to the kind is `null`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct VisualEvent {
+    pub time_ms: u64,
+    pub frame_index: u64,
+    pub kind: VisualEventKind,
+    /// Factor between the picture before and after a zoom move. `null` for
+    /// `overlay_change`.
+    pub scale: Option<f64>,
+    /// Fixed point of a zoom move as a share of the frame width, `0..=1`.
+    pub center_x: Option<f64>,
+    /// Fixed point of a zoom move as a share of the frame height, `0..=1`.
+    pub center_y: Option<f64>,
+    /// Changed share of the frame for `overlay_change`, `0..=1`. `null` for zooms.
+    pub area: Option<f64>,
 }
 
 /// A run of audio below the silence threshold.
@@ -175,6 +217,10 @@ pub struct EditDna {
     pub frame_size: FrameSize,
     pub frame_count: u64,
     pub cuts: Vec<Cut>,
+    /// Punch-ins, zoom-outs and overlay changes inside shots, in time order.
+    /// Empty in a version 1 or 2 file, which did not look for them.
+    #[serde(default)]
+    pub visual_events: Vec<VisualEvent>,
     pub silence_gaps: Vec<SilenceGap>,
     /// Level in dB below which a 10 ms window counts as silent in this recording.
     /// A version 1 file, which has no such field, used a fixed -40 dBFS.
@@ -211,6 +257,7 @@ impl EditDna {
             frame_size: FrameSize { width, height },
             frame_count: 0,
             cuts: Vec::new(),
+            visual_events: Vec::new(),
             silence_gaps: Vec::new(),
             silence_threshold_db: LEGACY_SILENCE_THRESHOLD_DB,
             noise_floor_db: None,
@@ -273,6 +320,7 @@ mod tests {
             "fps",
             "frame_size",
             "cuts",
+            "visual_events",
             "silence_gaps",
             "silence_threshold_db",
             "noise_floor_db",
@@ -300,6 +348,59 @@ mod tests {
         let dna: EditDna = serde_json::from_value(value).expect("a version 1 file parses");
         assert_eq!(dna.silence_threshold_db, -40.0);
         assert_eq!(dna.noise_floor_db, None);
+    }
+
+    #[test]
+    fn the_schema_file_matches_the_types() {
+        let file: serde_json::Value =
+            serde_json::from_str(include_str!("../schema/edit_dna.schema.json"))
+                .expect("schema file parses");
+        assert_eq!(
+            file,
+            json_schema(),
+            "regenerate with `cargo run -p edit-dna --example schema`"
+        );
+    }
+
+    #[test]
+    fn version_1_and_2_files_read_with_no_visual_events() {
+        for version in [1, 2] {
+            let mut value =
+                serde_json::to_value(EditDna::empty(1_000, 30.0, 64, 36)).expect("serialize");
+            let object = value.as_object_mut().expect("object");
+            object.remove("visual_events");
+            object.insert("schema_version".to_string(), version.into());
+            let dna: EditDna = serde_json::from_value(value).expect("an old file parses");
+            assert!(dna.visual_events.is_empty(), "version {version}");
+        }
+    }
+
+    #[test]
+    fn a_new_file_has_an_empty_visual_event_list_at_version_3() {
+        let dna = EditDna::empty(1_000, 30.0, 64, 36);
+        assert_eq!(SCHEMA_VERSION, 3);
+        assert_eq!(dna.schema_version, 3);
+        let value = serde_json::to_value(&dna).expect("serialize");
+        assert_eq!(value["visual_events"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn visual_events_round_trip_with_snake_case_kinds_and_nulls() {
+        let json = serde_json::json!([
+            {"time_ms": 4000, "frame_index": 96, "kind": "punch_in",
+             "scale": 1.18, "center_x": 0.5, "center_y": 0.5, "area": null},
+            {"time_ms": 6000, "frame_index": 144, "kind": "zoom_out",
+             "scale": 0.85, "center_x": 0.5, "center_y": 0.5, "area": null},
+            {"time_ms": 8000, "frame_index": 192, "kind": "overlay_change",
+             "scale": null, "center_x": null, "center_y": null, "area": 0.12}
+        ]);
+        let events: Vec<VisualEvent> = serde_json::from_value(json.clone()).expect("parse");
+        assert_eq!(events[0].kind, VisualEventKind::PunchIn);
+        assert_eq!(events[1].kind, VisualEventKind::ZoomOut);
+        assert_eq!(events[2].kind, VisualEventKind::OverlayChange);
+        assert_eq!(events[2].area, Some(0.12));
+        assert_eq!(events[2].scale, None);
+        assert_eq!(serde_json::to_value(&events).expect("serialize"), json);
     }
 
     #[test]
