@@ -29,7 +29,7 @@ Cut detectors:
 - `transnet`: TransNetV2 or an error. The weights file, the library and the model are checked **before the video is decoded**; a problem exits with code 1 and writes nothing, for example `error: decompile: TransNetV2 needs the ONNX Runtime library: ORT_DYLIB_PATH is not set; set ORT_DYLIB_PATH to the full path of an ONNX Runtime library, version 1.17 or newer (macOS: brew install onnxruntime, ...)`. An error while the model runs also exits with code 1. It never returns scene-score cuts.
 - `auto`: TransNetV2 if `--transnet-weights` names an existing file and the library and model load; otherwise the scene score. With no weights path it is the scene score and `cut_detector_note` is the scene-score note. With a weights path that is missing, a library that cannot be loaded, a model that is not TransNetV2, or an error while running, decompile falls back to the scene score and `cut_detector_note` starts `Fell back to the FFmpeg scene-score detector:` followed by the reason.
 
-TransNetV2 reads every frame, so it costs about 16 ms per video frame on this machine's CPU (see [the spec](specs/transnet-cuts.md#measured)), far outside the 500 ms structural budget, and `signal_ms` includes it. Manual end-to-end run on the real model (not part of `cargo test`):
+TransNetV2 reads every frame, so it costs about 7 ms per video frame (about 13 s for 60 s at 30 fps) on the M3's CPU (see [the spec](specs/transnet-cuts.md#measured)), far outside the 500 ms structural budget, and `signal_ms` includes it. Manual end-to-end run on the real model (not part of `cargo test`):
 
 ```bash
 export ORT_DYLIB_PATH=/opt/homebrew/lib/libonnxruntime.dylib      # or any libonnxruntime >= 1.17

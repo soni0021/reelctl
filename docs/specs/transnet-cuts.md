@@ -14,7 +14,7 @@ Not in this module: downloading weights or the ONNX Runtime library, GPU or Core
 
 All on the Apple M3 MacBook Air (8 cores), macOS 26.5, 2026-10-28, with the load average above 100 for most of the session (other builds were running), so every timing here is an upper bound. Model: `transnetv2.onnx` (sha256 `c4d54a682bace32f25136ef83ca2c9d403e8f8193775efeb995172a0d95a8e0c`, MIT, ONNX opset 17), input `input` float32 `[1,100,27,48,3]` (channels last, RGB, raw 0 to 255; the graph divides by 255), outputs `534` (single-frame probability) and `535` (many-hot probability), both `[1,100,1]` and already through a sigmoid. Runtime: ONNX Runtime 1.21.0 (the library inside a conda `onnxruntime` wheel at `/opt/anaconda3/lib/python3.12/site-packages/onnxruntime/capi/libonnxruntime.1.21.0.dylib`); `brew list onnxruntime` says it is not installed, and Homebrew's formula is 1.31.1.
 
-- **`ort` links with no download.** The crate is `ort 2.0.0-rc.15` (crates.io has no stable 2.0; the newest release is `2.0.0-rc.15` and `max_stable_version` is empty). With `default-features = false, features = ["std", "load-dynamic", "api-17"]` it builds from the crate sources alone (it adds `ort`, `ort-sys`, `libloading`, `smallvec` and a handful of small crates; no `ndarray`, no `download-binaries`, no TLS stack) and loads the library at run time from a path. A scratch program built this way ran the model on ONNX Runtime 1.21.0 and returned `[1,100,1]` outputs. `api-17` makes `ort` require a library of version 1.17 or newer; it refuses an older one with an error that names both versions, and a missing file with `failed to load from <path>: dlopen failed`. `ort`'s default loader panics on a missing library, so the code never uses it: it always calls `ort::init_from(path)`, which returns an error.
+- **`ort` links with no download.** The crate is `ort 2.0.0-rc.15` (crates.io has no stable 2.0; the newest release is `2.0.0-rc.15` and `max_stable_version` is empty). With `default-features = false, features = ["std", "load-dynamic", "api-17"]` it builds from the crate sources alone (it compiles three new crates, `ort`, `ort-sys` and `libloading`; `smallvec` was already in the tree; no `ndarray`, no `download-binaries`, no TLS stack. `Cargo.lock` also lists the optional `ndarray`, `tracing` and their helpers, which are not built) and loads the library at run time from a path. A scratch program built this way ran the model on ONNX Runtime 1.21.0 and returned `[1,100,1]` outputs. `api-17` makes `ort` require a library of version 1.17 or newer; it refuses an older one with an error that names both versions, and a missing file with `failed to load from <path>: dlopen failed`. `ort`'s default loader panics on a missing library, so the code never uses it: it always calls `ort::init_from(path)`, which returns an error.
 - **Official post-processing, checked on fixtures.** With ffmpeg's `scale=48:27` as the input (the official one), windows of 100 frames at stride 50, the first 25 frames padded with copies of frame 0, the end padded with `25 + 50 - (n % 50 or 50)` copies of the last frame, the middle `[25:75)` of each window kept and the result truncated to `n` frames:
 
 | Clip | Frames above 0.5 (single-frame output) | Scene score finds |
@@ -24,7 +24,7 @@ All on the Apple M3 MacBook Air (8 cores), macOS 26.5, 2026-10-28, with the load
 | `dissolve12` (24 fps; dissolve over frames 96 to 119, fade through black over frames 192 to 215) | 108 (0.8372), 109 (0.8093); 206 (0.5653), 207 (0.6233) | nothing |
 
   For a hard cut the model's probability is on the last frame of the old shot (71), not on the first frame of the new one (72). So the cut is "the first frame after the run of frames above 0.5", which is the first frame of the new shot and equals the scene-score detector's `frame_index` on every hard cut (72, 144, 216, 180). This is also what the official `predictions_to_scenes` does: a scene ends on the first frame above the threshold and the next begins after the run.
-- **Cost.** One 100-frame window took about 0.8 s on ONNX Runtime 1.21 on the loaded machine (about 8 ms per padded frame); with stride 50 every frame is in two windows, so the cost is about 16 ms per video frame in this run, or about 30 s for a 60 s reel at 30 fps. The idle-machine number is in "Measured" at the end. TransNetV2 is therefore far outside the 500 ms structural budget and is not the default path: `auto` uses it only when the user supplied weights, and `signal_ms` includes it (cut detection is structural).
+- **Cost.** With stride 50 every frame is in two windows, so the model runs on about twice as many frames as the clip has. The first probe, on a machine at load average 370, took 0.8 s per window; the numbers under "Measured" (load 9) are 7 ms per video frame, or about 13 s for a 60 s reel at 30 fps. TransNetV2 is therefore far outside the 500 ms structural budget and is not the default path: `auto` uses it only when the user supplied weights, and `signal_ms` includes it (cut detection is structural).
 - **Frames per video.** The decode loop already builds a 64×36 RGB thumbnail for every frame, by point sampling (`fill_thumb`: one pixel per 16×30 block on a 1080p frame; it also keeps only the last four). Point sampling aliases; ffmpeg's `scale` filters. The model was trained on ffmpeg-scaled input.
 
 ## Tech Stack
@@ -99,7 +99,7 @@ For TransNetV2 cuts the field holds the single-frame probability (highest in the
 
 ## Boundaries
 
-- **Always:** keep the scene-score output as it was (apart from the note); fail `--cut-detector transnet` with the reason instead of returning other cuts; check library, weights and model before decoding; call `ort::init_from` with a path we resolved, never `ort::init`; keep one environment per process; no `unsafe` outside `hwdecode.rs`; no network in tests; update the docs in the same commit.
+- **Always:** call `decompile::release_onnx_runtime()` before the process exits (`reelctl`'s `main` does): with the shared environment still alive at exit, ONNX Runtime 1.21's static destructors abort the process (`mutex lock failed: Invalid argument`, exit status 134) after the output was written; `ort` builds one environment per process for good, so the model cannot be opened again after the release. Keep the scene-score output as it was (apart from the note); fail `--cut-detector transnet` with the reason instead of returning other cuts; check library, weights and model before decoding; call `ort::init_from` with a path we resolved, never `ort::init`; keep one environment per process; no `unsafe` outside `hwdecode.rs`; no network in tests; update the docs in the same commit.
 - **Ask first:** making TransNetV2 the default when weights exist but no one asked for it; vendoring or downloading the library or the weights; a GPU or Core ML provider; changing the threshold.
 - **Never:** commit the weights or a library; skip frames to save time; swallow an error into scene-score cuts under `transnet`.
 
@@ -119,10 +119,39 @@ Test-first. No test in `cargo test` loads the model or the library.
 4. Every failure under `--cut-detector transnet` names what is missing and how to fix it; `auto` falls back with the same reason in `cut_detector_note`.
 5. The cost per frame, the added crates, the binary size and the build time are measured and written down.
 
+## Measured
+
+2026-10-28/29, Apple M3 MacBook Air, macOS 26.5, release build, ONNX Runtime 1.21.0 (conda wheel), load average 9 to 30 while measuring (it was 370 earlier in the session), so times are upper bounds. Command: `ORT_DYLIB_PATH=<lib> reelctl decompile --cut-detector transnet --transnet-weights ~/models/transnet/transnetv2.onnx --input <clip> --out <json>`; every run exited 0.
+
+| Clip | Scene score finds (frame) | TransNetV2 finds (frame, `scene_score`) | Official ffmpeg-scaled input finds (frame, probability) |
+|---|---|---|---|
+| `textured_cuts12` | 72, 144, 216 | 72 (0.9628), 144 (0.9849), 216 (0.9910) | 72 (0.9649), 144 (0.9843), 216 (0.9937) |
+| `draft12` | 180 | 180 (0.9982) | 180 (0.9982) |
+| `dissolve12` | none | 110 (0.8750), 208 (0.6481) | 110 (0.8372), 208 (0.6233) |
+| `textured_cuts12_hevc_full` (media engine and `--decoder software`) | not run | 72 (0.9635), 144 (0.9849), 216 (0.9910) from both decoders | |
+| Reel "NEET question" (1080×1920 H.264, 38.5 s, 1,153 frames) | 254 (score 0.3032) | 254 (0.7893), 434 (0.5010), 653 (0.5255), 863 (0.7119) | 254 (0.7945), 653 (0.5465), 863 (0.6835); frame 433 is 0.4910, just under 0.5, so no cut at 434 |
+| Reel "He shamelessly steals his kids milk" (720×1280 H.264, 15.1 s, 451 frames) | none | none | none (highest frame probability 0.0455) |
+
+- **The soft transitions are found.** The one-second dissolve (frames 96 to 119) gives a cut at 110 and the fade through black (192 to 215) a cut at 208; the scene score gives none. On the NEET reel TransNetV2 confirms the one scene-score cut (254) and adds two the scene score missed (653, 863); nobody has looked at those frames, so whether they are real edits is not established. It also reports 434, which the official input puts just under the threshold.
+- **Accuracy of the 4×4 box input against ffmpeg's `scale=48:27`.** Cut lists agree on every clip except one borderline frame on the NEET reel (0.5010 here against 0.4910 there). On the cuts both produce, the probabilities differ by at most 0.028 (863: 0.7119 against 0.6835); on the hard-cut fixtures by at most 0.0027. Only the probabilities at cut frames were compared (the in-loop path does not dump the whole track), so this is not a bound on every frame. Both decoders give identical results.
+- **Cost.** NEET reel, alternating runs, `REELCTL_PROFILE=1`: `decode_ms` 493 and 508 with `--cut-detector scene`, 498 and 529 with `transnet`, so collecting the 48×27 frames adds 0 to 20 ms for 1,153 frames (within the noise; under 0.02 ms per frame). The model adds `analyze_ms` of 8,095 and 8,413 for 1,153 frames: about 7 ms per video frame (windows overlap by half, so about 3.5 ms per frame run), including opening the session. At that rate 60 s at 30 fps costs about 13 s, and `signal_ms` for these runs was 17,052 (loaded, first run), about 8.6 s, 2,001 and 1,832 ms for the 38 s reel and the 12 s clips.
+- **Binary and build.** `target/release/reelctl` grows from 6,061,664 to 6,274,368 bytes (+212,704, +3.5%); `otool -L` shows no ONNX Runtime dependency. A full clean release build took 1 min 57 s before the change (machine busy); the added crates compile in a few seconds, so no clean-build comparison under the same load was taken.
+- **Scene-score path.** Old and new binaries on `textured_cuts12`, `draft12`, `textured_cuts12_hevc`, `outlier12`, `motion12` and `dissolve12`: every field of `edit_dna.json` equal except `signal_ms`, `asr_ms` and `cut_detector_note`, and every PNG byte-identical.
+
+## Limits
+
+- Portrait input is squashed to 48×27 as the official input is, which distorts it; two portrait reels is all that was tried.
+- The cut of a soft transition is the model's peak, inside the transition. It is not the first changed frame.
+- The motion detector still reports events as before; a dissolve that TransNetV2 calls a cut may also produce an `overlay_change` on a frame that is not exactly the cut.
+- The NEET reel's extra cuts (653, 863) and the borderline 434 are unreviewed.
+- Memory: the 48×27 frames of an 18-minute clip are about 126 MB.
+- ONNX Runtime 1.21.0 is the only library tried. Homebrew's 1.31.1 formula is untested (not installed); `api-17` should accept it, `ort` logs a compatibility notice for a newer minor version.
+- `release_onnx_runtime()` makes a second use of the model in one process impossible; nothing in `reelctl` needs one.
+
 ## Resolved Questions
 
 1. **How to get 48×27 frames (answered 2026-10-28, recommended): scale in the decode loop with a 4×4 box average from the planes**, not from the thumbnails and not with swscale; see Contract.
 2. **How to obtain ONNX Runtime: `load-dynamic`**, library path from `ORT_DYLIB_PATH`, no search of default directories (a search would make "library missing" tests depend on the machine). `download-binaries` was rejected: it needs the network at build time, which breaks offline `cargo test` for everyone who has not built before.
-3. **`auto` stays opt-in by weights**: TransNetV2 is about 16 ms per frame, so `auto` without a weights path never runs it.
+3. **`auto` stays opt-in by weights**: TransNetV2 is about 7 ms per video frame (13 s for 60 s at 30 fps), so `auto` without a weights path never runs it.
 4. **Filmstrips for TransNetV2 cuts** come from the 48×27 frames (small, exact to the cuts) rather than keeping a 64×36 thumbnail for every frame (6.9 KB per frame, 224 MB for 18 minutes).
 5. **The note text of the scene-score path changes** because the old text is no longer true; nothing else in its output does.
