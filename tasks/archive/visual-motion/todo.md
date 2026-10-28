@@ -1,6 +1,6 @@
 # Todo: visual-motion
 
-Plan: [plan.md](plan.md). Spec: [docs/specs/visual-motion.md](../docs/specs/visual-motion.md). Tick each box in the commit that completes it. Stage explicit paths; never `git add -A` (`.env` holds a key).
+Plan: [plan.md](plan.md). Spec: [docs/specs/visual-motion.md](../../../docs/specs/visual-motion.md). Tick each box in the commit that completes it. Stage explicit paths; never `git add -A` (`.env` holds a key).
 
 ## Task 1: Type and diff
 - [x] `VisualEvent` and `visual_events` (defaulted); version 3; version 2 files parse; schema regenerated; `docs/edit-dna.md`
