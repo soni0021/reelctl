@@ -837,7 +837,10 @@ dependencies = [
  "diff",
  "edit-dna",
  "filmstrip",
+ "image",
+ "serde",
  "serde_json",
+ "understand",
 ]
 
 [[package]]

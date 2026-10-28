@@ -31,6 +31,7 @@ pub use error::{BackendError, CatalogError, FrameError};
 pub use frames::{
     choose_layout, encode_jpeg, sample_times, tile, FrameImage, Layout, Sheet, SheetMode,
 };
+pub use openrouter::{key_from_env, OpenRouterBackend, OpenRouterCatalog, KEY_VARIABLE};
 pub use request::{
     cost_upper_bound, eligible_endpoints, estimate_input_tokens, response_schema, segment_lines,
     system_prompt,

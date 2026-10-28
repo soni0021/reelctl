@@ -1,4 +1,4 @@
-//! `reelctl decompile` and `reelctl diff`.
+//! `reelctl decompile`, `reelctl diff`, and `reelctl understand`.
 
 #![warn(clippy::all)]
 
@@ -16,8 +16,15 @@ use decompile::{
 use diff::{compare_many, render_text, NamedReel};
 use edit_dna::EditDna;
 
+mod understand_cmd;
+
 fn main() {
     if let Err(err) = run() {
+        // Some failures have their own exit code (3: no API key, 4: over the cost cap).
+        if let Some(exit) = err.downcast_ref::<understand_cmd::ExitWith>() {
+            eprintln!("error: {exit}");
+            std::process::exit(exit.code);
+        }
         eprintln!("error: {err:#}");
         std::process::exit(1);
     }
@@ -28,6 +35,7 @@ fn run() -> Result<()> {
     match cli.command {
         Command::Decompile(args) => decompile(args),
         Command::Diff(args) => diff(args),
+        Command::Understand(args) => understand_cmd::understand(args),
         Command::WhisperWorker(args) => whisper_worker(args),
     }
 }
@@ -49,6 +57,9 @@ enum Command {
     Decompile(DecompileArgs),
     /// Flag dead air, static shots, and a missing 9s payoff on a draft.
     Diff(DiffArgs),
+    /// Pick Reel-sized clips from a long video and label its cuts, with a hosted
+    /// vision-language model (needs OPENROUTER_API_KEY).
+    Understand(understand_cmd::UnderstandArgs),
     /// Internal: runs whisper passes for a parent `reelctl`, one JSON line in
     /// and one out per pass, so a whisper.cpp abort cannot end the parent.
     #[command(hide = true)]
