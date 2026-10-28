@@ -210,16 +210,16 @@ Without `--dry-run`, stdout gets two lines, the plan and the result:
 
 ```
 frames=346 images=87 sheet=2x2 segments=535 context_tokens=262144 input_tokens_estimate=139077 cost_upper_bound_usd=0.0276 max_cost_usd=0.50
-clips=3 rejected=1 model=qwen/qwen3.5-9b provider=DeepInfra cost_usd=0.0085 out=talk.understanding.json
+clips=3 rejected=1 model=qwen/qwen3.5-9b provider=Parasail cost_usd=0.0082 out=Reels/out/understand_runs/qwen35-9b.understanding.json
 ```
 
-`cost_upper_bound_usd` is an upper bound: it prices every input token at the highest eligible price and counts 1,445 tokens per image, where about 170–360 were billed. The first line above is the actual `--dry-run` output for the 28.6-minute lecture.
+`cost_upper_bound_usd` is an upper bound: it prices every input token at the highest eligible price and counts 1,445 tokens per image or sheet. Both lines above are real output for the 28.6-minute lecture (Qwen3.5-9B, 2026-10-28): the bound was $0.0276 and the response reported $0.0082, with 65,852 input tokens against the 139,077 estimated, so the bound overestimates by about 2×. The 87 sheets and the transcript together billed 65,852 tokens, so a 2×2 sheet billed at most 757, well under 1,445.
 
 What is sent to the model: the sampled frames (448 px JPEGs, each preceded by its time) and the transcript as numbered segments. Every request carries `data_collection: deny` and `require_parameters: true`. The API key is read only from the environment, sent only as a header, and never printed or written.
 
 Two flags are hidden from `--help`, like `whisper-worker`, and exist so the tests run with no network: `--replay <reply.json>` uses a recorded model reply instead of calling the model (no key needed), and `--catalog <catalog.json>` uses a model listing from a file instead of fetching it.
 
-Exit codes specific to this command: 2 for a `--dna` without whisper words or with no words at all, 3 when `OPENROUTER_API_KEY` is not set (and neither `--dry-run` nor `--replay` was given), 4 when the cost upper bound is over `--max-cost-usd`. A failed model call (an HTTP error, no matching provider, a reply that is not the schema, a reply cut off at `max_tokens`) exits with 1 and says which.
+Exit codes specific to this command: 2 for `--every-s 0`, a `--dna` with a duration of 0, or a `--dna` without whisper words or with no words at all, 3 when `OPENROUTER_API_KEY` is not set (and neither `--dry-run` nor `--replay` was given), 4 when the cost upper bound is over `--max-cost-usd`. A failed model call (an HTTP error, no matching provider, a reply that is not the schema, a reply cut off at `max_tokens`) exits with 1 and says which.
 
 ## Exit codes
 

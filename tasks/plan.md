@@ -30,7 +30,7 @@ A new crate, `understand`, plus a `reelctl understand` subcommand. The crate is 
 - [x] Task 4: Assembly (`assemble.rs`)
 
 ### Checkpoint A
-- [ ] Four branches merged into the feature branch; `cargo test -p understand` passes; `git check-ignore -v .env` still holds
+- [x] Four branches merged into the feature branch; `cargo test -p understand` passes; `git check-ignore -v .env` still holds
 
 ### Phase 3: Wiring (main session)
 - [x] Task 5: `decompile::decode_frames_at`
@@ -38,7 +38,7 @@ A new crate, `understand`, plus a `reelctl understand` subcommand. The crate is 
 - [x] Task 7: `reelctl understand`: exit codes 1–4, `--dry-run`, `--replay`, `--catalog`, end-to-end tests, schema
 
 ### Checkpoint B
-- [ ] `cargo test --workspace` passes offline; `--dry-run` on the real lecture gives a cost bound
+- [x] `cargo test --workspace` passes offline; `--dry-run` on the real lecture gives a cost bound
 
 ### Phase 4: Close-out
 - [ ] Task 8: Docs, ADR-015, audit, fixes
@@ -51,7 +51,7 @@ A new crate, `understand`, plus a `reelctl understand` subcommand. The crate is 
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| The API key is committed or printed | High | `.env` ignored on `main` before branching; explicit-path staging; a test that searches all output for a dummy key; the live test is `#[ignore]`d |
+| The API key is committed or printed | High | `.env` ignored on `main` before branching; explicit-path staging; a test that searches all output for a dummy key; the live run is done by hand, only with the user's yes |
 | The default suite makes a paid call | High | The test helper removes `OPENROUTER_API_KEY`; the backend is never constructed without a key (exit 3); the end-to-end test uses `--replay` |
 | Parallel agents disagree on a shared type | Medium | The contract is committed first and read-only for agents; they report needs instead of editing it; integration merges only disjoint files |
 | `ureq`/rustls fails to build or to verify certificates | Medium | Built before the contract commit; the first real request is the unauthenticated catalog fetch in `--dry-run`, which fails closed if TLS fails |

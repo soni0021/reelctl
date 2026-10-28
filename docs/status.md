@@ -61,7 +61,7 @@ The real clip was re-cut from the original recording on 2026-10-25 with its audi
 
 ## Long-to-short clipper, 2026-10-28 (in progress)
 
-Branch `feature/long-to-short-clipper` ([spec](specs/long-to-short-clipper.md)). Entries are added as each part lands. The first live run shows the pipeline works and the rules do their job; the 9B model does not respect the 30–60 s length, so a prompt or model change is the next lever (Muse 1.2 was not run).
+Branch `feature/long-to-short-clipper` ([spec](specs/long-to-short-clipper.md)). Entries are added as each part lands. The first live run shows the pipeline works and the rules do their job; the 9B model does not respect the 30–60 s length, so a prompt or model change is the next lever (Muse 1.2 was not run). Billing check from the same run: 87 sheets plus the transcript billed 65,852 input tokens against 139,077 estimated, so the bound overestimates by about 2× and does not underestimate sheets.
 
 | Check | Result |
 |---|---|
@@ -71,6 +71,8 @@ Branch `feature/long-to-short-clipper` ([spec](specs/long-to-short-clipper.md)).
 | `--dry-run` on the real lecture, no key, public price listing only | 346 frames in 87 sheets of 2×2, 535 segments, about 139,000 input tokens, cost upper bound $0.0276 (default model, cap $0.50) |
 | Clip cut points on the real lecture's 535 segments, one clip per segment | The start lands in a measured pause for 380 of 535 and falls back to 100 ms before the first word for 155; the end lands in a pause for 56 and falls back to 150 ms after the last word for 479. The fallbacks never cut into a word, and the rule has no slack on whisper's word times, so most ends are not in a pause. Whether that leaves audible dead air at the edges is for the live run |
 | Live run, `qwen/qwen3.5-9b` on the 28.6-min lecture, 2026-10-28, user-approved, release build | 83.4 s for the model call, 95 s in all. Provider Parasail (bf16). 65,852 input and 6,502 output tokens; cost $0.0082 against a bound of $0.0276. 7 beats, 17 visual events, 1 cut (unlabelled). 3 clips and 1 rejected pick. **No clip met every rule**: both long picks were 2–4 minutes (tight 174 s and 97 s against a 60 s maximum) with the payoff 51–53 s in; the third was 25.8 s and its payoff segment lay outside it. The rejected pick had its cutoff before its hook. The rules flagged or rejected each one and changed nothing silently. Hooks and last lines are exact whisper text, because the model answers by segment ID |
+
+Known limits found by the audit of this branch, not changed: `--sheet auto` falls back to 3×3 without checking that it fits the context, so a video over about 1 h 50 min at `--every-s 5` is sent over the limit and fails at the provider (outside the 20–60 min scope); `decode_frames_at` keeps every sampled frame in memory, about 339 KB each, so a 2-hour video at 5 s needs about 490 MB before JPEG encoding; the quantization recorded in `model.quantization` is taken from the first endpoint of the provider that answered, which matched (`bf16`, Parasail) in the live run but is unchecked for providers with several endpoints.
 
 ## Comparative diff, 2026-10-26
 

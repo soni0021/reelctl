@@ -1,6 +1,6 @@
 # Spec: Long-to-short clipper (`reelctl understand`)
 
-Status: approved 2026-10-28 by the user's message "invoke multiple agent and complete it", with the recommended answer to each open question, the three new dependencies, and the plan written from this spec. The paid live run (criterion 5) is not covered by that approval and needs its own yes. Branch: `feature/long-to-short-clipper`, cut from `main` after `chore/ignore-env` was merged. Implements the first slice of [planer.md](../../planer.md) Component 3 ("Long-to-Short Open-Loop Clipper") and the VLM role planer.md gives to P3. It does not add `visual-motion` (P0 capability map), which stays open.
+Status: approved 2026-10-28 (built; first live run 2026-10-28, see [status](../status.md)) by the user's message "invoke multiple agent and complete it", with the recommended answer to each open question, the three new dependencies, and the plan written from this spec. The paid live run (criterion 5) is not covered by that approval and needs its own yes. Branch: `feature/long-to-short-clipper`, cut from `main` after `chore/ignore-env` was merged. Implements the first slice of [planer.md](../../planer.md) Component 3 ("Long-to-Short Open-Loop Clipper") and the VLM role planer.md gives to P3. It does not add `visual-motion` (P0 capability map), which stays open.
 
 ## Objective
 
@@ -56,7 +56,6 @@ reelctl understand --input talk.mp4 --dna talk.edit_dna.json --out talk.understa
     [--effort low|medium|high] [--max-cost-usd 0.50] [--dry-run]
 cargo test -p understand
 cargo test -p reelctl --test p0_fixture
-OPENROUTER_API_KEY=... cargo test -p reelctl --test understand_live -- --include-ignored   # live, ignored by default
 cargo run -p understand --example understanding_schema
 ```
 
@@ -88,8 +87,7 @@ cargo run -p understand --example understanding_schema
   They exist so the end-to-end test, which spawns the `reelctl` binary, runs with no network.
 - **Tests:**
   - unit tests in `crates/understand`
-  - an end-to-end test in `crates/reelctl/tests/p0_fixture.rs` (recorded backend, fixed catalog)
-  - `crates/reelctl/tests/understand_live.rs`, `#[ignore]`d
+  - an end-to-end test in `crates/reelctl/tests/understand_fixture.rs` (recorded backend, fixed catalog)
 - **Docs:**
   - `docs/understanding.md`: every `understanding.json` field, the schema, and the ffmpeg command to cut a clip
   - `docs/cli.md`, README, `docs/status.md`, CHANGELOG, and AGENTS.md (P3 VLM role, "P1–P3 not implemented")
@@ -186,7 +184,7 @@ pub trait ModelCatalog {
 
 ## Testing Strategy
 
-Test-first. No test uses the network except the ignored live test: unit and end-to-end tests use `RecordedBackend` and `FixedCatalog`.
+Test-first. No test uses the network: the live run (criterion 5) is done by hand with the user's yes. Unit and end-to-end tests use `RecordedBackend` and `FixedCatalog`.
 
 - **Segmenter.** Splits at punctuation; splits at a 400 ms pause and not at a 399 ms one; respects the 150 ms slack; keeps the first and last words; gives empty output for no words; IDs are 1-based and contiguous; marks sentence starts.
 - **Clip rules.** Each one on hand-built segments and pauses:
@@ -214,7 +212,7 @@ Test-first. No test uses the network except the ignored live test: unit and end-
   - a backend error: exit 1
   - `--dry-run`: never calls the backend
 - **The key.** It never appears in stdout, stderr or the output file (the test uses a dummy key). The `reelctl()` test helper removes `OPENROUTER_API_KEY` from the child's environment, like `REELCTL_WHISPER_MODEL`, so a shell that has sourced `.env` can never make a paid call from the default suite; AGENTS.md says so.
-- **End to end** in `p0_fixture.rs`, through `--replay` and `--catalog`: a fixture video, a hand-written `edit_dna.json` with words and one cut, a fixed catalog file, and a recorded reply produce the expected clips and a non-null `vlm_label` for the cut.
+- **End to end** in `understand_fixture.rs`, through `--replay` and `--catalog`: a fixture video, a hand-written `edit_dna.json` with words and one cut, a fixed catalog file, and a recorded reply produce the expected clips and a non-null `vlm_label` for the cut.
 - **Live, ignored:** one fixture through `qwen/qwen3.5-9b` when `OPENROUTER_API_KEY` is set.
 - **Manual, not committed:** the NEET lecture with Qwen3.5-9B and with Muse 1.2, recorded in `docs/status.md`.
 
@@ -245,7 +243,7 @@ Test-first. No test uses the network except the ignored live test: unit and end-
 1. `reelctl understand` with `RecordedBackend` and `FixedCatalog` on the fixture writes an `understanding.json` that validates against the schema. Every quoted text equals the text of its segments, and every time is a segment, pause, cut, or frame-sample time.
 2. Every clip either meets all of these or carries a flag naming the rule it breaks:
    - starts at a sentence start, at most 8 s before its hook
-   - ends at the end of its cutoff segment
+   - ends on its cutoff segment: 150 ms into the pause after it (or half of it, if shorter), else 150 ms after its last word (rule 5; no word after the cutoff is kept)
    - tight length 30–60 s
    - payoff 6–12 s in
    - cut points inside measured pauses, or within the stated distance of a word

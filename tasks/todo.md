@@ -15,7 +15,7 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/long-to-short-clipper.md](../d
 ## Task 2: Clip rules
 
 - [x] Opens on the hook's sentence start within 8 s, else starts at the hook and flags `starts mid-sentence`; drops material before the hook's sentence and records it in `adjustments`
-- [x] Ends at the cutoff segment's end, never extended or trimmed
+- [x] Ends on the cutoff segment: 150 ms into the pause after it (or half of it), else 150 ms after its last word; segments after the cutoff are dropped
 - [x] Tight length and `dead_air` (pauses of 180 ms or more inside); flags, never changes, tight lengths under 30 s or over 60 s
 - [x] Rejects out-of-range IDs and a cutoff before the hook, with the reason; never repairs
 - [x] Cut points: start at the end of a pause within 600 ms before the first segment, else 100 ms before the first word; end 150 ms into the pause after the last segment (or half of it), else 150 ms after the last word
