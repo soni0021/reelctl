@@ -430,14 +430,16 @@ still12() {
 
 # 12 s, 540x960 portrait, still texture, no cut and no box: three punch-ins that
 # each take 12 frames and plant a known easing, and a zoom-out after each that
-# takes the same easing back down. cubic-bezier(1/3, y1, 2/3, y2): an ease-in
-# (0, 0.3) at frame 30, an ease-out (0.6, 1.0) at 126 and an overshoot (0.1, 1.4,
-# which peaks at 1.07 of the move) at 192; the zoom-outs start at 72, 156 and 216.
+# takes the same easing back down, except the last, which would overshoot to a
+# picture smaller than the frame (scale 0.987) and so uses a gentle ease instead.
+# cubic-bezier(1/3, y1, 2/3, y2): an ease-in (0, 0.3) at frame 30, an ease-out
+# (0.6, 1.0) at 126 and an overshoot (0.1, 1.4, which peaks at 1.07 of the move)
+# at 192; the zoom-outs start at 72, 156 and 216 (the last with 0.4, 0.8).
 # A keyframe every 60 frames (0, 60, ... 240) lies inside none of the six moves and
 # on none of their first frames.
 ease12() {
   local motion_gop=60
-  motion_clip "$1" 540x960 12 bin:30:12:0:0.3 bout:72:12:0:0.3 bin:126:12:0.6:1.0 bout:156:12:0.6:1.0 bin:192:12:0.1:1.4 bout:216:12:0.1:1.4
+  motion_clip "$1" 540x960 12 bin:30:12:0:0.3 bout:72:12:0:0.3 bin:126:12:0.6:1.0 bout:156:12:0.6:1.0 bin:192:12:0.1:1.4 bout:216:12:0.4:0.8
 }
 
 # motion12 at 640x360 landscape, whose luma grid has other steps and a shape.

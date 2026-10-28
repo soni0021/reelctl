@@ -474,7 +474,7 @@ impl MotionDetector {
             return track;
         };
         let end_pos = pos_at_or_before(&self.ring, pending.track_until).unwrap_or(anchor_pos);
-        let stride = geom.fine_stride();
+        let stride = geom.track_stride();
         let centre = (pending.cx, pending.cy);
         let mut prev = 0.0f32;
         for pos in anchor_pos + 1..=end_pos {
@@ -780,6 +780,13 @@ impl Geom {
         stride
     }
 
+    /// About 900 sample points per fit for the scale track: it is searched
+    /// for every frame of a move, and a scale is good to a hundredth of a step
+    /// at this density.
+    fn track_stride(&self) -> usize {
+        self.coarse_stride() + 1
+    }
+
     /// About 3600 sample points per fit for the refinement.
     fn fine_stride(&self) -> usize {
         let cells = self.cols * self.rows;
@@ -943,25 +950,36 @@ const TRACK_REPEATS: usize = 8;
 fn track_ln(a: &[u8], b: &[u8], geom: Geom, centre: (f32, f32), stride: usize, start: f32) -> f32 {
     let limit = LN_MAX + 0.02;
     let mut best = (start, cost(a, b, geom, start, centre, stride));
+    // The costs either side of the best at the finest step, from the last
+    // pass that did not move (a pass that moved leaves them to be measured).
+    let mut around = None;
     for step in TRACK_STEPS {
+        around = None;
         for _ in 0..TRACK_REPEATS {
             let mut next = best;
-            for ln in [best.0 - step, best.0 + step] {
+            let mut sides = [f32::INFINITY; 2];
+            for (side, ln) in [best.0 - step, best.0 + step].into_iter().enumerate() {
                 let ln = ln.clamp(-limit, limit);
                 let c = cost(a, b, geom, ln, centre, stride);
+                sides[side] = c;
                 if c < next.1 {
                     next = (ln, c);
                 }
             }
             if next.0 == best.0 {
+                around = Some(sides);
                 break;
             }
             best = next;
         }
     }
     let step = TRACK_STEPS[TRACK_STEPS.len() - 1];
-    let left = cost(a, b, geom, best.0 - step, centre, stride);
-    let right = cost(a, b, geom, best.0 + step, centre, stride);
+    let [left, right] = around.unwrap_or_else(|| {
+        [
+            cost(a, b, geom, best.0 - step, centre, stride),
+            cost(a, b, geom, best.0 + step, centre, stride),
+        ]
+    });
     let curve = left - 2.0 * best.1 + right;
     if curve > 1e-6 {
         let offset = 0.5 * step * (left - right) / curve;
@@ -2147,7 +2165,7 @@ mod tests {
         let geom = Geom { cols, rows };
         let a = render(cols, rows, 1.0, 0.5, 0.5);
         let b = render(cols, rows, 0.0512f32.exp(), 0.5, 0.5);
-        let ln = track_ln(&a, &b, geom, (0.5, 0.5), geom.fine_stride(), 0.0);
+        let ln = track_ln(&a, &b, geom, (0.5, 0.5), geom.track_stride(), 0.0);
         assert!((ln - 0.0512).abs() < 0.0006, "ln {ln}");
     }
 

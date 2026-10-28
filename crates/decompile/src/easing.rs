@@ -102,7 +102,7 @@ pub(crate) struct MoveCurve {
 pub(crate) fn curve_from_track(track: &[ScalePoint]) -> Option<MoveCurve> {
     let anchor = track.first()?;
     let change = track.last()?.scale - anchor.scale;
-    if track.len() < 2 || !(change.abs() >= MIN_CHANGE) {
+    if track.len() < 2 || change.is_nan() || change.abs() < MIN_CHANGE {
         return None;
     }
     let progress: Vec<f64> = track
