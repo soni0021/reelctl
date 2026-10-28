@@ -331,7 +331,7 @@ fn two_runs_write_the_same_bytes() {
 fn the_number_of_samples_is_reported() {
     let (plain, graded) = fixtures();
     let dir = scratch("samples");
-    for samples in [1, 7] {
+    for samples in [1, 7, 600] {
         let cube = dir.join(format!("s{samples}.cube"));
         let output = look(graded, plain, &cube, &["--samples", &samples.to_string()]);
         assert!(

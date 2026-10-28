@@ -308,6 +308,54 @@ mod tests {
     }
 
     #[test]
+    fn a_share_between_two_reference_levels_lands_between_them() {
+        // A third of the pixels at each of 0, 100 and 200 (shares 1/6, 1/2, 5/6)
+        // onto a reference of two levels, 10 and 200 (shares 1/4 and 3/4): the
+        // outer ones are clamped to the reference's range, the middle one is halfway.
+        let mut source = [0u64; LEVELS];
+        let mut reference = [0u64; LEVELS];
+        for v in [0, 100, 200] {
+            source[v] = 1;
+        }
+        for v in [10, 200] {
+            reference[v] = 1;
+        }
+        let curve = match_curve(&source, &reference);
+        assert!(
+            (curve[0] * 255.0 - 10.0).abs() < 1e-6,
+            "{}",
+            curve[0] * 255.0
+        );
+        assert!(
+            (curve[100] * 255.0 - 105.0).abs() < 1e-6,
+            "{}",
+            curve[100] * 255.0
+        );
+        assert!(
+            (curve[200] * 255.0 - 200.0).abs() < 1e-6,
+            "{}",
+            curve[200] * 255.0
+        );
+        // Two source levels holding 3/8 and 5/8 of the pixels have shares 3/16 and
+        // 11/16: the first is below the reference's first share, the second is
+        // (11/16 - 1/4) / (1/2) of the way from 10 to 200.
+        let mut source = [0u64; LEVELS];
+        source[50] = 3;
+        source[150] = 5;
+        let curve = match_curve(&source, &reference);
+        assert!(
+            (curve[50] * 255.0 - 10.0).abs() < 1e-6,
+            "{}",
+            curve[50] * 255.0
+        );
+        assert!(
+            (curve[150] * 255.0 - (10.0 + (11.0 / 16.0 - 0.25) / 0.5 * 190.0)).abs() < 1e-6,
+            "{}",
+            curve[150] * 255.0
+        );
+    }
+
+    #[test]
     fn levels_between_populated_ones_are_interpolated() {
         // Source at 0, 100, 200 (a third each) onto a reference at 10, 60, 250.
         let mut source = [0u64; LEVELS];

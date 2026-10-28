@@ -391,6 +391,8 @@ mod tests {
         let cube = Cube::from_curves("a \"b\"\nTITLE x", 17, &[gain_curve(1.0); 3]).expect("cube");
         let text = cube.to_cube_string();
         assert_eq!(text.lines().filter(|l| l.starts_with("TITLE")).count(), 1);
+        // A quote becomes an apostrophe and a line break a space.
+        assert_eq!(text.lines().next(), Some("TITLE \"a 'b' TITLE x\""));
         assert_eq!(Cube::parse(&text).expect("parse").size(), 17);
     }
 
@@ -487,14 +489,15 @@ mod tests {
 
     #[test]
     fn the_mean_shift_is_the_change_in_each_channels_mean() {
-        // Half the pixels at 100, half at 200, in every channel; the cube halves G
-        // and quarters B (levels 50, 100 and 25, 50).
-        let pixels: Vec<u8> = [100u8, 100, 100, 200, 200, 200].to_vec();
+        // Three pixels at 100 and one at 200, in every channel (mean 125); the cube
+        // keeps R, halves G (mean 62.5) and quarters B (mean 31.25).
+        let pixels: Vec<u8> =
+            [100u8, 100, 100, 100, 100, 100, 100, 100, 100, 200, 200, 200].to_vec();
         let histograms = Histograms::from_rgb(&pixels);
         let shift = linear_cube(33).mean_shift(&histograms).expect("shift");
         assert!(shift[0].abs() < 0.5, "{shift:?}");
-        assert!((shift[1] - (-75.0)).abs() < 0.5, "{shift:?}");
-        assert!((shift[2] - (-112.5)).abs() < 0.5, "{shift:?}");
+        assert!((shift[1] - (-62.5)).abs() < 0.5, "{shift:?}");
+        assert!((shift[2] - (-93.75)).abs() < 0.5, "{shift:?}");
         assert_eq!(linear_cube(33).mean_shift(&Histograms::default()), None);
     }
 
