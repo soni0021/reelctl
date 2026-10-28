@@ -560,7 +560,7 @@ impl MotionDetector {
         let Some(frame) = self.ring.get(at) else {
             return;
         };
-        let event = DetectedEvent {
+        self.events.push(DetectedEvent {
             time_ms: frame.time_ms,
             frame_index: frame.index,
             kind: MotionKind::OverlayChange,
@@ -568,19 +568,7 @@ impl MotionDetector {
             center_x: None,
             center_y: None,
             area: Some(area),
-        };
-        // Last, because it costs a fit: a change a scale explains (a punch-in
-        // over a mostly flat scene) is not an overlay.
-        let geom = Geom {
-            cols: self.cols,
-            rows: self.rows,
-        };
-        if let Some(fit) = fit_move(&reference.luma, &now.luma, geom) {
-            if fit.cost <= BEST_RATIO * fit.base {
-                return;
-            }
-        }
-        self.events.push(event);
+        });
     }
 }
 
@@ -761,10 +749,8 @@ struct Fit {
     ln: f32,
     cx: f32,
     cy: f32,
-    /// The mean difference at this scale and centre...
+    /// The mean difference at this scale and centre.
     cost: f32,
-    /// ...and with no scale at all, over the same samples.
-    base: f32,
 }
 
 // Times the pattern search ran (tests check that the cheap gate keeps it off
@@ -833,7 +819,7 @@ fn scan_scale(
 /// Fits a scale and its fixed point between two grids: a coarse search over
 /// scales and nine centres, a gate (`None` if no scale comes close to
 /// explaining the difference), then a pattern search. The caller judges the
-/// refined fit against `BEST_RATIO`.
+/// refined fit against the grids it cares about.
 fn fit_move(a: &[u8], b: &[u8], geom: Geom) -> Option<Fit> {
     let coarse = geom.coarse_stride();
     let base_coarse = cost(a, b, geom, 0.0, (0.5, 0.5), coarse);
@@ -842,7 +828,6 @@ fn fit_move(a: &[u8], b: &[u8], geom: Geom) -> Option<Fit> {
         cx: 0.5,
         cy: 0.5,
         cost: base_coarse,
-        base: base_coarse,
     };
     for ln in COARSE_LN {
         for cy in [0.0f32, 0.5, 1.0] {
@@ -854,7 +839,6 @@ fn fit_move(a: &[u8], b: &[u8], geom: Geom) -> Option<Fit> {
                         cx,
                         cy,
                         cost: c,
-                        base: base_coarse,
                     };
                 }
             }
@@ -866,7 +850,6 @@ fn fit_move(a: &[u8], b: &[u8], geom: Geom) -> Option<Fit> {
     #[cfg(test)]
     REFINES.with(|n| n.set(n.get() + 1));
     let fine = geom.fine_stride();
-    best.base = cost(a, b, geom, 0.0, (0.5, 0.5), fine);
     best.cost = cost(a, b, geom, best.ln, (best.cx, best.cy), fine);
     for (d_ln, d_c) in REFINE {
         for _ in 0..2 {
@@ -887,7 +870,6 @@ fn fit_move(a: &[u8], b: &[u8], geom: Geom) -> Option<Fit> {
                                 cx,
                                 cy,
                                 cost: c,
-                                base: best.base,
                             };
                         }
                     }
@@ -1081,7 +1063,13 @@ mod tests {
                 let u = x as f32 / (cols - 1) as f32;
                 let (su, sv) = (0.5 + (u - 0.5) / scale, 0.5 + (v - 0.5) / scale);
                 let inside = (0.35..0.65).contains(&su) && (0.3..0.7).contains(&sv);
-                out.push(if inside { texture(su, sv) as u8 } else { 128 });
+                // Fine detail, so that magnifying the subject changes every
+                // cell of it and not just its edges.
+                out.push(if inside {
+                    texture(su * 2.5, sv * 2.5) as u8
+                } else {
+                    128
+                });
             }
         }
         out
@@ -1666,7 +1654,18 @@ mod tests {
     #[test]
     fn a_slow_push_in_is_no_event() {
         for (cols, rows) in SHAPES {
-            for (steps, smooth) in [(30, true), (30, false), (14, false), (60, false)] {
+            for (steps, smooth) in [
+                (17, true),
+                (18, true),
+                (24, true),
+                (36, true),
+                (48, true),
+                (14, false),
+                (16, false),
+                (20, false),
+                (30, false),
+                (60, false),
+            ] {
                 let scales = ease(1.0, 1.18, steps, smooth);
                 let clip = zoom_clip(cols, rows, 1.0, &scales, (0.5, 0.5), 30, 40);
                 let events = run(cols, rows, &clip);
@@ -1768,6 +1767,106 @@ mod tests {
             let events = run(cols, rows, &clip);
             assert_eq!(events.len(), 1, "{cols}x{rows}: {events:?}");
             assert_eq!(events[0].frame_index, 21);
+        }
+    }
+
+    #[test]
+    fn a_fade_over_three_quarters_of_a_second_is_one_overlay() {
+        for (cols, rows) in SHAPES {
+            let base = render(cols, rows, 1.0, 0.5, 0.5);
+            let blk = with_block(&base, &block_mask(cols, rows));
+            let mut clip = Clip::default();
+            clip.hold(&base, 30);
+            for k in 1..=18 {
+                clip.one(blend(&base, &blk, k as f32 / 18.0));
+            }
+            clip.hold(&blk, 50);
+            let events = run(cols, rows, &clip);
+            assert_eq!(events.len(), 1, "{cols}x{rows}: {events:?}");
+            assert!(
+                (40..=47).contains(&events[0].frame_index),
+                "frame {}",
+                events[0].frame_index
+            );
+        }
+    }
+
+    #[test]
+    fn a_card_that_stops_animating_and_then_changes_is_two_overlays() {
+        let (cols, rows) = (160, 90);
+        let base = render(cols, rows, 1.0, 0.5, 0.5);
+        let mask = block_mask(cols, rows);
+        let mut clip = Clip::default();
+        clip.hold(&base, 10);
+        for i in 0..20 {
+            clip.one(with_animation(&base, &mask, i));
+        }
+        clip.hold(&with_animation(&base, &mask, 19), 20);
+        clip.hold(&with_animation(&base, &mask, 999), 60);
+        let events = run(cols, rows, &clip);
+        assert_eq!(events.len(), 2, "{events:?}");
+        assert!((10..=13).contains(&events[0].frame_index), "{events:?}");
+        assert_eq!(events[1].frame_index, 50, "{events:?}");
+    }
+
+    #[test]
+    fn a_caption_over_a_part_that_moves_is_one_overlay() {
+        let (cols, rows) = (160, 90);
+        let base = render(cols, rows, 1.0, 0.5, 0.5);
+        let mask = block_mask(cols, rows);
+        let flicker = rect(cols, rows, 0.6, 0.6, 0.64, 0.7);
+        // A seed for which the part differs between the grids the detector
+        // compares (frames 24 and 20).
+        let on = |i: usize, seed: i32| hash(i as i32, seed, 9) < 0.5;
+        let seed = (0..50).find(|s| on(24, *s) != on(20, *s)).expect("a seed");
+        let mut clip = Clip::default();
+        for i in 0..80 {
+            let frame = if on(i, seed) {
+                with_delta(&base, &flicker, 60)
+            } else {
+                base.clone()
+            };
+            clip.one(if i < 30 {
+                frame
+            } else {
+                with_block(&frame, &mask)
+            });
+        }
+        let events = run(cols, rows, &clip);
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert_eq!(events[0].frame_index, 30);
+    }
+
+    fn low_contrast(frame: &[u8]) -> Vec<u8> {
+        frame
+            .iter()
+            .map(|v| (128 + (i16::from(*v) - 128) / 4) as u8)
+            .collect()
+    }
+
+    #[test]
+    fn a_faint_punch_in_under_noise_is_found() {
+        for (cols, rows) in SHAPES {
+            let before = low_contrast(&render(cols, rows, 1.0, 0.5, 0.5));
+            let after = low_contrast(&render(cols, rows, 1.18, 0.5, 0.5));
+            let mut clip = Clip::default();
+            for i in 0..80 {
+                clip.one(noisy(if i < 30 { &before } else { &after }, i as u32, 1));
+            }
+            let events = run(cols, rows, &clip);
+            assert_one_move(&events, MotionKind::PunchIn, 1.18, (0.5, 0.5), 0.15);
+        }
+    }
+
+    #[test]
+    fn the_largest_scale_tried_is_reached() {
+        for (cols, rows) in SHAPES {
+            let clip = zoom_clip(cols, rows, 1.0, &[1.24], (0.5, 0.5), 30, 40);
+            let events = run(cols, rows, &clip);
+            assert_one_move(&events, MotionKind::PunchIn, 1.24, (0.5, 0.5), 0.1);
+            let clip = zoom_clip(cols, rows, 1.24, &[1.0], (0.5, 0.5), 30, 40);
+            let events = run(cols, rows, &clip);
+            assert_one_move(&events, MotionKind::ZoomOut, 1.0 / 1.24, (0.5, 0.5), 0.1);
         }
     }
 
