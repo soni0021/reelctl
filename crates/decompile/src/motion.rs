@@ -2536,4 +2536,57 @@ mod tests {
             );
         }
     }
+
+    // ---- a long history at a high frame rate ----
+
+    /// The flash-return clip of an earlier test at `fps` (a multiple of 24): a
+    /// block comes on at 1.25 s, stays 708 ms, and goes.
+    fn flash_clip_at(cols: usize, rows: usize, fps: usize) -> Clip {
+        let k = fps / 24;
+        let base = render(cols, rows, 1.0, 0.5, 0.5);
+        let blk = with_block(&base, &block_mask(cols, rows));
+        let mut clip = Clip::default();
+        clip.hold(&base, 30 * k)
+            .hold(&blk, 17 * k)
+            .hold(&base, 60 * k);
+        clip
+    }
+
+    #[test]
+    fn a_flash_that_comes_back_after_708_ms_is_recognised_at_120_fps() {
+        let (cols, rows) = (160, 90);
+        let events = run_at(cols, rows, &flash_clip_at(cols, rows, 120), 120);
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert_eq!(events[0].frame_index, 150);
+    }
+
+    #[test]
+    fn a_clean_move_is_measured_to_two_hundredths_of_scale_and_a_twentieth_of_the_frame() {
+        for (cols, rows) in SHAPES {
+            for (s, cx, cy) in [
+                (1.18f32, 0.3f32, 0.7f32),
+                (1.18, 0.2, 0.8),
+                (1.12, 0.7, 0.3),
+                (1.22, 0.5, 0.5),
+                (1.08, 0.25, 0.4),
+                (1.18, 0.0, 0.0),
+                (1.15, 0.8, 0.6),
+            ] {
+                let clip = zoom_clip(cols, rows, 1.0, &[s], (cx, cy), 30, 40);
+                let events = run(cols, rows, &clip);
+                assert_one_move(
+                    &events,
+                    MotionKind::PunchIn,
+                    f64::from(s),
+                    (f64::from(cx), f64::from(cy)),
+                    0.06,
+                );
+                let got = events[0].scale.expect("scale");
+                assert!(
+                    (got - f64::from(s)).abs() <= 0.02,
+                    "{cols}x{rows} want {s} about ({cx}, {cy}): {events:?}"
+                );
+            }
+        }
+    }
 }
