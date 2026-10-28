@@ -1,4 +1,4 @@
-# ADR-017: Run TransNetV2 through a dynamically loaded ONNX Runtime
+# ADR-018: Run TransNetV2 through a dynamically loaded ONNX Runtime
 
 ## Status
 Accepted. Supersedes [ADR-002](ADR-002-scene-score-cut-detector.md) in part: `TransNetV2Detector` no longer always errors. The scene-score detector, the `CutDetector` trait and `--cut-detector scene` are unchanged.

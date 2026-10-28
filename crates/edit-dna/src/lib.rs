@@ -36,7 +36,7 @@ pub struct Cut {
     pub time_ms: u64,
     pub interval_ms: u64,
     /// FFmpeg scene score in `0..=1` for the scene-score detector.
-    /// TransNetV2 would store its cut probability here.
+    /// With TransNetV2, the highest cut probability in the run of frames that gave this cut.
     pub scene_score: f64,
 }
 

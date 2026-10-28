@@ -22,7 +22,7 @@
           "type": "integer"
         },
         "scene_score": {
-          "description": "FFmpeg scene score in `0..=1` for the scene-score detector.\nTransNetV2 would store its cut probability here.",
+          "description": "FFmpeg scene score in `0..=1` for the scene-score detector.\nWith TransNetV2, the highest cut probability in the run of frames that gave this cut.",
           "format": "double",
           "type": "number"
         },

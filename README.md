@@ -32,7 +32,7 @@ target/release/reelctl diff \
   --outlier fixtures/generated/outlier_12s.edit_dna.json
 ```
 
-Add `--whisper-model <model.bin>` to `decompile` for real words instead of voiced bursts. HEVC video decodes on the Apple media engine on macOS; add `--decoder software` to force software decoding.
+Add `--whisper-model <model.bin>` to `decompile` for real words instead of voiced bursts. Add `--cut-detector transnet --transnet-weights <weights.onnx>` with `ORT_DYLIB_PATH` set to an ONNX Runtime library to find dissolves and fades with TransNetV2 (slow: about 7 ms per frame). HEVC video decodes on the Apple media engine on macOS; add `--decoder software` to force software decoding.
 
 `decompile` prints a one-line summary, writes the JSON, and writes one PNG per cut to `fixtures/generated/outlier_12s.edit_dna_timeline/`. `diff` prints a JSON list of flags and a `comparison` of the draft with each outlier. See [docs/cli.md](docs/cli.md).
 

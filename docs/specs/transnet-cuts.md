@@ -1,6 +1,6 @@
 # Spec: TransNetV2 cut detection (`transnet-cuts`)
 
-Status: written 2026-10-28 under the user's blanket "Do all of them"; the user has not reviewed it line by line. The answers at the end are the recommended ones. Module `transnet-cuts` in the [P0 capability map](p0-capability-map.md), whose decision 2 ("download the weights? Not now") the user's "Do all of them" lifted: the weights are at `~/models/transnet/transnetv2.onnx` (not in the repo). Follows [planer.md](../../planer.md) (TransNetV2 run through `ort`). Supersedes the "always errors" part of [ADR-002](../decisions/ADR-002-scene-score-cut-detector.md) through [ADR-017](../decisions/ADR-017-run-transnetv2-through-a-dynamically-loaded-onnx-runtime.md).
+Status: written 2026-10-28 under the user's blanket "Do all of them"; the user has not reviewed it line by line. The answers at the end are the recommended ones. Module `transnet-cuts` in the [P0 capability map](p0-capability-map.md), whose decision 2 ("download the weights? Not now") the user's "Do all of them" lifted: the weights are at `~/models/transnet/transnetv2.onnx` (not in the repo). Follows [planer.md](../../planer.md) (TransNetV2 run through `ort`). Supersedes the "always errors" part of [ADR-002](../decisions/ADR-002-scene-score-cut-detector.md) through [ADR-018](../decisions/ADR-018-run-transnetv2-through-a-dynamically-loaded-onnx-runtime.md).
 
 ## Objective
 
@@ -55,7 +55,7 @@ target/release/reelctl decompile --cut-detector transnet --input /tmp/dissolve12
 | `crates/reelctl/src/main.rs` | Calls `decompile::release_onnx_runtime()` before every exit (a live ONNX Runtime environment makes the process abort at exit) |
 | `crates/reelctl/tests/*.rs` | The spawned `reelctl` loses `ORT_DYLIB_PATH` from its environment as it loses the weights variable |
 | `fixtures/generate.sh` | `dissolve12`: a dissolve and a fade through black made with ffmpeg's `xfade`, no hard cuts |
-| Docs | This spec, ADR-017, `docs/cli.md`, `docs/edit-dna.md` (`cut_detector`, `scene_score`), the capability map. Left to the main session: README, CHANGELOG, `docs/status.md`, AGENTS.md, `tasks/` |
+| Docs | This spec, ADR-018, `docs/cli.md`, `docs/edit-dna.md` (`cut_detector`, `scene_score`), the capability map. Left to the main session: README, CHANGELOG, `docs/status.md`, AGENTS.md, `tasks/` |
 
 ## Contract
 

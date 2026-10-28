@@ -59,6 +59,22 @@ Same machine, release builds of `main` and `feature/relative-silence` on the sam
 
 The real clip was re-cut from the original recording on 2026-10-25 with its audio copied, not re-encoded, so its word count (125) differs from the 2026-10-21 runs (183); see Known issues.
 
+## TransNetV2, 2026-10-28
+
+Apple M3 MacBook Air, branch `feature/transnet-cuts` ([spec](specs/transnet-cuts.md), [ADR-018](decisions/ADR-018-run-transnetv2-through-a-dynamically-loaded-onnx-runtime.md)). Weights: `elya5/transnetv2` ONNX export of soCzech/TransNetV2 (MIT, 31,250,929 bytes, sha256 `c4d54a68…8e0c`), not committed. ONNX Runtime 1.21.0 from a conda wheel (`brew` has none here).
+
+| Check | Result |
+|---|---|
+| Cuts, scene score against TransNetV2 in `reelctl` (probability) | `textured_cuts12`: 72, 144, 216 against 72 (0.9628), 144 (0.9849), 216 (0.9910). `draft12`: 180 against 180 (0.9982). `dissolve12` (a dissolve over frames 96–119 and a fade through black over 192–215): none against 110 (0.875) and 208 (0.648). NEET reel (1,153 frames): 254 against 254, 434 (0.501), 653, 863. Milk reel: none against none |
+| Against an input scaled by `ffmpeg scale=48:27` (the official input) | The same cuts on every clip except frame 434 on the NEET reel (0.491 there, just under the threshold). Probabilities at the shared cuts differ by at most 0.028 (frame 863) and 0.0027 on the hard-cut fixtures; only cut frames were compared, not the whole track. Whether NEET frames 653 and 863, which the scene score missed, are real edits is not established: nobody has looked at them |
+| Decoder agreement | `textured_cuts12_hevc_full` gives identical cuts and scores on the media engine and with `--decoder software` |
+| Scene-score path | Old against new binary on 19 fixture clips: every field equal except `signal_ms`, `asr_ms` and `cut_detector_note`; all PNGs byte-identical (`speech12`, `tonespeech`, `bench60_textured` not run) |
+| Cost | About 7 ms per frame at load 9 and 13 ms at load 26, each frame run about twice (stride-50 windows): the NEET reel took `analyze_ms` of 8.1–8.4 s. A 60 s reel at 30 fps would take roughly 13–23 s, far over the 500 ms budget, so `auto` uses TransNetV2 only when a weights path is given. Collecting the 48×27 frames costs 0–20 ms per 1,153 frames |
+| Build | `ort 2.0.0-rc.15` (no stable 2.0 exists), features `std`, `load-dynamic`, `api-17`; new crates `ort`, `ort-sys`, `libloading`; the `reelctl` binary grew 6,061,664 → 6,274,368 bytes (+3.5%); no onnxruntime in `otool -L` |
+| Tests | Offline: 15 windowing and 14 detector unit tests (every frame covered once for n of 1 to 1000, padding as the official code, run and cut rules, error messages, a fake model) and 4 end-to-end tests (no library and no weights exit 1 before decoding; `auto` falls back with the reason; the default path finds nothing on `dissolve12`). The real-model run is a documented manual command (spec and `cli.md`), not part of `cargo test`: 184 decompile, 21 `p0_fixture`, and the rest as before, all green |
+
+Known limits: portrait reels are squashed to 48×27 like the official input and only two reels were tried; a dissolve's cut is the model's peak inside the transition, not its first frame; the motion detector may still report an `overlay_change` near a TransNetV2 cut; ONNX Runtime 1.21.0 is the only library tried; memory for the model frames is about 126 MB per 18 minutes; ONNX Runtime's static destructors abort the process at exit unless `release_onnx_runtime()` runs first, and `ort` allows one environment per process, so the model cannot be reopened after the release.
+
 ## Visual motion, 2026-10-28
 
 Apple M3 MacBook Air, release build of `feature/visual-motion` ([spec](specs/visual-motion.md)). Real footage is kept outside the repo.
@@ -240,7 +256,7 @@ Already listed in [AGENTS.md](../AGENTS.md) as P0 gaps:
 | Gap | Effect now | To close it |
 |---|---|---|
 | Word timing needs a model | Without `--whisper-model`, `words` are voiced bursts named `burst-N` and `words_per_minute` counts bursts | Closed 2026-10-21, merged into `main`: with a model, whisper.cpp gives real words timed with DTW ([ADR-007](decisions/ADR-007-whisper-cpp-word-timing.md)). `reelctl` never downloads a model |
-| TransNetV2 not linked | Every cut comes from the scene-score detector; `--cut-detector transnet` exits with an error | TransNetV2 ONNX weights and an `ort` dependency |
+| TransNetV2 | Linked through `ort` (2026-10-28, [spec](specs/transnet-cuts.md), [ADR-018](decisions/ADR-018-run-transnetv2-through-a-dynamically-loaded-onnx-runtime.md)): runs when you give it the weights file and an ONNX Runtime library; the default path is still the scene score | Closed; see the TransNetV2 section |
 | Zoom curves and `.cube` LUT | Reported as `"status": "unimplemented"` | Pass 1b work |
 
 Not yet listed in AGENTS.md:
@@ -255,7 +271,7 @@ Not yet listed in AGENTS.md:
 ## Known issues
 
 - In a `timeline_view` PNG, the thumbnails and the waveform use different time scales. The 8 thumbnails cover about 0.27 s at 30 fps; the waveform and word ticks cover 1.5 s either side of the cut, across the same width.
-- The JSON value for TransNetV2 is `"trans_net_v2"`, but `CutDetectorKind::as_str()` returns `"transnet_v2"`. Nothing emits either until TransNetV2 is linked.
+- The JSON value for TransNetV2 is `"trans_net_v2"`, but `CutDetectorKind::as_str()` returns `"transnet_v2"`; this mismatch is unchanged and now reachable, because a TransNetV2 run writes the JSON value.
 - Colors are converted from YUV with BT.601 coefficients, while most HD video uses BT.709, so absolute RGB values are slightly off.
 - Audio sampled above 48 kHz (88.2 or 96 kHz) can alias, because the resampler is linear interpolation with no low-pass filter. Unmeasured; the rates seen so far (44.1 and 48 kHz) are not affected.
 - The extra detection on the frame after a cut: in an earlier version of `textured_cuts12_hevc` (sources that change drastically between frames, since replaced), both decoders reported a second cut one frame after a real one. The detector, not the decoder, does that, so it is a property of `scene_score` on footage whose first frame in a shot is coded coarsely. Not investigated further.
@@ -277,4 +293,4 @@ Then, to finish P0 against its own success metric before starting P1. The [P0 ca
 2. Read 10-bit video, such as iPhone HDR recordings. Done, merged 2026-10-26 ([spec](specs/decode-inputs.md)): 10-bit 4:2:0 is read, audio is resampled as one stream, and the real recording decompiles.
 3. Detect silence relative to each recording's noise floor instead of at a fixed −40 dBFS. Done ([spec](specs/relative-silence.md)), merged 2026-10-25.
 4. Make `diff` comparative: accept one to three outliers and compare cut rhythm second by second. Done, merged 2026-10-26 ([spec](specs/comparative-diff.md)); thresholds untested on a fast-cut outlier.
-5. Link TransNetV2. It needs ONNX weights, a download that needs an explicit go-ahead.
+5. Link TransNetV2. Done 2026-10-28 (see the TransNetV2 section).
