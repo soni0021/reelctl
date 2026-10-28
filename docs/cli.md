@@ -219,7 +219,7 @@ What is sent to the model: the sampled frames (448 px JPEGs, each preceded by it
 
 Two flags are hidden from `--help`, like `whisper-worker`, and exist so the tests run with no network: `--replay <reply.json>` uses a recorded model reply instead of calling the model (no key needed), and `--catalog <catalog.json>` uses a model listing from a file instead of fetching it.
 
-Exit codes specific to this command: 2 for `--every-s 0`, a `--dna` with a duration of 0, or a `--dna` without whisper words or with no words at all, 3 when `OPENROUTER_API_KEY` is not set (and neither `--dry-run` nor `--replay` was given), 4 when the cost upper bound is over `--max-cost-usd`. A failed model call (an HTTP error, no matching provider, a reply that is not the schema, a reply cut off at `max_tokens`) exits with 1 and says which.
+Exit codes specific to this command: 2 for `--every-s 0`, a `--dna` with a duration of 0, or a `--dna` without whisper words or with no words at all (all checked before any network access, so no price listing is fetched), 3 when `OPENROUTER_API_KEY` is not set (and neither `--dry-run` nor `--replay` was given), 4 when the cost upper bound is over `--max-cost-usd`. A failed model call (an HTTP error, no matching provider, a reply that is not the schema, a reply cut off at `max_tokens`) exits with 1 and says which.
 
 ## Exit codes
 

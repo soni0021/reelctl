@@ -57,7 +57,7 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/long-to-short-clipper.md](../d
 - [x] Schema file generated (`cargo run -p understand --example understanding_schema`) and a test that it is up to date
 
 ### Checkpoint B
-- [x] `cargo test --workspace` passes offline (348 pass, 2 ignored); `--dry-run` on the real lecture quotes a cost bound ($0.0276)
+- [x] `cargo test --workspace` passes offline (364 pass after the audit fixes, 2 ignored); `--dry-run` on the real lecture quotes a cost bound ($0.0276)
 
 ## Task 8: Docs, ADR-015, audit
 
