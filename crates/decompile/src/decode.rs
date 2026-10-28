@@ -44,6 +44,9 @@ use crate::hwdecode::{self, HardwareDevice};
 use crate::linear_resample::LinearResampler;
 use crate::motion::{DetectedEvent, MotionDetector};
 use crate::scene::{ffmpeg_scene_score, ScoredFrame, SCENE_SCORE_THRESHOLD};
+use crate::transnet_window::{
+    sample_coordinate, ModelFrames, MODEL_HEIGHT, MODEL_WIDTH, SUBSAMPLES,
+};
 
 pub(crate) const SAMPLE_RATE: u32 = 48_000;
 const SAD_TARGET_W: u32 = 160;
@@ -191,13 +194,51 @@ pub(crate) struct DecodedReel {
     pub boundaries: Vec<RawBoundary>,
     /// Punch-ins, zoom-outs and overlay changes measured on the luma grids.
     pub motion_events: Vec<DetectedEvent>,
+    /// One 48x27 RGB frame per decoded frame, only when the TransNetV2 model will run.
+    pub model_frames: Option<ModelFrames>,
 }
 
 pub(crate) struct RawBoundary {
     pub frame_index: u64,
     pub time_ms: u64,
+    /// The size of every thumbnail in `before` and `after`.
+    pub thumb_w: u32,
+    pub thumb_h: u32,
     pub before: Vec<Vec<u8>>,
     pub after: Vec<Vec<u8>>,
+}
+
+/// Frames kept on each side of a cut for the filmstrip when the boundaries are
+/// rebuilt from the 48x27 model frames: `BEFORE_FRAMES` before the cut, and
+/// from the cut up to `AFTER_FRAMES` or the next cut.
+pub(crate) fn boundaries_from_model_frames(
+    model: &ModelFrames,
+    cuts: &[edit_dna::Cut],
+) -> Vec<RawBoundary> {
+    cuts.iter()
+        .enumerate()
+        .map(|(position, cut)| {
+            let index = cut.frame_index as usize;
+            let end = cuts
+                .get(position + 1)
+                .map_or(usize::MAX, |next| next.frame_index as usize)
+                .min(index + AFTER_FRAMES)
+                .min(model.len());
+            let frames_at = |range: std::ops::Range<usize>| -> Vec<Vec<u8>> {
+                range
+                    .filter_map(|at| model.frame(at).map(<[u8]>::to_vec))
+                    .collect()
+            };
+            RawBoundary {
+                frame_index: cut.frame_index,
+                time_ms: cut.time_ms,
+                thumb_w: MODEL_WIDTH as u32,
+                thumb_h: MODEL_HEIGHT as u32,
+                before: frames_at(index.saturating_sub(BEFORE_FRAMES)..index),
+                after: frames_at(index..end),
+            }
+        })
+        .collect()
 }
 
 /// Decode a file. HEVC tries the media engine first (`choose_decoder`); on any
@@ -207,21 +248,35 @@ pub(crate) struct RawBoundary {
 pub(crate) fn decode_file(
     path: &Path,
     setting: DecoderSetting,
+    model_frames: bool,
 ) -> Result<DecodedReel, DecompileError> {
     ensure_ffmpeg().map_err(|err| stage("ffmpeg init", err))?;
-    decode_planned(path, choose_decoder(video_codec(path)?, setting))
+    decode_planned(
+        path,
+        choose_decoder(video_codec(path)?, setting),
+        model_frames,
+    )
 }
 
-fn decode_planned(path: &Path, plan: Plan) -> Result<DecodedReel, DecompileError> {
+fn decode_planned(
+    path: &Path,
+    plan: Plan,
+    model_frames: bool,
+) -> Result<DecodedReel, DecompileError> {
     match plan {
-        Plan::Software(used) => decode_with(path, Decoder::Software(used)),
+        Plan::Software(used) => decode_with(path, Decoder::Software(used), model_frames),
         Plan::TryHardware => {
             let attempt = HardwareDevice::create().and_then(|device| {
-                decode_with(path, Decoder::Hardware(&device)).map_err(|err| err.to_string())
+                decode_with(path, Decoder::Hardware(&device), model_frames)
+                    .map_err(|err| err.to_string())
             });
             match attempt {
                 Ok(reel) => Ok(reel),
-                Err(reason) => decode_with(path, Decoder::Software(DecoderUsed::Fallback(reason))),
+                Err(reason) => decode_with(
+                    path,
+                    Decoder::Software(DecoderUsed::Fallback(reason)),
+                    model_frames,
+                ),
             }
         }
     }
@@ -243,7 +298,11 @@ enum Decoder<'a> {
     Hardware(&'a HardwareDevice),
 }
 
-fn decode_with(path: &Path, decoder: Decoder<'_>) -> Result<DecodedReel, DecompileError> {
+fn decode_with(
+    path: &Path,
+    decoder: Decoder<'_>,
+    model_frames: bool,
+) -> Result<DecodedReel, DecompileError> {
     let mut input = ffmpeg::format::input(path).map_err(|err| stage("open input", err))?;
     let video_index = input
         .streams()
@@ -313,6 +372,7 @@ fn decode_with(path: &Path, decoder: Decoder<'_>) -> Result<DecodedReel, Decompi
         width: receiver.video.width(),
         height: receiver.video.height(),
         format: VideoFormat::default(),
+        model: model_frames.then(|| ModelFrames::with_capacity(expected_frames)),
     };
     let mut last_time_ms = 0u64;
 
@@ -389,6 +449,7 @@ fn decode_with(path: &Path, decoder: Decoder<'_>) -> Result<DecodedReel, Decompi
         pcm,
         boundaries,
         motion_events: sad.finish_motion(),
+        model_frames: picture.model,
     })
 }
 
@@ -603,11 +664,13 @@ impl Receiver {
     }
 }
 
-/// The decoded picture: its size from the latest frame, its format from the first.
+/// The decoded picture: its size from the latest frame, its format from the first,
+/// and the 48x27 frames for TransNetV2 when the model will run.
 struct Picture {
     width: u32,
     height: u32,
     format: VideoFormat,
+    model: Option<ModelFrames>,
 }
 
 fn observe_frame(
@@ -650,7 +713,43 @@ fn observe_frame(
         scene_score,
     });
     colors.push(color);
+    if let Some(model) = picture.model.as_mut() {
+        model.push_with(|slot| fill_model_frame(&view, slot));
+    }
     Ok(())
+}
+
+/// The 48x27 RGB frame TransNetV2 reads: each output pixel is the mean of a
+/// 4x4 grid of points inside its cell of the whole picture (the frame is
+/// squashed to 48x27 whatever its shape, as ffmpeg's `scale=48:27` does), read
+/// through `pixel_rgb` so both decoders and every pixel format give one result.
+fn fill_model_frame(view: &YuvView<'_>, dest: &mut [u8]) {
+    let across = MODEL_WIDTH * SUBSAMPLES;
+    let down = MODEL_HEIGHT * SUBSAMPLES;
+    let xs: Vec<u32> = (0..across)
+        .map(|point| sample_coordinate(point, across, view.width))
+        .collect();
+    let ys: Vec<u32> = (0..down)
+        .map(|point| sample_coordinate(point, down, view.height))
+        .collect();
+    let count = (SUBSAMPLES * SUBSAMPLES) as u32;
+    for row in 0..MODEL_HEIGHT {
+        for col in 0..MODEL_WIDTH {
+            let mut sum = [0u32; 3];
+            for &y in &ys[row * SUBSAMPLES..(row + 1) * SUBSAMPLES] {
+                for &x in &xs[col * SUBSAMPLES..(col + 1) * SUBSAMPLES] {
+                    let rgb = pixel_rgb(view, x, y);
+                    sum[0] += u32::from(rgb[0]);
+                    sum[1] += u32::from(rgb[1]);
+                    sum[2] += u32::from(rgb[2]);
+                }
+            }
+            let at = (row * MODEL_WIDTH + col) * 3;
+            for channel in 0..3 {
+                dest[at + channel] = ((sum[channel] + count / 2) / count) as u8;
+            }
+        }
+    }
 }
 
 fn is_again(err: &ffmpeg::Error) -> bool {
@@ -1201,6 +1300,8 @@ impl Pending {
         RawBoundary {
             frame_index: self.frame_index,
             time_ms: self.time_ms,
+            thumb_w: THUMB_W,
+            thumb_h: THUMB_H,
             before: self.before,
             after: self.after,
         }
@@ -1740,6 +1841,67 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_flat_frame_becomes_a_flat_48_by_27_frame_of_the_same_colour() {
+        let full = grey_nv12_frame(Range::JPEG);
+        let view = yuv_view(&full).expect("nv12 view");
+        let mut out = vec![0u8; MODEL_WIDTH * MODEL_HEIGHT * 3];
+        fill_model_frame(&view, &mut out);
+        assert!(out.iter().all(|byte| *byte == 128), "{:?}", &out[..6]);
+    }
+
+    #[test]
+    fn a_frame_with_a_dark_left_half_keeps_its_halves() {
+        ensure_ffmpeg().expect("ffmpeg");
+        let mut frame = VideoFrame::new(Pixel::NV12, 96, 54);
+        frame.set_color_range(Range::JPEG);
+        let stride = frame.stride(0);
+        for row in 0..54 {
+            for col in 0..96 {
+                frame.data_mut(0)[row * stride + col] = if col < 48 { 20 } else { 220 };
+            }
+        }
+        frame.data_mut(1).fill(128);
+        let view = yuv_view(&frame).expect("nv12 view");
+        let mut out = vec![0u8; MODEL_WIDTH * MODEL_HEIGHT * 3];
+        fill_model_frame(&view, &mut out);
+        for row in 0..MODEL_HEIGHT {
+            assert!(out[row * MODEL_WIDTH * 3] < 40, "left of row {row}");
+            assert!(
+                out[(row * MODEL_WIDTH + 47) * 3] > 200,
+                "right of row {row}"
+            );
+        }
+    }
+
+    #[test]
+    fn filmstrip_boundaries_from_model_frames_follow_the_cuts() {
+        let mut model = ModelFrames::with_capacity(30);
+        for index in 0..30u8 {
+            model.push_with(|slot| slot.fill(index));
+        }
+        let cut = |frame_index: u64| edit_dna::Cut {
+            frame_index,
+            time_ms: frame_index * 40,
+            interval_ms: 0,
+            scene_score: 0.9,
+        };
+        // Cuts at 2 (only two frames before it), 10 and 12 (the second closes the
+        // first's "after" early), and 28 (the clip ends before four frames follow).
+        let boundaries = boundaries_from_model_frames(&model, &[cut(2), cut(10), cut(12), cut(28)]);
+        assert_eq!(boundaries.len(), 4);
+        let firsts = |frames: &[Vec<u8>]| frames.iter().map(|f| f[0]).collect::<Vec<u8>>();
+        assert_eq!((boundaries[0].thumb_w, boundaries[0].thumb_h), (48, 27));
+        assert_eq!(firsts(&boundaries[0].before), vec![0, 1]);
+        assert_eq!(firsts(&boundaries[0].after), vec![2, 3, 4, 5]);
+        assert_eq!(firsts(&boundaries[1].before), vec![6, 7, 8, 9]);
+        assert_eq!(firsts(&boundaries[1].after), vec![10, 11]);
+        assert_eq!(firsts(&boundaries[3].after), vec![28, 29]);
+        assert_eq!(boundaries[2].frame_index, 12);
+        assert_eq!(boundaries[2].time_ms, 480);
+        assert!(boundaries_from_model_frames(&model, &[]).is_empty());
+    }
+
     /// Software gives `yuvj420p` for most full-range 8-bit video, but a frame
     /// can also be `yuv420p` with a full range in its metadata (VP9 and AV1
     /// files do this). Every format follows the same rule.
@@ -1862,8 +2024,9 @@ mod tests {
     fn a_failed_hardware_attempt_decodes_again_in_software() {
         ensure_ffmpeg().expect("ffmpeg");
         let path = mjpeg_clip("fallback");
-        let forced = decode_planned(&path, Plan::Software(DecoderUsed::Forced)).expect("software");
-        let fell_back = decode_planned(&path, Plan::TryHardware).expect("fallback");
+        let forced =
+            decode_planned(&path, Plan::Software(DecoderUsed::Forced), false).expect("software");
+        let fell_back = decode_planned(&path, Plan::TryHardware, false).expect("fallback");
         let _ = std::fs::remove_file(&path);
 
         match &fell_back.decoder {
@@ -1976,7 +2139,7 @@ mod tests {
 
         let mut after_five = 0;
         for run in 1..=50 {
-            let reel = decode_planned(&path, Plan::TryHardware).expect("decode");
+            let reel = decode_planned(&path, Plan::TryHardware, false).expect("decode");
             assert_eq!(reel.decoder, DecoderUsed::Hardware, "run {run}");
             assert_eq!(reel.frames.len(), 48);
             if run == 5 {

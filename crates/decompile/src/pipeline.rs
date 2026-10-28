@@ -11,14 +11,14 @@ use std::time::{Duration, Instant};
 use edit_dna::{BoundaryView, CutDetectorKind, EditDna, SCHEMA_VERSION};
 
 use crate::asr::{self, AsrEstimate};
-use crate::decode::{self, DecodedReel, DecoderSetting, RawBoundary, THUMB_H, THUMB_W};
+use crate::decode::{self, DecodedReel, DecoderSetting, RawBoundary};
 use crate::error::DecompileError;
 use crate::histogram::aggregate;
 use crate::loudness::integrated_lufs;
 use crate::payoff::from_cuts;
-use crate::scene::{CutDetector, SceneScoreDetector, SCENE_NOTE};
+use crate::scene::{CutDetector, DetectorInput, SceneScoreDetector, SCENE_NOTE};
 use crate::silence;
-use crate::transnet::{select_detector, CutDetectorChoice, SelectedDetector};
+use crate::transnet::{select_detector, CutDetectorChoice, SelectedDetector, TRANSNET_NOTE};
 use crate::worker::WhisperRunner;
 
 const PCM_HALF_WINDOW_MS: u64 = 1_500;
@@ -54,13 +54,25 @@ pub struct DecompileOutput {
 }
 
 pub fn decompile_file(request: &DecompileRequest) -> Result<DecompileOutput, DecompileError> {
+    // The detector is chosen before decoding: `transnet` fails here, without
+    // decoding, when the weights, the library or the model are missing, and the
+    // 48x27 model frames are only collected when the model will run.
+    let select_started = Instant::now();
+    let selected = select_detector(request.cut_detector, request.transnet_weights.clone())?;
+    let select_elapsed = select_started.elapsed();
+
     let decode_started = Instant::now();
-    let decoded = decode::decode_file(&request.input, request.decoder)?;
+    let decoded = decode::decode_file(&request.input, request.decoder, selected.runs_model())?;
     let decode_elapsed = decode_started.elapsed();
 
     let analyze_started = Instant::now();
-    let selected = select_detector(request.cut_detector, request.transnet_weights.clone())?;
-    let (cuts, detector, detector_note) = resolve_cuts(&selected, request.cut_detector, &decoded)?;
+    let resolved = resolve_cuts(&selected, request.cut_detector, &decoded)?;
+    let ResolvedCuts {
+        cuts,
+        detector,
+        note: detector_note,
+        boundaries: model_boundaries,
+    } = resolved;
     let histograms = aggregate(
         &decoded.colors,
         &cuts,
@@ -68,7 +80,7 @@ pub fn decompile_file(request: &DecompileRequest) -> Result<DecompileOutput, Dec
         decoded.frames.len() as u64,
     );
     let payoff = from_cuts(&cuts);
-    let analyze_elapsed = analyze_started.elapsed();
+    let analyze_elapsed = select_elapsed + analyze_started.elapsed();
 
     let silence_started = Instant::now();
     let silence = silence::analyze(&decoded.pcm, decoded.sample_rate);
@@ -78,7 +90,11 @@ pub fn decompile_file(request: &DecompileRequest) -> Result<DecompileOutput, Dec
     let lufs = integrated_lufs(&decoded.pcm, decoded.sample_rate);
     let loudness_elapsed = loudness_started.elapsed();
 
-    let boundaries = boundary_views(&decoded);
+    let boundaries = boundary_views(
+        model_boundaries.as_deref().unwrap_or(&decoded.boundaries),
+        &decoded.pcm,
+        decoded.sample_rate,
+    );
     let mut signal = decode_elapsed + analyze_elapsed + silence_elapsed + loudness_elapsed;
 
     let asr_started = Instant::now();
@@ -130,37 +146,65 @@ pub fn decompile_file(request: &DecompileRequest) -> Result<DecompileOutput, Dec
     })
 }
 
+/// The cut list, which detector made it and why, and, when the model made it,
+/// the filmstrip boundaries rebuilt at those cuts (the decode loop captured
+/// them at the scene-score cuts).
+struct ResolvedCuts {
+    cuts: Vec<edit_dna::Cut>,
+    detector: CutDetectorKind,
+    note: String,
+    boundaries: Option<Vec<RawBoundary>>,
+}
+
 fn resolve_cuts(
     selected: &SelectedDetector,
     choice: CutDetectorChoice,
     decoded: &DecodedReel,
-) -> Result<(Vec<edit_dna::Cut>, CutDetectorKind, String), DecompileError> {
+) -> Result<ResolvedCuts, DecompileError> {
+    let scores = DetectorInput::scores(&decoded.frames);
     match selected {
-        SelectedDetector::Scene(detector) => Ok((
-            detector.detect(&decoded.frames)?,
-            detector.kind(),
-            SCENE_NOTE.to_string(),
-        )),
-        SelectedDetector::TransNet(detector) => match detector.detect(&decoded.frames) {
-            Ok(cuts) => Ok((
-                cuts,
-                detector.kind(),
-                "TransNetV2 ONNX produced the cut list.".to_string(),
-            )),
-            Err(err) => match choice {
-                CutDetectorChoice::Auto => {
-                    let scene = SceneScoreDetector::default();
-                    let cuts = scene.detect(&decoded.frames)?;
-                    Ok((
+        SelectedDetector::Scene(detector, skipped) => {
+            let note = match skipped {
+                None => SCENE_NOTE.to_string(),
+                Some(reason) => format!("Fell back to the FFmpeg scene-score detector: {reason}"),
+            };
+            Ok(ResolvedCuts {
+                cuts: detector.detect(&scores)?,
+                detector: detector.kind(),
+                note,
+                boundaries: None,
+            })
+        }
+        SelectedDetector::TransNet(detector) => {
+            let input = DetectorInput {
+                frames: &decoded.frames,
+                model_frames: decoded.model_frames.as_ref(),
+            };
+            match detector.detect(&input) {
+                Ok(cuts) => {
+                    let boundaries = decoded
+                        .model_frames
+                        .as_ref()
+                        .map(|model| decode::boundaries_from_model_frames(model, &cuts));
+                    Ok(ResolvedCuts {
                         cuts,
-                        scene.kind(),
-                        format!("Fell back to the FFmpeg scene-score detector: {err}"),
-                    ))
+                        detector: detector.kind(),
+                        note: TRANSNET_NOTE.to_string(),
+                        boundaries,
+                    })
                 }
-                CutDetectorChoice::TransNet => Err(err),
-                CutDetectorChoice::Scene => Err(err),
-            },
-        },
+                Err(err) if choice == CutDetectorChoice::Auto => {
+                    let scene = SceneScoreDetector::default();
+                    Ok(ResolvedCuts {
+                        cuts: scene.detect(&scores)?,
+                        detector: scene.kind(),
+                        note: format!("Fell back to the FFmpeg scene-score detector: {err}"),
+                        boundaries: None,
+                    })
+                }
+                Err(err) => Err(err),
+            }
+        }
     }
 }
 
@@ -201,11 +245,10 @@ fn assemble(
     dna
 }
 
-fn boundary_views(decoded: &DecodedReel) -> Vec<BoundaryView> {
-    decoded
-        .boundaries
+fn boundary_views(boundaries: &[RawBoundary], pcm: &[f32], sample_rate: u32) -> Vec<BoundaryView> {
+    boundaries
         .iter()
-        .map(|boundary| boundary_view(boundary, &decoded.pcm, decoded.sample_rate))
+        .map(|boundary| boundary_view(boundary, pcm, sample_rate))
         .collect()
 }
 
@@ -218,8 +261,8 @@ fn boundary_view(boundary: &RawBoundary, pcm: &[f32], sample_rate: u32) -> Bound
     BoundaryView {
         frame_index: boundary.frame_index,
         time_ms: boundary.time_ms,
-        thumb_width: THUMB_W,
-        thumb_height: THUMB_H,
+        thumb_width: boundary.thumb_w,
+        thumb_height: boundary.thumb_h,
         thumbs,
         cut_thumb_index,
         sample_rate,
