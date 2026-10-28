@@ -474,6 +474,20 @@ mod tests {
     }
 
     #[test]
+    fn scene_with_weights_and_a_bad_library_still_carries_no_reason() {
+        // Weights that exist and a library that does not: `auto` would fall back
+        // with a reason, `scene` was asked for and has nothing to explain.
+        let weights = some_file();
+        let library = no_library();
+        for library in [None, Some(library.as_os_str())] {
+            let selected =
+                select_with(CutDetectorChoice::Scene, Some(&weights), library).expect("select");
+            assert!(matches!(selected, SelectedDetector::Scene(_, None)));
+            assert!(!selected.runs_model());
+        }
+    }
+
+    #[test]
     fn transnet_without_what_it_needs_is_an_error() {
         let weights = some_file();
         let library = no_library();

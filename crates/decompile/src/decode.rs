@@ -1861,6 +1861,44 @@ mod tests {
         assert!(out.iter().all(|byte| *byte == 128), "{:?}", &out[..6]);
     }
 
+    /// A 192x108 full-range NV12 frame whose luma is `even` in even columns and
+    /// `odd` in odd ones. At this size each of the 192x4 by 108x4 sample points
+    /// lands on exactly one pixel, so every output pixel averages 8 pixels of
+    /// each value.
+    fn striped_nv12_frame(even: u8, odd: u8) -> VideoFrame {
+        ensure_ffmpeg().expect("ffmpeg");
+        let mut frame = VideoFrame::new(Pixel::NV12, 192, 108);
+        frame.set_color_range(Range::JPEG);
+        let stride = frame.stride(0);
+        for row in 0..108 {
+            for col in 0..192 {
+                frame.data_mut(0)[row * stride + col] = if col % 2 == 0 { even } else { odd };
+            }
+        }
+        frame.data_mut(1).fill(128);
+        frame
+    }
+
+    fn model_frame_of(frame: &VideoFrame) -> Vec<u8> {
+        let view = yuv_view(frame).expect("nv12 view");
+        let mut out = vec![0u8; MODEL_WIDTH * MODEL_HEIGHT * 3];
+        fill_model_frame(&view, &mut out);
+        out
+    }
+
+    #[test]
+    fn the_mean_of_a_cell_is_rounded_to_nearest_with_halves_up() {
+        // 100 and 201 average to 150.5, which rounds up to 151 (a truncated mean is 150).
+        let out = model_frame_of(&striped_nv12_frame(100, 201));
+        assert!(out.iter().all(|byte| *byte == 151), "{:?}", &out[..6]);
+        // 100 and 200 average to exactly 150.
+        let out = model_frame_of(&striped_nv12_frame(100, 200));
+        assert!(out.iter().all(|byte| *byte == 150), "{:?}", &out[..6]);
+        // 100 and 101 average to 100.5 and round up to 101.
+        let out = model_frame_of(&striped_nv12_frame(100, 101));
+        assert!(out.iter().all(|byte| *byte == 101), "{:?}", &out[..6]);
+    }
+
     #[test]
     fn a_frame_with_a_dark_left_half_keeps_its_halves() {
         ensure_ffmpeg().expect("ffmpeg");

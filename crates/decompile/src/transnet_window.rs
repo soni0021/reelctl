@@ -629,6 +629,27 @@ mod tests {
     }
 
     #[test]
+    fn sample_positions_are_the_middles_of_equal_shares_of_the_axis() {
+        // Four points along 8 pixels: the middles of the shares [0,2) [2,4) [4,6) [6,8).
+        let at = |size: u32| -> Vec<u32> {
+            (0..4)
+                .map(|point| sample_coordinate(point, 4, size))
+                .collect()
+        };
+        assert_eq!(at(8), vec![1, 3, 5, 7]);
+        // 10 pixels: the middles are 1.25, 3.75, 6.25 and 8.75, rounded down.
+        assert_eq!(at(10), vec![1, 3, 6, 8]);
+        // One point in one pixel, and one point in many: the middle.
+        assert_eq!(sample_coordinate(0, 1, 1), 0);
+        assert_eq!(sample_coordinate(0, 1, 9), 4);
+        // As many points as pixels: each point is its own pixel.
+        let own: Vec<u32> = (0..48)
+            .map(|point| sample_coordinate(point, 48, 48))
+            .collect();
+        assert_eq!(own, (0..48).collect::<Vec<u32>>());
+    }
+
+    #[test]
     fn sample_positions_stay_inside_the_frame_and_spread_across_it() {
         for size in [10u32, 27, 48, 360, 640, 1080, 1920] {
             for cells in [MODEL_WIDTH, MODEL_HEIGHT] {
