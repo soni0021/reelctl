@@ -25,16 +25,263 @@ pub struct SampledFrame {
 }
 
 /// Decode the frames at `times_ms`, scaled to `width` pixels wide (height keeps the
-/// aspect ratio, rounded to even). The result has one entry per requested time, in
-/// the order asked, duplicates included.
+/// aspect ratio, rounded up to even). The result has one entry per requested time,
+/// in the order asked, duplicates included. HEVC tries the media engine first, as
+/// `decompile` does, and falls back to software on any failure.
 pub fn decode_frames_at(
     path: &Path,
     times_ms: &[u64],
     width: u32,
     setting: DecoderSetting,
 ) -> Result<Vec<SampledFrame>, DecompileError> {
-    let _ = (path, times_ms, width, setting);
-    Err(DecompileError::Message("not implemented".to_string()))
+    ensure_ffmpeg().map_err(|err| stage("ffmpeg init", err))?;
+    if times_ms.is_empty() {
+        return Ok(Vec::new());
+    }
+    match choose_decoder(video_codec(path)?, setting) {
+        Plan::Software(_) => sample_with(path, None, times_ms, width),
+        Plan::TryHardware => {
+            let attempt = HardwareDevice::create().and_then(|device| {
+                sample_with(path, Some(&device), times_ms, width).map_err(|err| err.to_string())
+            });
+            match attempt {
+                Ok(frames) => Ok(frames),
+                Err(_) => sample_with(path, None, times_ms, width),
+            }
+        }
+    }
+}
+
+/// The latest frame converted, for times past the last frame.
+struct Latest {
+    time_ms: u64,
+    width: u32,
+    height: u32,
+    rgb: Vec<u8>,
+}
+
+/// Picks frames for the requested times and scales them.
+struct Sampler<'a> {
+    times_ms: &'a [u64],
+    /// Indices into `times_ms`, by time.
+    order: Vec<usize>,
+    next: usize,
+    results: Vec<Option<SampledFrame>>,
+    width: u32,
+    frame_ms: u64,
+    latest: Option<Latest>,
+    /// The scaler and the source it was made for.
+    scaler: Option<((Pixel, u32, u32), ffmpeg::software::scaling::Context)>,
+    out: VideoFrame,
+}
+
+impl<'a> Sampler<'a> {
+    fn new(times_ms: &'a [u64], width: u32, frame_ms: u64) -> Self {
+        let mut order: Vec<usize> = (0..times_ms.len()).collect();
+        order.sort_by_key(|&index| times_ms[index]);
+        Self {
+            times_ms,
+            order,
+            next: 0,
+            results: (0..times_ms.len()).map(|_| None).collect(),
+            width: width.max(2),
+            frame_ms,
+            latest: None,
+            scaler: None,
+            out: VideoFrame::empty(),
+        }
+    }
+
+    fn done(&self) -> bool {
+        self.next >= self.order.len()
+    }
+
+    fn target(&self) -> Option<u64> {
+        self.order
+            .get(self.next)
+            .and_then(|&index| self.times_ms.get(index))
+            .copied()
+    }
+
+    /// Keep `frame` (shown at `time_ms`) if it is the first at or after a pending
+    /// time, or if it is just before one and might turn out to be the last frame.
+    fn observe(&mut self, frame: &VideoFrame, time_ms: u64) -> Result<(), DecompileError> {
+        let Some(target) = self.target() else {
+            return Ok(());
+        };
+        if target > time_ms && target - time_ms > self.frame_ms.saturating_mul(2) {
+            return Ok(());
+        }
+        let (width, height, rgb) = self.scale(frame)?;
+        while let Some(target) = self.target() {
+            if target > time_ms {
+                break;
+            }
+            let index = self.order.get(self.next).copied().unwrap_or(0);
+            if let Some(slot) = self.results.get_mut(index) {
+                *slot = Some(SampledFrame {
+                    requested_ms: target,
+                    time_ms,
+                    width,
+                    height,
+                    rgb: rgb.clone(),
+                });
+            }
+            self.next += 1;
+        }
+        if !self.done() {
+            self.latest = Some(Latest {
+                time_ms,
+                width,
+                height,
+                rgb,
+            });
+        }
+        Ok(())
+    }
+
+    /// Scale to RGB at the target width: `(width, height, packed rows)`.
+    fn scale(&mut self, frame: &VideoFrame) -> Result<(u32, u32, Vec<u8>), DecompileError> {
+        let (src_w, src_h, format) = (frame.width(), frame.height(), frame.format());
+        if src_w == 0 || src_h == 0 {
+            return Err(DecompileError::Message(
+                "a decoded frame has no size".into(),
+            ));
+        }
+        let width = self.width;
+        // Rounded up to even, so every pixel pair is whole.
+        let height = ((u64::from(src_h) * u64::from(width) / u64::from(src_w)) as u32 + 1) & !1;
+        let height = height.max(2);
+        let key = (format, src_w, src_h);
+        if self.scaler.as_ref().map(|(made, _)| *made) != Some(key) {
+            let context = ffmpeg::software::scaling::Context::get(
+                format,
+                src_w,
+                src_h,
+                Pixel::RGB24,
+                width,
+                height,
+                ffmpeg::software::scaling::Flags::AREA,
+            )
+            .map_err(|err| stage("scale a frame", err))?;
+            self.scaler = Some((key, context));
+            self.out = VideoFrame::empty();
+        }
+        let Some((_, context)) = self.scaler.as_mut() else {
+            return Err(DecompileError::Message("no scaler".into()));
+        };
+        context
+            .run(frame, &mut self.out)
+            .map_err(|err| stage("scale a frame", err))?;
+        let stride = self.out.stride(0);
+        let data = self.out.data(0);
+        let row = width as usize * 3;
+        let mut rgb = Vec::with_capacity(row * height as usize);
+        for y in 0..height as usize {
+            let start = y * stride;
+            let line = data.get(start..start + row).ok_or_else(|| {
+                DecompileError::Message("a scaled frame is shorter than its size".into())
+            })?;
+            rgb.extend_from_slice(line);
+        }
+        Ok((width, height, rgb))
+    }
+
+    /// Give every time still pending the latest frame kept, and collect the results.
+    fn finish(mut self, path: &Path) -> Result<Vec<SampledFrame>, DecompileError> {
+        while let Some(target) = self.target() {
+            let latest = self
+                .latest
+                .as_ref()
+                .ok_or_else(|| DecompileError::NoFrames(path.display().to_string()))?;
+            let index = self.order.get(self.next).copied().unwrap_or(0);
+            if let Some(slot) = self.results.get_mut(index) {
+                *slot = Some(SampledFrame {
+                    requested_ms: target,
+                    time_ms: latest.time_ms,
+                    width: latest.width,
+                    height: latest.height,
+                    rgb: latest.rgb.clone(),
+                });
+            }
+            self.next += 1;
+        }
+        self.results
+            .into_iter()
+            .map(|slot| slot.ok_or_else(|| DecompileError::NoFrames(path.display().to_string())))
+            .collect()
+    }
+}
+
+fn sample_with(
+    path: &Path,
+    device: Option<&HardwareDevice>,
+    times_ms: &[u64],
+    width: u32,
+) -> Result<Vec<SampledFrame>, DecompileError> {
+    let mut input = ffmpeg::format::input(path).map_err(|err| stage("open input", err))?;
+    let video_index = input
+        .streams()
+        .best(MediaType::Video)
+        .ok_or_else(|| DecompileError::NoVideo(path.display().to_string()))?
+        .index();
+    let (time_base, start_time, fps) = {
+        let stream = input
+            .streams()
+            .find(|stream| stream.index() == video_index)
+            .ok_or_else(|| DecompileError::NoVideo(path.display().to_string()))?;
+        let fps = positive_rational(stream.avg_frame_rate())
+            .or_else(|| positive_rational(stream.rate()))
+            .unwrap_or(Rational::new(30, 1));
+        (stream.time_base(), stream.start_time(), fps)
+    };
+    let video = {
+        let stream = input
+            .streams()
+            .find(|stream| stream.index() == video_index)
+            .ok_or_else(|| DecompileError::NoVideo(path.display().to_string()))?;
+        open_video(stream.parameters(), device).map_err(|err| stage("open video decoder", err))?
+    };
+    let mut receiver = Receiver::new(video, device.is_some());
+    let mut sampler = Sampler::new(times_ms, width, frame_duration_ms(fps));
+    let mut index = 0u64;
+
+    'packets: for (stream, packet) in input.packets() {
+        if stream.index() != video_index {
+            continue;
+        }
+        send_video(&mut receiver.video, &packet).map_err(|err| stage("send video packet", err))?;
+        while let Received::Frame = receiver
+            .receive()
+            .map_err(|err| stage("decode video frame", err))?
+        {
+            let time_ms = frame_time_ms(receiver.frame(), index, time_base, start_time, fps);
+            index += 1;
+            sampler.observe(receiver.frame(), time_ms)?;
+            if sampler.done() {
+                break 'packets;
+            }
+        }
+    }
+    if !sampler.done() {
+        match receiver.video.send_eof() {
+            Ok(()) => {}
+            Err(err) if is_retry(&err) => {}
+            Err(err) => return Err(stage("flush video decoder", err)),
+        }
+        while let Received::Frame = receiver
+            .receive()
+            .map_err(|err| stage("decode video frame", err))?
+        {
+            let time_ms = frame_time_ms(receiver.frame(), index, time_base, start_time, fps);
+            index += 1;
+            sampler.observe(receiver.frame(), time_ms)?;
+            if sampler.done() {
+                break;
+            }
+        }
+    }
+    sampler.finish(path)
 }
 
 #[cfg(test)]

@@ -59,6 +59,14 @@ Same machine, release builds of `main` and `feature/relative-silence` on the sam
 
 The real clip was re-cut from the original recording on 2026-10-25 with its audio copied, not re-encoded, so its word count (125) differs from the 2026-10-21 runs (183); see Known issues.
 
+## Long-to-short clipper, 2026-10-28 (in progress)
+
+Branch `feature/long-to-short-clipper` ([spec](specs/long-to-short-clipper.md)). Entries are added as each part lands.
+
+| Check | Result |
+|---|---|
+| `decompile::decode_frames_at`, release build, Apple M3 | 344 frames (every 5 s) from the 28.6-min 1080p lecture, scaled to 448×252 RGB: 10.8 s. The last requested time (1,715,000 ms) got the frame at 1,715,013 ms. 20 frames from a 31 MB proxy: 58 ms (decoding stops once the last time is served) |
+
 ## Comparative diff, 2026-10-26
 
 Apple M3 MacBook Air, merged into `main` 2026-10-26; release build of `feature/comparative-diff` ([spec](specs/comparative-diff.md), [ADR-014](decisions/ADR-014-compare-a-draft-with-several-outliers-in-a-separate-key.md)). The two real reels are downloads kept outside the repo.

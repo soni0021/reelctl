@@ -33,7 +33,7 @@ A new crate, `understand`, plus a `reelctl understand` subcommand. The crate is 
 - [ ] Four branches merged into the feature branch; `cargo test -p understand` passes; `git check-ignore -v .env` still holds
 
 ### Phase 3: Wiring (main session)
-- [ ] Task 5: `decompile::decode_frames_at`
+- [x] Task 5: `decompile::decode_frames_at`
 - [ ] Task 6: `openrouter.rs` (backend and catalog) and the key rules
 - [ ] Task 7: `reelctl understand`: exit codes 1–4, `--dry-run`, `--replay`, `--catalog`, end-to-end tests, schema
 

@@ -41,8 +41,8 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/long-to-short-clipper.md](../d
 
 ## Task 5: `decompile::decode_frames_at`
 
-- [ ] Decodes one frame at each time in a list (nearest frame at or after the time), scaled to 448 px wide, as RGB; exact times; works for 8-bit and 10-bit input; tested on fixtures
-- [ ] Docs: `docs/status.md` note, CHANGELOG not needed (no user-visible change)
+- [x] Decodes one frame at each time in a list (nearest frame at or after the time), scaled to 448 px wide, as RGB; exact times; works for 8-bit and 10-bit input; tested on fixtures
+- [x] Docs: `docs/status.md` note, CHANGELOG not needed (no user-visible change)
 
 ## Task 6: OpenRouter backend and catalog
 
