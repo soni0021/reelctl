@@ -20,7 +20,7 @@ use crate::payoff::from_cuts;
 use crate::scene::{CutDetector, DetectorInput, SceneScoreDetector, SCENE_NOTE};
 use crate::silence;
 use crate::transnet::{
-    long_run_warning, select_detector, CutDetectorChoice, SelectedDetector, TRANSNET_NOTE,
+    select_detector, transnet_note, CutDetectorChoice, SelectedDetector, TRANSNET_NOTE,
 };
 use crate::worker::WhisperRunner;
 
@@ -202,10 +202,7 @@ fn resolve_cuts(
                     Ok(ResolvedCuts {
                         cuts,
                         detector: detector.kind(),
-                        note: format!(
-                            "{TRANSNET_NOTE}{}",
-                            long_run_warning(decoded.frames.len()).unwrap_or_default()
-                        ),
+                        note: transnet_note(decoded.frames.len()),
                         boundaries,
                     })
                 }
@@ -520,6 +517,10 @@ mod tests {
         for (length, sum) in calls.iter() {
             assert_eq!(*length, WINDOW * FRAME_BYTES);
             assert!(*sum > 0.0, "the window held real picture data");
+        }
+        // The clip changes from frame to frame, so each window holds other frames.
+        for pair in calls.windows(2) {
+            assert_ne!(pair[0].1, pair[1].1, "two windows held the same frames");
         }
         assert_eq!(output.dna.cut_detector, CutDetectorKind::TransNetV2);
         assert!(output.dna.cut_detector_note.starts_with(TRANSNET_NOTE));

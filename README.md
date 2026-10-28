@@ -67,6 +67,7 @@ The Cargo workspace has these crates (the Go watchtower is a separate module in 
 | `decompile` | Decode with ffmpeg-next, then find cuts, punch-ins and overlay changes, silence, loudness, per-shot color, and the payoff cue |
 | `diff` | Pacing flags, and a comparison, for a draft against one to three outliers |
 | `filmstrip` | `timeline_view` PNGs at cut boundaries |
+| `look` | `reelctl look`: per-channel histogram matching and the `.cube` writer and reader (pure) |
 | `understand` | Long-video understanding: transcript segments, frame plan, the model request and cost bound, clip rules, and `understanding.json` (no ffmpeg or whisper dependency) |
 | `timeline` | The OpenTimelineIO subset, edit operations and the ffmpeg filter-graph builder (pure) |
 | `reelctl` | The command-line tool |
