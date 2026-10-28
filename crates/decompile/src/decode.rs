@@ -252,26 +252,26 @@ pub(crate) fn boundaries_from_model_frames(
 pub(crate) fn decode_file(
     path: &Path,
     setting: DecoderSetting,
-    model_frames: bool,
+    model_frame_limit: Option<usize>,
 ) -> Result<DecodedReel, DecompileError> {
     ensure_ffmpeg().map_err(|err| stage("ffmpeg init", err))?;
     decode_planned(
         path,
         choose_decoder(video_codec(path)?, setting),
-        model_frames,
+        model_frame_limit,
     )
 }
 
 fn decode_planned(
     path: &Path,
     plan: Plan,
-    model_frames: bool,
+    model_frame_limit: Option<usize>,
 ) -> Result<DecodedReel, DecompileError> {
     match plan {
-        Plan::Software(used) => decode_with(path, Decoder::Software(used), model_frames),
+        Plan::Software(used) => decode_with(path, Decoder::Software(used), model_frame_limit),
         Plan::TryHardware => {
             let attempt = HardwareDevice::create().and_then(|device| {
-                decode_with(path, Decoder::Hardware(&device), model_frames)
+                decode_with(path, Decoder::Hardware(&device), model_frame_limit)
                     .map_err(|err| err.to_string())
             });
             match attempt {
@@ -279,7 +279,7 @@ fn decode_planned(
                 Err(reason) => decode_with(
                     path,
                     Decoder::Software(DecoderUsed::Fallback(reason)),
-                    model_frames,
+                    model_frame_limit,
                 ),
             }
         }
@@ -305,7 +305,7 @@ enum Decoder<'a> {
 fn decode_with(
     path: &Path,
     decoder: Decoder<'_>,
-    model_frames: bool,
+    model_frame_limit: Option<usize>,
 ) -> Result<DecodedReel, DecompileError> {
     let mut input = ffmpeg::format::input(path).map_err(|err| stage("open input", err))?;
     let video_index = input
@@ -376,7 +376,7 @@ fn decode_with(
         width: receiver.video.width(),
         height: receiver.video.height(),
         format: VideoFormat::default(),
-        model: model_frames.then(|| ModelFrames::with_capacity(expected_frames)),
+        model: model_frame_limit.map(|limit| ModelFrames::with_limit(expected_frames, limit)),
     };
     let mut last_time_ms = 0u64;
 
@@ -2046,8 +2046,8 @@ mod tests {
         ensure_ffmpeg().expect("ffmpeg");
         let path = mjpeg_clip("fallback");
         let forced =
-            decode_planned(&path, Plan::Software(DecoderUsed::Forced), false).expect("software");
-        let fell_back = decode_planned(&path, Plan::TryHardware, false).expect("fallback");
+            decode_planned(&path, Plan::Software(DecoderUsed::Forced), None).expect("software");
+        let fell_back = decode_planned(&path, Plan::TryHardware, None).expect("fallback");
         let _ = std::fs::remove_file(&path);
 
         match &fell_back.decoder {
@@ -2160,7 +2160,7 @@ mod tests {
 
         let mut after_five = 0;
         for run in 1..=50 {
-            let reel = decode_planned(&path, Plan::TryHardware, false).expect("decode");
+            let reel = decode_planned(&path, Plan::TryHardware, None).expect("decode");
             assert_eq!(reel.decoder, DecoderUsed::Hardware, "run {run}");
             assert_eq!(reel.frames.len(), 48);
             if run == 5 {

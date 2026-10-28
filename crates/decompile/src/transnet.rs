@@ -25,7 +25,8 @@ use ort::value::Tensor;
 use crate::error::DecompileError;
 use crate::scene::{CutDetector, DetectorInput, SceneScoreDetector};
 use crate::transnet_window::{
-    cut_points, cuts_at, predict, CUT_THRESHOLD, FRAME_BYTES, MODEL_HEIGHT, MODEL_WIDTH, WINDOW,
+    cut_points, cuts_at, predict, CUT_THRESHOLD, FRAME_BYTES, MAX_MODEL_FRAMES, MODEL_HEIGHT,
+    MODEL_WIDTH, WINDOW,
 };
 
 /// The environment variable that names the ONNX Runtime library (`ort`'s own name).
@@ -86,22 +87,40 @@ impl CutDetectorChoice {
     }
 }
 
+/// What runs the model on one window: `WINDOW * FRAME_BYTES` values in, one
+/// probability per frame out. The real one is an ONNX Runtime session; tests
+/// supply fakes, so the pipeline's use of the model is tested without one.
+pub(crate) trait WindowModel: std::fmt::Debug + Send + Sync {
+    fn run_window(&self, window: &[f32]) -> Result<Vec<f32>, DecompileError>;
+}
+
 /// A model session, ready to run. Opening one checks the weights file, the
 /// library and the model, so a bad setup fails before the video is decoded.
+#[derive(Debug)]
 pub struct TransNetV2Detector {
+    model: Box<dyn WindowModel>,
+    /// The most 48x27 frames the decode loop keeps for it.
+    max_frames: usize,
+}
+
+struct OrtModel {
     session: Mutex<Session>,
     input_name: String,
 }
 
-impl std::fmt::Debug for TransNetV2Detector {
+impl std::fmt::Debug for OrtModel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TransNetV2Detector")
+        f.debug_struct("OrtModel")
             .field("input_name", &self.input_name)
             .finish_non_exhaustive()
     }
 }
 
 impl TransNetV2Detector {
+    pub(crate) fn new(model: Box<dyn WindowModel>, max_frames: usize) -> Self {
+        Self { model, max_frames }
+    }
+
     /// Open the weights with the ONNX Runtime library at `library` (the value of
     /// `ORT_DYLIB_PATH`). The error is the reason, ready to show.
     pub fn open_with(weights: Option<&Path>, library: Option<&OsStr>) -> Result<Self, String> {
@@ -116,12 +135,19 @@ impl TransNetV2Detector {
                 )
             })?;
         let input_name = check_model(&session)?;
-        Ok(Self {
+        let model = OrtModel {
             session: Mutex::new(session),
             input_name,
-        })
+        };
+        Ok(Self::new(Box::new(model), MAX_MODEL_FRAMES))
     }
 
+    pub(crate) fn max_frames(&self) -> usize {
+        self.max_frames
+    }
+}
+
+impl WindowModel for OrtModel {
     fn run_window(&self, window: &[f32]) -> Result<Vec<f32>, DecompileError> {
         let shape = [1usize, WINDOW, MODEL_HEIGHT, MODEL_WIDTH, 3];
         let tensor = Tensor::from_array((shape, window.to_vec())).map_err(model_error)?;
@@ -147,7 +173,7 @@ impl CutDetector for TransNetV2Detector {
     }
 
     fn detect(&self, input: &DetectorInput<'_>) -> Result<Vec<Cut>, DecompileError> {
-        detect_with(input, |window| self.run_window(window))
+        detect_with(input, |window| self.model.run_window(window))
     }
 }
 
@@ -308,8 +334,17 @@ pub enum SelectedDetector {
 }
 
 impl SelectedDetector {
+    /// Whether the decode loop must collect the 48x27 frames.
     pub fn runs_model(&self) -> bool {
         matches!(self, Self::TransNet(_))
+    }
+
+    /// The most 48x27 frames to keep for the model (0 when it does not run).
+    pub(crate) fn model_frame_limit(&self) -> usize {
+        match self {
+            Self::Scene(..) => 0,
+            Self::TransNet(detector) => detector.max_frames(),
+        }
     }
 }
 
@@ -579,7 +614,10 @@ mod tests {
     fn a_long_run_is_warned_about_with_its_frame_count_and_the_measured_rate() {
         assert_eq!(long_run_warning(LONG_RUN_FRAMES - 1), None);
         let text = long_run_warning(LONG_RUN_FRAMES).expect("a warning");
-        assert!(text.contains(&format!("{LONG_RUN_FRAMES} frames")), "{text}");
+        assert!(
+            text.contains(&format!("{LONG_RUN_FRAMES} frames")),
+            "{text}"
+        );
         assert!(text.contains("7 to 13 ms"), "{text}");
         assert!(text.contains("--cut-detector scene"), "{text}");
         // 9,000 frames at 7 and 13 ms: 63 and 117 s.
