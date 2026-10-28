@@ -408,13 +408,21 @@ fn the_api_key_never_appears_in_any_output() {
         .arg(&out)
         .arg("--catalog")
         .arg(&lecture.catalog)
-        // --replay keeps this run off the network even if the cap check were lost.
-        .args(["--replay", &lecture.replay.to_string_lossy()])
+        // The key is read on this run (no --replay). If the cap check were lost the
+        // request would go out, so every proxy variable points at a closed local port:
+        // the call fails on this machine and nothing leaves it.
+        .env("ALL_PROXY", "http://127.0.0.1:9")
+        .env("HTTPS_PROXY", "http://127.0.0.1:9")
+        .env("HTTP_PROXY", "http://127.0.0.1:9")
+        .env("all_proxy", "http://127.0.0.1:9")
+        .env("https_proxy", "http://127.0.0.1:9")
+        .env("http_proxy", "http://127.0.0.1:9")
         .args(["--max-cost-usd", "0.0000001"])
         .output()
         .expect("spawn understand");
     assert_eq!(failed.status.code(), Some(4));
     assert!(!text(&failed.stderr).contains(DUMMY_KEY));
+    assert!(!text(&failed.stdout).contains(DUMMY_KEY));
     let _ = fs::remove_dir_all(&lecture.root);
 }
 

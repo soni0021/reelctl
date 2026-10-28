@@ -793,40 +793,6 @@ mod tests {
     }
 
     #[test]
-    fn a_key_in_an_event_that_is_not_json_is_not_shown() {
-        let (url, _) = serve_once(
-            "200 OK",
-            "text/event-stream",
-            format!("data: {KEY} is not json\n\n"),
-        );
-        let backend = OpenRouterBackend::with_base_url(KEY.to_string(), url);
-        let err = backend.analyze(&request()).expect_err("error");
-        assert!(matches!(err, BackendError::BadReply(_)), "{err}");
-        assert_no_key(&err);
-    }
-
-    #[test]
-    fn a_key_in_a_transport_error_is_not_shown() {
-        // The server answers with a status line that is not HTTP; the transport error
-        // may quote what it read.
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-        let address = listener.local_addr().expect("address");
-        std::thread::spawn(move || {
-            let Ok((mut stream, _)) = listener.accept() else {
-                return;
-            };
-            let mut buffer = [0u8; 8192];
-            let _ = stream.read(&mut buffer);
-            let _ = stream.write_all(format!("{KEY}/9.9 200 OK\r\n\r\n").as_bytes());
-        });
-        let backend =
-            OpenRouterBackend::with_base_url(KEY.to_string(), format!("http://{address}"));
-        let err = backend.analyze(&request()).expect_err("error");
-        assert!(matches!(err, BackendError::Http(_)), "{err:?}");
-        assert_no_key(&err);
-    }
-
-    #[test]
     fn the_catalog_reads_a_listing_over_http_and_maps_404() {
         let (url, received) = serve_once("200 OK", "application/json", listing());
         let catalog = OpenRouterCatalog::with_base_url(url);

@@ -4,7 +4,8 @@
 //! whole. It decodes the video once, in presentation order, and converts only the
 //! frames it keeps, with libswscale (no process spawn). For each requested time it
 //! keeps the first frame at or after it, so a frame is at most one frame period late.
-//! A time past the last frame gets the last frame.
+//! A time past the last frame gets the last frame, so the newest frame that was not
+//! scaled is kept as one raw copy (about one frame of memory, one copy per frame).
 //!
 //! Colors follow libswscale's defaults (BT.601), and HDR is not tone-mapped, as in
 //! ADR-011; that is enough for a model to read slides and faces.
@@ -66,7 +67,8 @@ pub(crate) fn decode_frames_at_with_decoder(
 }
 
 /// Whether a frame shown at `time_ms` is too far before `target` to be worth
-/// scaling: more than two frame periods early, so a later frame will serve it.
+/// scaling: more than two frame periods early. A later frame will serve it unless this
+/// turns out to be the last one, which is why [`Sampler::keep_raw`] keeps a copy.
 fn far_before(target: u64, time_ms: u64, frame_ms: u64) -> bool {
     target > time_ms && target - time_ms > frame_ms.saturating_mul(2)
 }
@@ -127,8 +129,8 @@ impl<'a> Sampler<'a> {
             .copied()
     }
 
-    /// Keep `frame` (shown at `time_ms`) if it is the first at or after a pending
-    /// time, or if it is just before one and might turn out to be the last frame.
+    /// Scale `frame` (shown at `time_ms`) if it is at or near a pending time. A frame
+    /// far before one is only kept unscaled, in case it is the last frame.
     fn observe(&mut self, frame: &VideoFrame, time_ms: u64) -> Result<(), DecompileError> {
         let Some(target) = self.target() else {
             return Ok(());
@@ -175,7 +177,7 @@ impl<'a> Sampler<'a> {
                     && kept.width() == frame.width()
                     && kept.height() == frame.height() =>
             {
-                kept.clone_from(frame);
+                crate::hwdecode::copy_frame(kept, frame);
                 *kept_ms = time_ms;
             }
             _ => self.last_raw = Some((time_ms, frame.clone())),

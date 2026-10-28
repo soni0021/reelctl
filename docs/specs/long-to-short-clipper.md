@@ -213,7 +213,7 @@ Test-first. No test uses the network: the live run (criterion 5) is done by hand
   - `--dry-run`: never calls the backend
 - **The key.** It never appears in stdout, stderr or the output file (the test uses a dummy key). The `reelctl()` test helper removes `OPENROUTER_API_KEY` from the child's environment, like `REELCTL_WHISPER_MODEL`, so a shell that has sourced `.env` can never make a paid call from the default suite; AGENTS.md says so.
 - **End to end** in `understand_fixture.rs`, through `--replay` and `--catalog`: a fixture video, a hand-written `edit_dna.json` with words and one cut, a fixed catalog file, and a recorded reply produce the expected clips and a non-null `vlm_label` for the cut.
-- **Live, ignored:** one fixture through `qwen/qwen3.5-9b` when `OPENROUTER_API_KEY` is set.
+- **Live:** by hand, never in the suite: the lecture through `qwen/qwen3.5-9b` with the user's yes (criterion 5).
 - **Manual, not committed:** the NEET lecture with Qwen3.5-9B and with Muse 1.2, recorded in `docs/status.md`.
 
 ## Boundaries

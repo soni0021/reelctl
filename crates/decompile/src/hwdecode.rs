@@ -186,8 +186,27 @@ mod videotoolbox {
 #[cfg(target_os = "macos")]
 pub(crate) use videotoolbox::{attach, download, HardwareDevice};
 
+/// Copy `source` into `target`, reusing `target`'s buffers when the shapes match.
+///
+/// `clone_from` copies the properties with `av_frame_copy_props`, which appends the
+/// source's side data (HDR metadata, SEI messages) to what `target` already holds, so
+/// copying many frames into one target grows it without end on HDR video. This
+/// releases the old entries first.
+pub(crate) fn copy_frame(
+    target: &mut ffmpeg_next::frame::Video,
+    source: &ffmpeg_next::frame::Video,
+) {
+    // SAFETY: `target` is a valid frame that this function borrows exclusively.
+    // `av_frame_side_data_free` frees the entries and sets the count to zero.
+    unsafe {
+        let raw = target.as_mut_ptr();
+        ffmpeg_next::ffi::av_frame_side_data_free(&mut (*raw).side_data, &mut (*raw).nb_side_data);
+    }
+    target.clone_from(source);
+}
+
 /// How many side data entries (HDR metadata, SEI messages) a frame holds.
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(test)]
 pub(crate) fn side_data_count(frame: &ffmpeg_next::frame::Video) -> usize {
     // SAFETY: `frame` is a valid frame, and `nb_side_data` is a plain field.
     let count = unsafe { (*frame.as_ptr()).nb_side_data };
@@ -222,3 +241,45 @@ mod unavailable {
 
 #[cfg(not(target_os = "macos"))]
 pub(crate) use unavailable::{attach, download, HardwareDevice};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ffmpeg_next::format::Pixel;
+
+    fn frame_with_side_data(entries: usize) -> ffmpeg_next::frame::Video {
+        let mut frame = ffmpeg_next::frame::Video::new(Pixel::YUV420P, 16, 16);
+        for _ in 0..entries {
+            // SAFETY: `frame` is a valid frame; the entry is owned by it and freed with it.
+            let added = unsafe {
+                ffmpeg_next::ffi::av_frame_new_side_data(
+                    frame.as_mut_ptr(),
+                    ffmpeg_next::ffi::AVFrameSideDataType::AV_FRAME_DATA_MASTERING_DISPLAY_METADATA,
+                    8,
+                )
+            };
+            assert!(!added.is_null(), "adding side data");
+        }
+        frame
+    }
+
+    #[test]
+    fn copying_many_frames_into_one_target_does_not_grow_its_side_data() {
+        let source = frame_with_side_data(2);
+        let mut target = ffmpeg_next::frame::Video::new(Pixel::YUV420P, 16, 16);
+        for _ in 0..50 {
+            copy_frame(&mut target, &source);
+        }
+        assert_eq!(side_data_count(&target), side_data_count(&source));
+    }
+
+    #[test]
+    fn a_plain_clone_from_does_grow_it_which_is_why_copy_frame_exists() {
+        let source = frame_with_side_data(2);
+        let mut target = ffmpeg_next::frame::Video::new(Pixel::YUV420P, 16, 16);
+        for _ in 0..5 {
+            target.clone_from(&source);
+        }
+        assert!(side_data_count(&target) > side_data_count(&source));
+    }
+}
