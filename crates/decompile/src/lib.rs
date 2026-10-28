@@ -10,6 +10,7 @@
 mod asr;
 mod coverage;
 mod decode;
+mod easing;
 mod error;
 mod histogram;
 mod hwdecode;

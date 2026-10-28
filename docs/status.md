@@ -59,6 +59,22 @@ Same machine, release builds of `main` and `feature/relative-silence` on the sam
 
 The real clip was re-cut from the original recording on 2026-10-25 with its audio copied, not re-encoded, so its word count (125) differs from the 2026-10-21 runs (183); see Known issues.
 
+## Zoom curves, 2026-10-29
+
+Apple M3 MacBook Air, branch `feature/zoom-curves` ([spec](specs/zoom-curves.md)). Each measured `punch_in` and `zoom_out` gets a cubic Bézier easing, `cubic-bezier(1/3, y1, 2/3, y2)`, fitted by least squares to the per-frame scale of the move.
+
+| Check | Result |
+|---|---|
+| `ease12` (six moves over 12 frames with planted cubics), planted against recovered (y1, y2), fit_rms | Punch-in ease-in (0.0, 0.3) → (0.051, 0.361), 0.004; zoom-out ease-in (0.0, 0.3) → (0.051, 0.364), 0.003; punch-in ease-out (0.6, 1.0) → (0.611, 0.977), 0.003; zoom-out ease-out (0.6, 1.0) → (0.560, 0.920), 0.004; punch-in overshoot (0.1, 1.4) → (0.100, 1.395), 0.004; zoom-out (0.4, 0.8) → (0.403, 0.804), 0.002. Largest error 0.08 (the ease-out tail). The test tolerance is 0.1 |
+| `motion12` and `motion12_wide` (6-frame smoothstep) | Reproduced within 0.05 at five points on both clips; one curve per move, none for the overlay |
+| Other fields of `edit_dna.json` | Identical on 19 clips against the build before the change (the audit re-checked 3 clips: `motion12`, `motion12_wide`, `still12`) apart from `signal_ms`, `asr_ms`, `schema_version` and `zoom_curves`; 23 earlier generated outputs byte-identical after the new fixture |
+| Cost on `bench60_textured` (24 moves) | 1.7% of `signal_ms`, measured inside the process (the first version was 4.9%, over the 3% budget). The spec's median of 10 A/B runs could not be taken: the machine was at load 5–45; the best-of-N values were +0.0% to +1.3%. The audit's 10 alternating release runs on `bench60_textured` (load 34–40): median 483 ms against 472.5 ms for `main` (+2.2%), best-of 420 against 418 (+0.5%), with run-to-run spread of about ±10%, larger than the effect. **A quiet-machine confirmation is still open.** A clip with no zoom event adds no work |
+| Real footage | No punch-in or zoom-out is found on the NEET reel (1 overlay), the milk clip, the lecture proxy or the 28.6-minute lecture (20 overlays), so there are no real curves; the fit on compressed real zooms is untested |
+| Mutation checks | The branch's own checks caught the clamp, sample minimum, normalisation, the singular-system guard and most track mutants. The audit (2026-10-29, two passes) found survivors: `Y_MIN` and `Y_MAX` (the clamp test compared the constant with itself), `START_TOL` and `END_TOL` at either side, a non-finite sample, and in `motion.rs` `track_until` plus the extension time, the missing warm start, the finest step (0.0025 to 0.004) and the track stride. The clamp bounds, both tolerances (either side) and the non-finite guard now have tests that fail when each is changed (6 of 6 constant mutants and the guard deleted, killed); the `motion.rs` track parameters are still not pinned: a change to them is not caught by a test |
+| `cargo test --workspace` after merging `main` | decompile 201, diff 42, edit-dna 10, filmstrip 1, reelctl 3, `p0_fixture` 21, `understand_fixture` 12, whisper 1 (2 ignored), understand 204 |
+
+Known limits: the trim tolerances (0.5% at the start, 1% at the end) were set after looking at `ease12` and sit near the scale-fit noise measured on synthetic footage (about 0.001), so real compressed video may widen the trimmed window; a move needs at least 3 samples (fewer has no curve: `bezier: null`; three fit, with little to spare); the tolerances are calibrated on moves of 0.15 or more, while the smallest event the detector accepts is a change of 0.05, for which the scale noise of about 0.001 is 2% of the move, so `start_ms`, `end_ms` and `samples` of a small move are partly decided by noise (analysis, not measured); `end_ms` can be one or two frames after the event's `time_ms`; progress is linear in scale; zoom-outs that overshoot below the frame cannot be planted; the track uses the move's own centre, accurate to 0.05 of the frame, so an off-centre punch-in's track has a small centre error. No independent audit has run on this work yet.
+
 ## TransNetV2, 2026-10-28
 
 Apple M3 MacBook Air, branch `feature/transnet-cuts` ([spec](specs/transnet-cuts.md), [ADR-018](decisions/ADR-018-run-transnetv2-through-a-dynamically-loaded-onnx-runtime.md)). Weights: `elya5/transnetv2` ONNX export of soCzech/TransNetV2 (MIT, 31,250,929 bytes, sha256 `c4d54a68…8e0c`), not committed. ONNX Runtime 1.21.0 from a conda wheel (`brew` has none here).
@@ -309,7 +325,8 @@ Already listed in [AGENTS.md](../AGENTS.md) as P0 gaps:
 |---|---|---|
 | Word timing needs a model | Without `--whisper-model`, `words` are voiced bursts named `burst-N` and `words_per_minute` counts bursts | Closed 2026-10-21, merged into `main`: with a model, whisper.cpp gives real words timed with DTW ([ADR-007](decisions/ADR-007-whisper-cpp-word-timing.md)). `reelctl` never downloads a model |
 | TransNetV2 | Linked through `ort` (2026-10-28, [spec](specs/transnet-cuts.md), [ADR-018](decisions/ADR-018-run-transnetv2-through-a-dynamically-loaded-onnx-runtime.md)): runs when you give it the weights file and an ONNX Runtime library; the default path is still the scene score | Closed; see the TransNetV2 section |
-| Zoom curves and `.cube` LUT | Reported as `"status": "unimplemented"` | Pass 1b work |
+| Zoom curves | Measured since 2026-10-29 (`zoom_curves`, schema 4); see the Zoom curves section | Closed |
+| `.cube` LUT | `cube_lut` reported as `"status": "unimplemented"` in `edit_dna.json` | A LUT needs two videos: `reelctl look` (separate branch) |
 
 Not yet listed in AGENTS.md:
 

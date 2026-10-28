@@ -1,7 +1,8 @@
 //! Types for `edit_dna.json`, the millisecond telemetry a reel decompiles into.
 //!
-//! The JSON schema is [`json_schema`]. Optical-flow zoom curves and `.cube` LUT
-//! synthesis stay on [`StubbedPass`] until a later pass.
+//! The JSON schema is [`json_schema`]. Zoom easing curves are measured
+//! ([`ZoomCurves`]); `.cube` LUT synthesis stays on [`StubbedPass`] until a
+//! later pass.
 
 #![warn(clippy::all)]
 
@@ -9,9 +10,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Bump when the format changes. Version 2 added `silence_threshold_db` and
-/// `noise_floor_db`; version 3 added `visual_events`. Older files still parse,
+/// `noise_floor_db`; version 3 added `visual_events`; version 4 turned
+/// `zoom_curves` from a stub into measured curves. Older files still parse,
 /// with those fields' defaults.
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 
 /// The silence threshold every version 1 file used.
 pub const LEGACY_SILENCE_THRESHOLD_DB: f64 = -40.0;
@@ -159,17 +161,87 @@ pub struct StubbedPass {
 }
 
 impl StubbedPass {
-    pub fn zoom_unimplemented() -> Self {
-        Self {
-            status: PassStatus::Unimplemented,
-            reason: "Optical-flow Bézier zoom curves are Pass 1b and are not computed on the timed structural path.".to_string(),
-        }
-    }
-
     pub fn lut_unimplemented() -> Self {
         Self {
             status: PassStatus::Unimplemented,
             reason: ".cube LUT synthesis needs two videos, so it is not part of decompile: use `reelctl look --draft <video> --outlier <video> --out <file.cube>`. Per-shot RGB histograms are recorded here.".to_string(),
+        }
+    }
+}
+
+/// Whether [`ZoomCurves::curves`] was measured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CurveStatus {
+    /// The curves were fitted; an empty list means no zoom move was found.
+    Measured,
+    /// The file is from a version before 4, which did not fit curves.
+    Unimplemented,
+}
+
+impl CurveStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Measured => "measured",
+            Self::Unimplemented => "unimplemented",
+        }
+    }
+}
+
+/// The easing of one zoom move: `cubic-bezier(1/3, y1, 2/3, y2)` fitted to the
+/// scale measured at each frame of a [`VisualEvent`] of kind `punch_in` or
+/// `zoom_out`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ZoomCurve {
+    /// Index into [`EditDna::visual_events`] of the move.
+    pub event_index: u32,
+    /// The frame before the move (the anchor, or the last frame still within a
+    /// hair of it), as measured.
+    pub start_ms: u64,
+    /// The frame where the picture has reached its final scale. This can be a
+    /// little later than the event's `time_ms`, which is the first frame within
+    /// the noise floor of the last one.
+    pub end_ms: u64,
+    /// The scale at `start_ms`, relative to itself: always 1.
+    pub from_scale: f64,
+    /// The total factor of the move, as in the event's `scale`.
+    pub to_scale: f64,
+    /// `[x1, y1, x2, y2]` with `x1 = 1/3` and `x2 = 2/3`; `y1` and `y2` lie in
+    /// `-0.5..=1.5` (above 1 for an overshoot). `null` when too few frames were
+    /// measured to fit one (a one-frame snap).
+    pub bezier: Option<[f64; 4]>,
+    /// Frames from `start_ms` to `end_ms`, both included.
+    pub samples: u32,
+    /// Root mean square of the measured progress minus the curve, in units of
+    /// progress (0 at the start, 1 at the end). `null` when `bezier` is.
+    pub fit_rms: Option<f64>,
+}
+
+/// Easing curves of the zoom moves. Version 3 and earlier files hold the stub
+/// they always had (`unimplemented`) and read with an empty list.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ZoomCurves {
+    pub status: CurveStatus,
+    pub reason: String,
+    /// One entry per `punch_in` or `zoom_out` in `visual_events`, in order.
+    #[serde(default)]
+    pub curves: Vec<ZoomCurve>,
+}
+
+impl ZoomCurves {
+    pub fn measured(curves: Vec<ZoomCurve>) -> Self {
+        Self {
+            status: CurveStatus::Measured,
+            reason: String::new(),
+            curves,
+        }
+    }
+
+    pub fn unimplemented() -> Self {
+        Self {
+            status: CurveStatus::Unimplemented,
+            reason: "This file was written before zoom easing curves were measured (schema version 3 or earlier).".to_string(),
+            curves: Vec::new(),
         }
     }
 }
@@ -239,7 +311,8 @@ pub struct EditDna {
     pub signal_ms: u64,
     /// Word timing. Not part of the structural budget.
     pub asr_ms: u64,
-    pub zoom_curves: StubbedPass,
+    #[serde(default = "ZoomCurves::unimplemented")]
+    pub zoom_curves: ZoomCurves,
     pub cube_lut: StubbedPass,
     pub cut_detector: CutDetectorKind,
     pub cut_detector_note: String,
@@ -268,7 +341,7 @@ impl EditDna {
             payoff_window: PayoffWindow::empty(),
             signal_ms: 0,
             asr_ms: 0,
-            zoom_curves: StubbedPass::zoom_unimplemented(),
+            zoom_curves: ZoomCurves::measured(Vec::new()),
             cube_lut: StubbedPass::lut_unimplemented(),
             cut_detector: CutDetectorKind::FfmpegSceneScore,
             cut_detector_note: String::new(),
@@ -376,12 +449,68 @@ mod tests {
     }
 
     #[test]
-    fn a_new_file_has_an_empty_visual_event_list_at_version_3() {
+    fn a_new_file_has_an_empty_visual_event_list_and_measured_curves_at_version_4() {
         let dna = EditDna::empty(1_000, 30.0, 64, 36);
-        assert_eq!(SCHEMA_VERSION, 3);
-        assert_eq!(dna.schema_version, 3);
+        assert_eq!(SCHEMA_VERSION, 4);
+        assert_eq!(dna.schema_version, 4);
         let value = serde_json::to_value(&dna).expect("serialize");
         assert_eq!(value["visual_events"], serde_json::json!([]));
+        assert_eq!(
+            value["zoom_curves"],
+            serde_json::json!({"status": "measured", "reason": "", "curves": []})
+        );
+    }
+
+    #[test]
+    fn a_version_3_file_reads_with_unimplemented_zoom_curves_and_an_empty_list() {
+        for version in [1, 2, 3] {
+            let mut value =
+                serde_json::to_value(EditDna::empty(1_000, 30.0, 64, 36)).expect("serialize");
+            let object = value.as_object_mut().expect("object");
+            object.insert("schema_version".to_string(), version.into());
+            object.insert(
+                "zoom_curves".to_string(),
+                serde_json::json!({
+                    "status": "unimplemented",
+                    "reason": "Optical-flow Bézier zoom curves are Pass 1b and are not computed on the timed structural path."
+                }),
+            );
+            let dna: EditDna = serde_json::from_value(value).expect("an old file parses");
+            assert_eq!(dna.zoom_curves.status, CurveStatus::Unimplemented);
+            assert_eq!(dna.zoom_curves.status.as_str(), "unimplemented");
+            assert!(dna.zoom_curves.curves.is_empty(), "version {version}");
+            assert!(
+                dna.zoom_curves.reason.contains("Pass 1b"),
+                "version {version}"
+            );
+        }
+    }
+
+    #[test]
+    fn zoom_curves_round_trip_with_a_fitted_curve_and_a_snap() {
+        let json = serde_json::json!({"status": "measured", "reason": "", "curves": [
+            {"event_index": 0, "start_ms": 4000, "end_ms": 4250, "from_scale": 1.0,
+             "to_scale": 1.1794, "bezier": [0.3333, 0.02, 0.6667, 1.08], "samples": 7,
+             "fit_rms": 0.012},
+            {"event_index": 2, "start_ms": 6000, "end_ms": 6042, "from_scale": 1.0,
+             "to_scale": 0.85, "bezier": null, "samples": 2, "fit_rms": null}
+        ]});
+        let curves: ZoomCurves = serde_json::from_value(json.clone()).expect("parse");
+        assert_eq!(curves.status, CurveStatus::Measured);
+        assert_eq!(curves.curves.len(), 2);
+        assert_eq!(curves.curves[0].bezier, Some([0.3333, 0.02, 0.6667, 1.08]));
+        assert_eq!(curves.curves[1].bezier, None);
+        assert_eq!(curves.curves[1].fit_rms, None);
+        assert_eq!(curves.curves[1].samples, 2);
+        assert_eq!(serde_json::to_value(&curves).expect("serialize"), json);
+    }
+
+    #[test]
+    fn the_schema_describes_the_curve_entries() {
+        let schema = serde_json::to_string(&json_schema()).expect("schema text");
+        for key in ["event_index", "from_scale", "to_scale", "bezier", "fit_rms"] {
+            assert!(schema.contains(key), "schema missing {key}");
+        }
     }
 
     #[test]
@@ -405,10 +534,8 @@ mod tests {
 
     #[test]
     fn stubs_say_unimplemented() {
-        assert_eq!(
-            StubbedPass::zoom_unimplemented().status.as_str(),
-            "unimplemented"
-        );
+        assert_eq!(ZoomCurves::unimplemented().status.as_str(), "unimplemented");
+        assert_eq!(ZoomCurves::measured(Vec::new()).status.as_str(), "measured");
         assert!(StubbedPass::lut_unimplemented().reason.contains(".cube"));
         assert_eq!(
             CutDetectorKind::FfmpegSceneScore.as_str(),
