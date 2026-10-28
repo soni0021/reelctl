@@ -77,7 +77,7 @@ Apple M3 MacBook Air, release build of `feature/visual-motion` ([spec](specs/vis
 | Mutation check on the wiring | Pointing `visual_events` at an empty list fails the planted-event and the `diff` tests |
 | `cargo test --workspace` | 436 pass, 2 ignored (the whisper model tests); the detector adds 51 unit tests, `p0_fixture.rs` three end-to-end tests, and `edit-dna` and `diff` five and five |
 
-Known limits: the thresholds are tuned on the planted clips and these four recordings and are untested on fast-cut footage; a speaker walking across a static background can be read as an overlay; a board that is written on reads as `overlay_change`, not as a slide change; a move slower than 12 frames is not an event (zoom curves); `punch_in` is reported once at the frame where the move completes, so its start is not recorded.
+Known limits: the thresholds are tuned on the planted clips and these four recordings and are untested on fast-cut footage; a speaker walking across a static background can be read as an overlay; a board that is written on reads as `overlay_change`, not as a slide change; a move slower than about 12 to 16 frames (a run over 600 ms) is not an event; `punch_in` is reported once at the frame where the move completes, so its start is not recorded.
 
 ## Long-to-short clipper, 2026-10-28
 
