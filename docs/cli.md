@@ -16,7 +16,8 @@ reelctl decompile --input <reel.mp4> --out <edit_dna.json> [options]
 | `--out <path>` | | required | Where to write `edit_dna.json`; missing parent directories are created |
 | `--filmstrip-dir <dir>` | | `<out stem>_timeline` beside `--out` | Where to write the `timeline_view` PNGs |
 | `--cut-detector <auto\|scene\|transnet>` | | `auto` | Which cut detector to run; see below |
-| `--transnet-weights <path>` | `REELCTL_TRANSNET_WEIGHTS` | none | TransNetV2 ONNX weights |
+| `--transnet-weights <path>` | `REELCTL_TRANSNET_WEIGHTS` | none | TransNetV2 ONNX weights (`transnetv2.onnx`, input `[1,100,27,48,3]`, output `534`); never downloaded or committed |
+| | `ORT_DYLIB_PATH` | none | Full path of an ONNX Runtime library (`libonnxruntime.dylib`, version 1.17 or newer; `brew install onnxruntime` gives `/opt/homebrew/lib/libonnxruntime.dylib`). Only read when TransNetV2 is asked for. No default directory is searched |
 | `--decoder <auto\|software>` | | `auto` | Video decoder. `auto` decodes HEVC on the Apple media engine (VideoToolbox) on macOS and everything else in software; if the media engine fails at any point, the file is decoded again in software and `decode_note` says why. `software` forces software. Both give the same cuts, scores, colors, and thumbnails ([ADR-012](decisions/ADR-012-decode-hevc-in-hardware-and-every-frame-exactly.md)). Also accepted by `diff` |
 | `--whisper-model <path>` | `REELCTL_WHISPER_MODEL` | none | ggml whisper.cpp model. With one, `words` come from whisper.cpp; without one, from the silence-burst estimator. A path that is missing, is not a ggml whisper model, or has a shape no DTW preset matches exits with code 1. See [Word timing](#word-timing) |
 
@@ -24,9 +25,18 @@ reelctl decompile --input <reel.mp4> --out <edit_dna.json> [options]
 
 Cut detectors:
 
-- `scene`: the scene-score detector ([ADR-002](decisions/ADR-002-scene-score-cut-detector.md)).
-- `transnet`: TransNetV2 or an error. Until ort is linked this always exits with code 1, for example `error: decompile: TransNetV2 ONNX weights were not provided. ...`
-- `auto`: TransNetV2 if `--transnet-weights` names an existing file, otherwise scene score. If TransNetV2 fails, which it does until ort is linked, decompile falls back to scene score and gives the reason in `cut_detector_note`.
+- `scene`: the scene-score detector ([ADR-002](decisions/ADR-002-scene-score-cut-detector.md)). Never looks at the weights or the library.
+- `transnet`: TransNetV2 or an error. The weights file, the library and the model are checked **before the video is decoded**; a problem exits with code 1 and writes nothing, for example `error: decompile: TransNetV2 needs the ONNX Runtime library: ORT_DYLIB_PATH is not set; set ORT_DYLIB_PATH to the full path of an ONNX Runtime library, version 1.17 or newer (macOS: brew install onnxruntime, ...)`. An error while the model runs also exits with code 1. It never returns scene-score cuts.
+- `auto`: TransNetV2 if `--transnet-weights` names an existing file and the library and model load; otherwise the scene score. With no weights path it is the scene score and `cut_detector_note` is the scene-score note. With a weights path that is missing, a library that cannot be loaded, a model that is not TransNetV2, or an error while running, decompile falls back to the scene score and `cut_detector_note` starts `Fell back to the FFmpeg scene-score detector:` followed by the reason.
+
+TransNetV2 reads every frame, so it costs about 16 ms per video frame on this machine's CPU (see [the spec](specs/transnet-cuts.md#measured)), far outside the 500 ms structural budget, and `signal_ms` includes it. Manual end-to-end run on the real model (not part of `cargo test`):
+
+```bash
+export ORT_DYLIB_PATH=/opt/homebrew/lib/libonnxruntime.dylib      # or any libonnxruntime >= 1.17
+export REELCTL_TRANSNET_WEIGHTS=~/models/transnet/transnetv2.onnx
+bash fixtures/generate.sh dissolve12 /tmp/dissolve12.mp4
+target/release/reelctl decompile --cut-detector transnet --input /tmp/dissolve12.mp4 --out /tmp/dissolve12.edit_dna.json
+```
 
 ### Output
 

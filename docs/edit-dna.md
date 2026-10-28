@@ -24,11 +24,13 @@ Every field is always present. Times are whole milliseconds. Video times count f
 | `frame_index` | Index of the first frame of the new shot |
 | `time_ms` | That frame's presentation time |
 | `interval_ms` | Time since the previous cut, or since 0 for the first cut |
-| `scene_score` | Detector score from 0 to 1, rounded to 4 decimals |
+| `scene_score` | Detector score from 0 to 1, rounded to 4 decimals. For `ffmpeg_scene_score` it is the FFmpeg score of the cut frame; for `trans_net_v2` it is the highest transition probability in the run of frames that made the cut. The two scales are not comparable: `cut_detector` says which one the file holds |
 
-The scene-score detector applies the formula behind FFmpeg's `scene` value (from the `select` filter) to a grid of roughly 160×90 luma samples (spread over the whole picture, also when the frame size changes part-way through the video), and records a cut wherever the score is above 0.30. It has been tested only on hard cuts between solid colors; dissolves, whip pans, flashes, and speed ramps are untested. See [ADR-002](decisions/ADR-002-scene-score-cut-detector.md).
+The scene-score detector applies the formula behind FFmpeg's `scene` value (from the `select` filter) to a grid of roughly 160×90 luma samples (spread over the whole picture, also when the frame size changes part-way through the video), and records a cut wherever the score is above 0.30. It finds hard cuts, such as the planted ones in the fixtures; a dissolve or a fade changes too little between two adjacent frames to cross 0.30, so it finds none (a 12 s fixture with a one-second dissolve and a one-second fade through black gives 0 cuts). See [ADR-002](decisions/ADR-002-scene-score-cut-detector.md).
 
-`cut_detector` names the detector that produced the list: `"ffmpeg_scene_score"` today, with `"trans_net_v2"` reserved for TransNetV2. `cut_detector_note` says why that detector ran, including the reason for any fallback.
+TransNetV2 ([spec](specs/transnet-cuts.md), [ADR-017](decisions/ADR-017-run-transnetv2-through-a-dynamically-loaded-onnx-runtime.md)) reads every frame, squashed to 48×27 RGB, in windows of 100 frames. A frame whose transition probability is above 0.5 is a transition; a run of such frames gives one cut at the frame after the run (the first frame of the new shot, which for a hard cut is the same frame the scene score finds). A run that starts at the first frame or reaches the last one gives no cut. For a dissolve or a fade the cut is where the model's probability peaks, inside the transition, not the first frame that began to change. Running it needs weights and an ONNX Runtime library; see [cli.md](cli.md#cut-detectors).
+
+`cut_detector` names the detector that produced the list: `"ffmpeg_scene_score"` or `"trans_net_v2"`. `cut_detector_note` says why that detector ran, including the reason for any fallback. When TransNetV2 produced the cuts, the `timeline_view` PNGs are rebuilt at those cuts from the 48×27 frames (768 px wide instead of 1024).
 
 ## Visual events
 
