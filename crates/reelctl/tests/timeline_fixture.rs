@@ -324,6 +324,68 @@ fn cut_silence_then_render_removes_the_pause_without_a_click() {
     assert!(image.width() > 100 && image.height() > 50);
 }
 
+/// Largest step between neighbouring samples within 10 ms of `join_frame` (30 fps).
+fn join_step(video: &Path, join_frame: i64) -> f32 {
+    let samples = pcm(video);
+    let join = (join_frame as f64 / 30.0 * 48_000.0) as usize;
+    samples[join - 480..join + 480]
+        .windows(2)
+        .map(|pair| (pair[1] - pair[0]).abs())
+        .fold(0.0_f32, f32::max)
+}
+
+#[test]
+fn a_join_inside_a_tone_clicks_without_the_fade_and_not_with_it() {
+    // draft12's 440 Hz tone runs unbroken, so a cut through it is a phase jump: the
+    // one place where the audio fade decides whether the join clicks. The DNA is
+    // made by hand (a "gap" of 267 ms, 117.3 cycles) because the tone has no pause.
+    let root = scratch("tonejoin");
+    let media = root.join("draft.mp4");
+    generate("draft12", &media);
+    let mut dna = EditDna::empty(12_000, 30.0, 640, 360);
+    dna.silence_gaps = vec![edit_dna::SilenceGap {
+        start_ms: 4_010,
+        end_ms: 4_300,
+        duration_ms: 290,
+    }];
+    let dna_path = root.join("by_hand.edit_dna.json");
+    fs::write(&dna_path, serde_json::to_string(&dna).expect("json")).expect("write");
+    let mut steps = Vec::new();
+    for fade in ["30", "0"] {
+        let project = root.join(format!("fade{fade}.otio"));
+        ok(&[
+            "timeline",
+            "init",
+            "--input",
+            &s(&media),
+            "--out",
+            &s(&project),
+        ]);
+        ok(&[
+            "timeline",
+            "cut-silence",
+            "--project",
+            &s(&project),
+            "--dna",
+            &s(&dna_path),
+            "--fade-ms",
+            fade,
+            "--out",
+            &s(&project),
+        ]);
+        let out = root.join(format!("fade{fade}.mp4"));
+        ok(&["render", "--project", &s(&project), "--out", &s(&out)]);
+        // The 4010 ms start snaps up to frame 121.
+        steps.push(join_step(&out, 121));
+    }
+    eprintln!(
+        "join step with a 30 ms fade: {}, without: {}",
+        steps[0], steps[1]
+    );
+    assert!(steps[0] < 0.02, "the faded join clicks: {}", steps[0]);
+    assert!(steps[1] > 0.05, "the control does not click: {}", steps[1]);
+}
+
 #[test]
 fn a_punch_in_zooms_the_footage_by_the_scale() {
     let root = scratch("punch");

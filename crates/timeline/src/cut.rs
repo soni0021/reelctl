@@ -580,6 +580,19 @@ mod tests {
     }
 
     #[test]
+    fn a_filler_is_taken_out_whole_so_its_edges_snap_outward() {
+        // 30 fps: "um" runs 1010 to 1510 ms = frames 30.3 to 45.3. The word goes
+        // whole: from frame 30 up to frame 46.
+        let mut timeline = project(30.0, 300);
+        let spoken = with_words(dna(10_000, 30.0, &[]), &[("um", 1_010, 1_510)]);
+        let report = cut_silence(&mut timeline, &spoken, &options()).expect("cut");
+        assert_eq!(
+            (report.removed[0].start_frame, report.removed[0].end_frame),
+            (30, 46)
+        );
+    }
+
+    #[test]
     fn fillers_come_from_the_option() {
         let mut timeline = ten_seconds();
         let spoken = with_words(

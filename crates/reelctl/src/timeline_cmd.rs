@@ -797,21 +797,24 @@ fn inspect_cmd(args: InspectArgs) -> Result<()> {
         }
 
         let join_ms = timeline::frame_ms(join.frame, rate);
-        let mut pcm: Vec<f32> = Vec::new();
-        let mut before_len = 0;
-        if let Some((media, last)) = &join.before {
-            let end = timeline::frame_ms(last + 1, rate);
-            let from = end.saturating_sub(PCM_WINDOW_MS);
-            if info.has_audio {
-                pcm.extend(decode_pcm(media, from, end - from)?);
+        // 400 ms of audio on each side; silence where a side is the card, so the
+        // waveform lines up with the two halves of the filmstrip.
+        let silence = || vec![0.0f32; (u64::from(PCM_RATE) * PCM_WINDOW_MS / 1000) as usize];
+        let mut pcm: Vec<f32> = match (&join.before, info.has_audio) {
+            (Some((media, last)), true) => {
+                let end = timeline::frame_ms(last + 1, rate);
+                let from = end.saturating_sub(PCM_WINDOW_MS);
+                decode_pcm(media, from, end - from)?
             }
-            before_len = end - from;
-        }
-        if let Some((media, first)) = &join.after {
-            let from = timeline::frame_ms(*first, rate);
-            if info.has_audio {
+            _ => silence(),
+        };
+        let before_len = pcm.len() as u64 * 1000 / u64::from(PCM_RATE);
+        match (&join.after, info.has_audio) {
+            (Some((media, first)), true) => {
+                let from = timeline::frame_ms(*first, rate);
                 pcm.extend(decode_pcm(media, from, PCM_WINDOW_MS)?);
             }
+            _ => pcm.extend(silence()),
         }
         views.push(BoundaryView {
             frame_index: join.frame as u64,
