@@ -3,6 +3,7 @@
 
 use serde_json::{json, Map, Value};
 
+use crate::cut::CUTS_KEY;
 use crate::error::{Result, TimelineError};
 use crate::otio::{
     reelctl, update_reelctl, Clip, GeneratorReference, Item, MediaReference, TimeRange, Timeline,
@@ -22,6 +23,8 @@ pub const CARD_BACKGROUND: &str = "#3a1c71";
 pub const CARD_FOREGROUND: &str = "#ffffff";
 /// The key under the timeline's `metadata.reelctl` that records the bridge.
 pub const BRIDGE_KEY: &str = "bridge";
+/// The longest card.
+pub const MAX_CARD_MS: u64 = 60_000;
 /// A pause is looked for this long after the cutoff point.
 pub const PAUSE_SEARCH_MS: f64 = 400.0;
 
@@ -65,6 +68,16 @@ pub fn bridge_of(timeline: &Timeline) -> Option<BridgeSpec> {
     })
 }
 
+/// Whether the recorded bridge was cut in a pause. A project written before this
+/// was recorded has no answer, which is "no".
+fn stored_in_pause(timeline: &Timeline) -> bool {
+    reelctl(&timeline.metadata)
+        .and_then(|map| map.get(BRIDGE_KEY))
+        .and_then(|bridge| bridge.get("in_pause"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
 /// The timeline frame that plays source `frame` of some clip, if one does.
 fn source_to_timeline(video: &Track, frame: i64, rate: f64) -> Result<Option<i64>> {
     let mut position = 0;
@@ -95,14 +108,65 @@ fn timeline_to_source(video: &Track, frame: i64, rate: f64) -> Result<Option<i64
     Ok(None)
 }
 
+/// The timeline frame where the footage of source frames before `frame` ends: the
+/// number of timeline frames that play media from before it.
+fn source_boundary_to_timeline(video: &Track, frame: i64, rate: f64) -> Result<i64> {
+    let mut position = 0;
+    for item in &video.children {
+        let (start, duration) = item_range(item, rate)?;
+        if let Item::Clip(clip) = item {
+            if external_url(clip).is_some() {
+                if frame <= start {
+                    return Ok(position);
+                }
+                if frame < start + duration {
+                    return Ok(position + frame - start);
+                }
+            }
+        }
+        position += duration;
+    }
+    Ok(position)
+}
+
+/// The timeline frames where `cut-silence` took out a silence: a join made by a
+/// removed silence is a pause, though the pause itself is gone from the footage.
+/// A removed filler word is not one. Read from `metadata.reelctl.cuts`.
+fn removed_silence_joins(
+    timeline: &Timeline,
+    video: &Track,
+    total: i64,
+    rate: f64,
+) -> Result<Vec<i64>> {
+    let mut joins = Vec::new();
+    let cuts = reelctl(&timeline.metadata)
+        .and_then(|map| map.get(CUTS_KEY))
+        .and_then(Value::as_array);
+    for cut in cuts.map(Vec::as_slice).unwrap_or_default() {
+        if cut.get("reason").and_then(Value::as_str) != Some("silence") {
+            continue;
+        }
+        let Some(start) = cut.get("start_frame").and_then(Value::as_i64) else {
+            continue;
+        };
+        let at = source_boundary_to_timeline(video, start, rate)?;
+        if at > 0 && at < total {
+            joins.push(at);
+        }
+    }
+    Ok(joins)
+}
+
 /// Where to cut: the cutoff point, or the start of a pause within
 /// [`PAUSE_SEARCH_MS`] after it, or the point itself if it is already inside one.
-/// `pauses` are `(start_ms, end_ms)` in the media's own time.
+/// `pauses` are `(start_ms, end_ms)` in the media's own time; `joins` are timeline
+/// frames where a silence was cut out, which are pauses too.
 fn place_cut(
     video: &Track,
     point: i64,
     total: i64,
     pauses: &[(u64, u64)],
+    joins: &[i64],
     rate: f64,
 ) -> Result<(i64, bool)> {
     if let Some(source) = timeline_to_source(video, point, rate)? {
@@ -113,16 +177,19 @@ fn place_cut(
             return Ok((point, true));
         }
     }
-    let mut best: Option<i64> = None;
+    let mut candidates: Vec<i64> = joins.to_vec();
     for &(start, _) in pauses {
-        let Some(at) = source_to_timeline(video, ceil_frame(start, rate), rate)? else {
-            continue;
-        };
-        let after_ms = (at - point) as f64 * 1000.0 / rate;
-        if at >= point && at < total && after_ms <= PAUSE_SEARCH_MS + 1e-6 {
-            best = Some(best.map_or(at, |current| current.min(at)));
+        if let Some(at) = source_to_timeline(video, ceil_frame(start, rate), rate)? {
+            candidates.push(at);
         }
     }
+    let best = candidates
+        .into_iter()
+        .filter(|&at| {
+            let after_ms = (at - point) as f64 * 1000.0 / rate;
+            at >= point && at < total && after_ms <= PAUSE_SEARCH_MS + 1e-6
+        })
+        .min();
     Ok(match best {
         Some(at) => (at, true),
         None => (point, false),
@@ -154,8 +221,11 @@ pub fn attach_bridge(
             request.cutoff_pct
         )));
     }
-    if request.card_ms == 0 {
-        return Err(TimelineError::invalid("--card-ms must be above 0"));
+    if request.card_ms == 0 || request.card_ms > MAX_CARD_MS {
+        return Err(TimelineError::invalid(format!(
+            "--card-ms {} must be above 0 and at most {MAX_CARD_MS}",
+            request.card_ms
+        )));
     }
     if let Some(existing) = bridge_of(timeline) {
         if existing.target_url == request.target_url
@@ -164,7 +234,7 @@ pub fn attach_bridge(
         {
             return Ok(BridgeReport {
                 spec: existing,
-                in_pause: false,
+                in_pause: stored_in_pause(timeline),
                 unchanged: true,
             });
         }
@@ -185,7 +255,8 @@ pub fn attach_bridge(
     let video = timeline
         .track(VIDEO_KIND)
         .ok_or_else(|| TimelineError::invalid("the project has no video track"))?;
-    let (cut, in_pause) = place_cut(video, point, total, pauses, rate)?;
+    let joins = removed_silence_joins(timeline, video, total, rate)?;
+    let (cut, in_pause) = place_cut(video, point, total, pauses, &joins, rate)?;
 
     let card_frames = ((request.card_ms as f64) * rate / 1000.0).round().max(1.0) as i64;
     let mut work = timeline.clone();
@@ -276,7 +347,7 @@ mod tests {
     use super::*;
     use crate::cut::{cut_silence, CutOptions};
     use crate::otio::AUDIO_KIND;
-    use crate::testutil::{dna, project};
+    use crate::testutil::{dna, project, with_words};
 
     fn request(url: &str) -> BridgeRequest {
         BridgeRequest {
@@ -461,5 +532,144 @@ mod tests {
         bad.card_ms = 0;
         assert!(attach_bridge(&mut timeline, &bad, &[]).is_err());
         assert!(attach_bridge(&mut timeline, &request("  "), &[]).is_err());
+    }
+
+    /// 10 s at 100 fps with silence removed at media 1000..1500 ms and, after it,
+    /// at `second`: the DNA's own gaps are what `cut_silence` is given.
+    fn cut_with(second: (u64, u64)) -> (Timeline, Vec<(u64, u64)>) {
+        let mut timeline = project(100.0, 1000);
+        let gaps = [(1_000, 1_500), second];
+        let spoken = dna(10_000, 100.0, &gaps);
+        cut_silence(&mut timeline, &spoken, &CutOptions::default()).expect("cut");
+        (timeline, gaps.to_vec())
+    }
+
+    #[test]
+    fn a_join_made_by_a_removed_silence_is_a_pause() {
+        // 900 frames are left, so the point is 648. The second silence went out at
+        // media frames 720..770, which is a join at timeline frame 670: 220 ms on.
+        let (mut timeline, gaps) = cut_with((7_200, 7_700));
+        assert_eq!(timeline_frames(&timeline).expect("frames"), 900);
+        let report = attach_bridge(&mut timeline, &request("a.co"), &gaps).expect("bridge");
+        assert_eq!(report.spec.cut_frame, 670);
+        assert!(report.in_pause);
+    }
+
+    #[test]
+    fn the_join_is_found_from_the_recorded_cuts_alone() {
+        let (mut timeline, _) = cut_with((7_200, 7_700));
+        let report = attach_bridge(&mut timeline, &request("a.co"), &[]).expect("bridge");
+        assert_eq!(report.spec.cut_frame, 670);
+        assert!(report.in_pause);
+    }
+
+    #[test]
+    fn a_join_exactly_at_the_point_is_where_the_cut_goes() {
+        // The second silence goes out at media 698..748: the join is at 648.
+        let (mut timeline, gaps) = cut_with((6_980, 7_480));
+        let report = attach_bridge(&mut timeline, &request("a.co"), &gaps).expect("bridge");
+        assert_eq!(report.spec.cut_frame, 648);
+        assert!(report.in_pause);
+    }
+
+    #[test]
+    fn a_join_more_than_400_ms_after_the_point_is_ignored() {
+        // The join is at 700: 520 ms after 648.
+        let (mut timeline, gaps) = cut_with((7_500, 8_000));
+        let report = attach_bridge(&mut timeline, &request("a.co"), &gaps).expect("bridge");
+        assert_eq!(report.spec.cut_frame, 648);
+        assert!(!report.in_pause);
+    }
+
+    #[test]
+    fn a_join_before_the_point_is_ignored() {
+        let (mut timeline, gaps) = cut_with((5_000, 5_500));
+        let report = attach_bridge(&mut timeline, &request("a.co"), &gaps).expect("bridge");
+        assert_eq!(report.spec.cut_frame, 648);
+        assert!(!report.in_pause);
+    }
+
+    #[test]
+    fn a_removed_filler_is_not_a_pause() {
+        let mut timeline = project(100.0, 1000);
+        let spoken = with_words(
+            dna(10_000, 100.0, &[(1_000, 1_500)]),
+            &[("um", 7_200, 7_500)],
+        );
+        cut_silence(&mut timeline, &spoken, &CutOptions::default()).expect("cut");
+        // 920 frames are left, so the point is 662. The filler's join is at frame
+        // 670, 80 ms on, but a join made by a word is not a pause.
+        let report = attach_bridge(&mut timeline, &request("a.co"), &[]).expect("bridge");
+        assert_eq!(report.spec.cut_frame, 662);
+        assert!(!report.in_pause);
+    }
+
+    #[test]
+    fn a_pause_that_begins_at_the_point_takes_the_cut() {
+        // 7200..7205 ms: the point (frame 720) is not inside it (it ends in frame
+        // 720), and it starts exactly there.
+        let mut timeline = project(100.0, 1000);
+        let report =
+            attach_bridge(&mut timeline, &request("a.co"), &[(7_200, 7_205)]).expect("bridge");
+        assert_eq!(report.spec.cut_frame, 720);
+        assert!(report.in_pause);
+    }
+
+    #[test]
+    fn a_pause_that_ends_at_the_point_does_not_hold_it() {
+        let mut timeline = project(100.0, 1000);
+        let report =
+            attach_bridge(&mut timeline, &request("a.co"), &[(7_000, 7_200)]).expect("bridge");
+        assert_eq!(report.spec.cut_frame, 720);
+        assert!(!report.in_pause);
+    }
+
+    #[test]
+    fn the_search_window_is_400_ms_not_a_millisecond_more() {
+        // 1000 fps: a frame is a millisecond, so the window's edge is visible.
+        let bridge_at = |pause: u64| {
+            let mut timeline = project(1000.0, 10_000);
+            attach_bridge(&mut timeline, &request("a.co"), &[(pause, pause + 300)]).expect("bridge")
+        };
+        let taken = bridge_at(7_600);
+        assert_eq!((taken.spec.cut_frame, taken.in_pause), (7_600, true));
+        for pause in [7_601, 7_603, 7_605] {
+            let ignored = bridge_at(pause);
+            assert_eq!((ignored.spec.cut_frame, ignored.in_pause), (7_200, false));
+        }
+    }
+
+    #[test]
+    fn the_cut_is_the_floor_of_the_percentage() {
+        // 1001 frames at 0.72 is 720.72: the floor is 720, not the nearest, 721.
+        let mut timeline = project(100.0, 1001);
+        let report = attach_bridge(&mut timeline, &request("a.co"), &[]).expect("bridge");
+        assert_eq!(report.spec.cut_frame, 720);
+    }
+
+    #[test]
+    fn a_second_run_reports_what_the_first_found() {
+        let (mut timeline, gaps) = cut_with((7_200, 7_700));
+        let first = attach_bridge(&mut timeline, &request("a.co"), &gaps).expect("bridge");
+        assert!(first.in_pause && !first.unchanged);
+        let again = attach_bridge(&mut timeline, &request("a.co"), &gaps).expect("again");
+        assert!(again.unchanged);
+        assert!(again.in_pause, "the stored result is reported");
+        // A bridge that was not cut in a pause says so, too.
+        let mut plain = project(100.0, 1000);
+        attach_bridge(&mut plain, &request("a.co"), &[]).expect("bridge");
+        let again = attach_bridge(&mut plain, &request("a.co"), &[]).expect("again");
+        assert!(again.unchanged && !again.in_pause);
+    }
+
+    #[test]
+    fn a_card_longer_than_a_minute_is_refused() {
+        let mut timeline = project(100.0, 1000);
+        let mut long = request("a.co");
+        long.card_ms = MAX_CARD_MS + 1;
+        let error = attach_bridge(&mut timeline, &long, &[]).expect_err("too long");
+        assert!(error.to_string().contains("60000"), "{error}");
+        long.card_ms = MAX_CARD_MS;
+        attach_bridge(&mut timeline, &long, &[]).expect("a minute is allowed");
     }
 }

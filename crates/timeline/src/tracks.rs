@@ -11,6 +11,10 @@ use crate::otio::{
 
 const FRAME_EPSILON: f64 = 1e-6;
 
+/// The largest frame count or frame offset a project value may have. A hand-edited
+/// project with a larger one is refused, so no sum of them can overflow.
+pub const MAX_FRAMES: i64 = i32::MAX as i64;
+
 /// The metadata key of a punch-in on a clip, under `metadata.reelctl`.
 pub const PUNCH_IN_KEY: &str = "punch_in";
 /// The metadata key of the audio fade length on a clip, under `metadata.reelctl`.
@@ -53,7 +57,13 @@ pub(crate) fn frames_of(time: &RationalTime, rate: f64, what: &str) -> Result<i6
             time.value
         )));
     }
-    Ok(rounded as i64)
+    let frames = rounded as i64;
+    if frames.abs() > MAX_FRAMES {
+        return Err(TimelineError::invalid(format!(
+            "{what}: {frames} frames is out of range (at most {MAX_FRAMES})"
+        )));
+    }
+    Ok(frames)
 }
 
 /// `(start, duration)` of an item's `source_range`, in frames.
@@ -80,19 +90,28 @@ pub fn project_rate(timeline: &Timeline) -> Result<f64> {
     let video = timeline
         .track(VIDEO_KIND)
         .ok_or_else(|| TimelineError::invalid("the project has no video track"))?;
-    video
+    let rate = video
         .children
         .iter()
         .find_map(|item| item.source_range().map(|range| range.start_time.rate))
-        .filter(|rate| rate.is_finite() && *rate > 0.0)
-        .ok_or_else(|| TimelineError::invalid("the video track has no clip with a source_range"))
+        .ok_or_else(|| TimelineError::invalid("the video track has no clip with a source_range"))?;
+    if !rate.is_finite() || rate <= 0.0 {
+        return Err(TimelineError::invalid(format!(
+            "the video track's frame rate is {rate}; it must be above 0"
+        )));
+    }
+    Ok(rate)
 }
 
 /// Length of a track in frames.
 pub fn track_frames(track: &Track, rate: f64) -> Result<i64> {
-    let mut total = 0;
+    let mut total: i64 = 0;
     for item in &track.children {
-        total += item_range(item, rate)?.1;
+        total = total
+            .checked_add(item_range(item, rate)?.1)
+            .ok_or_else(|| {
+                TimelineError::invalid("the track is out of range: its length overflows")
+            })?;
     }
     Ok(total)
 }
@@ -136,7 +155,9 @@ pub fn check_editable(timeline: &Timeline) -> Result<f64> {
     for item in &video.children {
         item_range(item, rate)?;
     }
+    track_frames(video, rate)?;
     if let Some(audio) = timeline.track(AUDIO_KIND) {
+        track_frames(audio, rate)?;
         if audio.children.len() != video.children.len() {
             return Err(TimelineError::invalid(format!(
                 "the audio track has {} items and the video track {}; they must match one for one",
@@ -320,5 +341,59 @@ mod tests {
     fn single_media_names_the_file() {
         let timeline = project(100.0, 1000);
         assert_eq!(single_media(&timeline).expect("media"), "/media/take.mp4");
+    }
+
+    /// A project whose video and audio tracks each hold two clips of `frames`.
+    fn two_long_clips(frames: f64) -> Timeline {
+        let mut timeline = project(100.0, 1000);
+        for kind in [VIDEO_KIND, AUDIO_KIND] {
+            let track = timeline.track_mut(kind).expect("track");
+            let Some(Item::Clip(first)) = track.children.first_mut() else {
+                panic!("clip expected")
+            };
+            first.source_range = Some(TimeRange::new(0.0, frames, 100.0));
+            let second = Item::Clip(first.clone());
+            track.children.push(second);
+        }
+        timeline
+    }
+
+    #[test]
+    fn durations_that_would_overflow_the_sum_are_an_error_not_a_panic() {
+        let timeline = two_long_clips(5.0e18);
+        let error = timeline_frames(&timeline).expect_err("overflow");
+        assert!(error.to_string().contains("out of range"), "{error}");
+        assert!(check_editable(&timeline).is_err());
+    }
+
+    #[test]
+    fn a_duration_above_the_cap_is_out_of_range_and_the_cap_itself_is_fine() {
+        let timeline = two_long_clips(2_147_483_648.0);
+        let error = check_editable(&timeline).expect_err("above the cap");
+        assert!(error.to_string().contains("2147483647"), "{error}");
+        let timeline = two_long_clips(2_147_483_647.0);
+        assert_eq!(
+            timeline_frames(&timeline).expect("frames"),
+            2 * 2_147_483_647
+        );
+        let mut negative = project(100.0, 1000);
+        let video = negative.track_mut(VIDEO_KIND).expect("video");
+        if let Some(Item::Clip(clip)) = video.children.first_mut() {
+            clip.source_range = Some(TimeRange::new(-3.0e18, 10.0, 100.0));
+        }
+        assert!(check_editable(&negative).is_err());
+    }
+
+    #[test]
+    fn a_frame_rate_of_zero_is_named_as_such() {
+        let mut timeline = project(100.0, 1000);
+        let video = timeline.track_mut(VIDEO_KIND).expect("video");
+        if let Some(Item::Clip(clip)) = video.children.first_mut() {
+            clip.source_range = Some(TimeRange::new(0.0, 1000.0, 0.0));
+        }
+        let error = project_rate(&timeline).expect_err("rate 0");
+        let text = error.to_string();
+        assert!(text.contains("frame rate") && text.contains('0'), "{text}");
+        assert!(!text.contains("no clip with a source_range"), "{text}");
     }
 }

@@ -8,6 +8,7 @@ use crate::otio::{
     reelctl, update_reelctl, Clip, ExternalReference, Item, MediaReference, TimeRange, Timeline,
     Track, AUDIO_KIND, VIDEO_KIND,
 };
+use crate::render::MAX_SIDE;
 
 /// The key under `metadata.reelctl` of a timeline that records its edit DNA.
 pub const DNA_KEY: &str = "dna";
@@ -62,6 +63,13 @@ pub fn init(spec: &InitSpec) -> Result<Timeline> {
         return Err(TimelineError::invalid(
             "the media has no video frames to edit",
         ));
+    }
+    if spec.frames > crate::tracks::MAX_FRAMES {
+        return Err(TimelineError::invalid(format!(
+            "the media has {} video frames; at most {} can be edited",
+            spec.frames,
+            crate::tracks::MAX_FRAMES
+        )));
     }
     let stem = std::path::Path::new(&spec.media_path)
         .file_stem()
@@ -150,6 +158,17 @@ pub fn media_info(timeline: &Timeline) -> Result<MediaInfo> {
             ) else {
                 continue;
             };
+            let sides = 1.0..=f64::from(MAX_SIDE);
+            if !sides.contains(&width) || !sides.contains(&height) {
+                return Err(TimelineError::invalid(format!(
+                    "\"{path}\": metadata.reelctl.{MEDIA_KEY} says {width}x{height}; each side must be 1 to {MAX_SIDE} pixels"
+                )));
+            }
+            if !fps.is_finite() || fps <= 0.0 || !(1.0..=f64::from(i32::MAX)).contains(&frames) {
+                return Err(TimelineError::invalid(format!(
+                    "\"{path}\": metadata.reelctl.{MEDIA_KEY} says {frames} frames at {fps} fps; both must be above 0"
+                )));
+            }
             return Ok(MediaInfo {
                 path,
                 fps,
@@ -248,6 +267,10 @@ mod tests {
         let mut bad = spec(true);
         bad.fps = 0.0;
         assert!(init(&bad).is_err());
+        let mut bad = spec(true);
+        bad.frames = crate::tracks::MAX_FRAMES + 1;
+        let error = init(&bad).expect_err("too long");
+        assert!(error.to_string().contains("2147483647"), "{error}");
     }
 
     #[test]

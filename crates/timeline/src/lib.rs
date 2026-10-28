@@ -19,9 +19,9 @@ mod testutil;
 
 pub use bridge::{
     attach_bridge, bridge_of, BridgeReport, BridgeRequest, BridgeSpec, CARD_BACKGROUND,
-    CARD_FOREGROUND, CARD_KIND, PAUSE_SEARCH_MS, SILENCE_KIND,
+    CARD_FOREGROUND, CARD_KIND, MAX_CARD_MS, PAUSE_SEARCH_MS, SILENCE_KIND,
 };
-pub use cut::{cut_silence, CutOptions, CutReport, RemovedSpan, CUTS_KEY};
+pub use cut::{check_dna_length, cut_silence, CutOptions, CutReport, RemovedSpan, CUTS_KEY};
 pub use error::{Result, TimelineError};
 pub use init::{
     dna_ref, init, media_info, set_dna_ref, DnaRef, InitSpec, MediaInfo, DNA_KEY, MEDIA_KEY,
@@ -34,6 +34,7 @@ pub use otio::{
 pub use punch::{punch_in, PunchReport, PunchRequest, MAX_SCALE, RAMP_FRAMES};
 pub use render::{
     build_render_plan, frame_rate_arg, CardSpec, RenderPlan, RenderSize, AUDIO_SAMPLE_RATE,
+    MAX_PIXELS, MAX_SIDE,
 };
 pub use tracks::{
     ceil_frame, check_editable, floor_frame, frame_ms, project_rate, round_frame, single_media,

@@ -753,3 +753,559 @@ fn render_fails_clearly_without_ffmpeg() {
     assert!(stderr.contains("PATH"), "{stderr}");
     assert!(!root.join("out.mp4").exists());
 }
+
+// ---- audit fixes -----------------------------------------------------------
+
+/// A project for `draft12` made by `init` (and `punch-in`, so it has joins).
+fn project_with_joins(root: &Path, media: &Path) -> PathBuf {
+    generate("draft12", media);
+    let project = root.join("edit.otio");
+    ok(&[
+        "timeline",
+        "init",
+        "--input",
+        &s(media),
+        "--out",
+        &s(&project),
+    ]);
+    ok(&[
+        "transform",
+        "punch-in",
+        "--project",
+        &s(&project),
+        "--start-ms",
+        "1000",
+        "--end-ms",
+        "3000",
+        "--scale",
+        "1.2",
+        "--out",
+        &s(&project),
+    ]);
+    project
+}
+
+/// `project` with the media path replaced by `media` in the text.
+fn project_pointing_at(root: &Path, project: &Path, from: &Path, media: &str) -> PathBuf {
+    let canonical = fs::canonicalize(from).expect("canonical");
+    let text = fs::read_to_string(project).expect("read");
+    assert!(text.contains(&s(&canonical)), "the project names the media");
+    let out = root.join("bad.otio");
+    fs::write(&out, text.replace(&s(&canonical), media)).expect("write");
+    out
+}
+
+fn stderr_of(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+#[test]
+fn a_media_path_that_is_not_a_local_file_is_refused_and_nothing_is_fetched() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    listener.set_nonblocking(true).expect("nonblocking");
+    let port = listener.local_addr().expect("addr").port();
+    let root = scratch("network");
+    let media = root.join("draft.mp4");
+    let project = project_with_joins(&root, &media);
+
+    let url = format!("http://127.0.0.1:{port}/x.mp4");
+    let concat = format!("concat:http://127.0.0.1:{port}/a.mp4|/dev/null");
+    let bad = [
+        url.as_str(),
+        "file:///etc/hosts",
+        concat.as_str(),
+        "concat:/etc/hosts|/etc/hosts",
+        "pipe:0",
+        "/dev/null",
+    ];
+    for target in bad {
+        let broken = project_pointing_at(&root, &project, &media, target);
+        let commands: [Vec<String>; 3] = [
+            vec![
+                "render".into(),
+                "--project".into(),
+                s(&broken),
+                "--out".into(),
+                s(&root.join("o.mp4")),
+            ],
+            vec![
+                "qa".into(),
+                "inspect-boundaries".into(),
+                "--project".into(),
+                s(&broken),
+                "--out-dir".into(),
+                s(&root.join("views")),
+            ],
+            vec![
+                "funnel".into(),
+                "attach-bridge".into(),
+                "--project".into(),
+                s(&broken),
+                "--target-url".into(),
+                "a.co".into(),
+                "--out".into(),
+                s(&root.join("b.otio")),
+            ],
+        ];
+        for args in &commands {
+            let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+            let output = run(&refs);
+            assert_eq!(
+                output.status.code(),
+                Some(2),
+                "{target} with {refs:?}: {}",
+                stderr_of(&output)
+            );
+        }
+        assert!(!root.join("o.mp4").exists() && !root.join("b.otio").exists());
+        assert!(!root.join("views").exists());
+        // `init` takes the same strings as its input.
+        let output = run(&[
+            "timeline",
+            "init",
+            "--input",
+            target,
+            "--out",
+            &s(&root.join("i.otio")),
+        ]);
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "{target}: {}",
+            stderr_of(&output)
+        );
+    }
+    let attempt = listener.accept();
+    assert!(
+        matches!(&attempt, Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
+        "reelctl connected to the loopback server: {attempt:?}"
+    );
+}
+
+#[test]
+fn a_playlist_file_cannot_make_ffmpeg_fetch_what_it_lists() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    listener.set_nonblocking(true).expect("nonblocking");
+    let port = listener.local_addr().expect("addr").port();
+    let root = scratch("playlist");
+    let media = root.join("draft.mp4");
+    let project = project_with_joins(&root, &media);
+    let playlist = root.join("list.m3u8");
+    fs::write(
+        &playlist,
+        format!("#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:1,\nhttp://127.0.0.1:{port}/seg.ts\n#EXT-X-ENDLIST\n"),
+    )
+    .expect("write");
+    let broken = project_pointing_at(&root, &project, &media, &s(&playlist));
+    let outcomes = [
+        run(&[
+            "timeline",
+            "init",
+            "--input",
+            &s(&playlist),
+            "--out",
+            &s(&root.join("i.otio")),
+        ]),
+        run(&[
+            "render",
+            "--project",
+            &s(&broken),
+            "--out",
+            &s(&root.join("o.mp4")),
+        ]),
+        run(&[
+            "qa",
+            "inspect-boundaries",
+            "--project",
+            &s(&broken),
+            "--out-dir",
+            &s(&root.join("views")),
+        ]),
+    ];
+    for output in &outcomes {
+        assert!(!output.status.success(), "{}", stderr_of(output));
+        assert_ne!(output.status.code(), Some(101), "{}", stderr_of(output));
+    }
+    let attempt = listener.accept();
+    assert!(
+        matches!(&attempt, Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
+        "reelctl connected to the loopback server: {attempt:?}"
+    );
+}
+
+#[test]
+fn a_file_name_that_starts_with_a_dash_works() {
+    let root = scratch("dash");
+    let media = root.join("-draft.mp4");
+    generate("draft12", &media);
+    let output = reelctl()
+        .current_dir(&root)
+        .args(["timeline", "init", "--input=-draft.mp4", "--out=edit.otio"])
+        .output()
+        .expect("spawn reelctl");
+    assert!(output.status.success(), "{}", stderr_of(&output));
+    let project = read_json(&root.join("edit.otio"));
+    let text = project.to_string();
+    assert!(text.contains(&s(&fs::canonicalize(&media).expect("canonical"))));
+}
+
+/// 12 s at 30 fps with silence at `gaps`, written as an edit DNA next to `root`.
+fn write_dna(root: &Path, name: &str, duration_ms: u64, gaps: &[(u64, u64)]) -> PathBuf {
+    let mut dna = EditDna::empty(duration_ms, 30.0, 640, 360);
+    dna.silence_gaps = gaps
+        .iter()
+        .map(|&(start_ms, end_ms)| edit_dna::SilenceGap {
+            start_ms,
+            end_ms,
+            duration_ms: end_ms - start_ms,
+        })
+        .collect();
+    let path = root.join(name);
+    fs::write(&path, serde_json::to_string(&dna).expect("json")).expect("write");
+    path
+}
+
+#[test]
+fn the_bridge_after_cut_silence_lands_on_the_join_and_a_rerun_says_so() {
+    let root = scratch("bridge-pipeline");
+    let media = root.join("draft.mp4");
+    generate("draft12", &media);
+    let project = root.join("edit.otio");
+    // 330 frames are left after two 15-frame cuts, so 72 % is frame 237 (7900 ms).
+    // The second cut leaves a join at frame 240 (8000 ms), 100 ms on.
+    let dna = write_dna(
+        &root,
+        "gaps.edit_dna.json",
+        12_000,
+        &[(3_000, 3_500), (8_500, 9_000)],
+    );
+    ok(&[
+        "timeline",
+        "init",
+        "--input",
+        &s(&media),
+        "--dna",
+        &s(&dna),
+        "--out",
+        &s(&project),
+    ]);
+    ok(&[
+        "timeline",
+        "cut-silence",
+        "--project",
+        &s(&project),
+        "--dna",
+        &s(&dna),
+        "--out",
+        &s(&project),
+    ]);
+    let path = s(&project);
+    let bridge = || {
+        ok(&[
+            "funnel",
+            "attach-bridge",
+            "--project",
+            &path,
+            "--target-url",
+            "a.co",
+            "--out",
+            &path,
+        ])
+    };
+    let first = bridge();
+    assert!(first.contains("cut_ms=8000 in_pause=true"), "{first}");
+    let again = bridge();
+    assert!(
+        again.contains("in_pause=true") && again.contains("unchanged=true"),
+        "{again}"
+    );
+}
+
+#[test]
+fn attach_bridge_refuses_a_dna_of_another_length() {
+    let root = scratch("bridge-dna");
+    let media = root.join("draft.mp4");
+    generate("draft12", &media);
+    let project = root.join("edit.otio");
+    ok(&[
+        "timeline",
+        "init",
+        "--input",
+        &s(&media),
+        "--out",
+        &s(&project),
+    ]);
+    let before = fs::read(&project).expect("read");
+    let other = write_dna(&root, "other.edit_dna.json", 30_000, &[(8_500, 9_000)]);
+    let output = run(&[
+        "funnel",
+        "attach-bridge",
+        "--project",
+        &s(&project),
+        "--target-url",
+        "a.co",
+        "--dna",
+        &s(&other),
+        "--out",
+        &s(&project),
+    ]);
+    assert_eq!(output.status.code(), Some(2), "{}", stderr_of(&output));
+    assert!(
+        stderr_of(&output).contains("30000"),
+        "{}",
+        stderr_of(&output)
+    );
+    assert_eq!(
+        before,
+        fs::read(&project).expect("read"),
+        "a failed run wrote"
+    );
+}
+
+fn names_in(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = fs::read_dir(dir)
+        .expect("dir")
+        .map(|entry| {
+            entry
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn render_checks_its_output_name_and_leaves_nothing_behind() {
+    let root = scratch("render-out");
+    let media = root.join("draft.mp4");
+    generate("draft12", &media);
+    let project = root.join("edit.otio");
+    ok(&[
+        "timeline",
+        "init",
+        "--input",
+        &s(&media),
+        "--out",
+        &s(&project),
+    ]);
+    let out_dir = root.join("rendered");
+    fs::create_dir(&out_dir).expect("dir");
+
+    // No extension: ffmpeg could not tell the container.
+    let output = run(&[
+        "render",
+        "--project",
+        &s(&project),
+        "--out",
+        &s(&out_dir.join("noext")),
+    ]);
+    assert_eq!(output.status.code(), Some(2), "{}", stderr_of(&output));
+    assert!(
+        stderr_of(&output).contains("extension"),
+        "{}",
+        stderr_of(&output)
+    );
+    // A directory.
+    let folder = out_dir.join("folder.mp4");
+    fs::create_dir(&folder).expect("dir");
+    let output = run(&["render", "--project", &s(&project), "--out", &s(&folder)]);
+    assert_eq!(output.status.code(), Some(2), "{}", stderr_of(&output));
+    assert!(
+        stderr_of(&output).contains("directory"),
+        "{}",
+        stderr_of(&output)
+    );
+    assert_eq!(names_in(&out_dir), vec!["folder.mp4".to_string()]);
+    assert_eq!(names_in(&folder), Vec::<String>::new());
+
+    // A good one leaves only the output, with its own extension.
+    let out = out_dir.join("out.mov");
+    ok(&["render", "--project", &s(&project), "--out", &s(&out)]);
+    assert_eq!(
+        names_in(&out_dir),
+        vec!["folder.mp4".to_string(), "out.mov".to_string()]
+    );
+}
+
+#[test]
+fn a_render_that_ffmpeg_cannot_make_removes_its_temporary_file() {
+    let root = scratch("render-fails");
+    let media = root.join("draft.mp4");
+    generate("draft12", &media);
+    let project = root.join("edit.otio");
+    ok(&[
+        "timeline",
+        "init",
+        "--input",
+        &s(&media),
+        "--out",
+        &s(&project),
+    ]);
+    let out_dir = root.join("rendered");
+    // An extension ffmpeg has no container for.
+    let output = run(&[
+        "render",
+        "--project",
+        &s(&project),
+        "--out",
+        &s(&out_dir.join("out.nope")),
+    ]);
+    assert_eq!(output.status.code(), Some(1), "{}", stderr_of(&output));
+    assert_eq!(names_in(&out_dir), Vec::<String>::new());
+}
+
+#[test]
+fn unbounded_inputs_exit_2() {
+    let root = scratch("caps");
+    let media = root.join("draft.mp4");
+    generate("draft12", &media);
+    let project = root.join("edit.otio");
+    ok(&[
+        "timeline",
+        "init",
+        "--input",
+        &s(&media),
+        "--out",
+        &s(&project),
+    ]);
+    let project_path = s(&project);
+    let out_path = s(&root.join("o.mp4"));
+    let render = |extra: &[&str]| {
+        let mut args = vec!["render", "--project", &project_path, "--out", &out_path];
+        args.extend(extra);
+        run(&args)
+    };
+    for size in ["8194x2", "8192x4096", "99999999999x2"] {
+        let output = render(&["--size", size]);
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "{size}: {}",
+            stderr_of(&output)
+        );
+    }
+    let output = run(&[
+        "funnel",
+        "attach-bridge",
+        "--project",
+        &s(&project),
+        "--target-url",
+        "a.co",
+        "--card-ms",
+        "60001",
+        "--out",
+        &s(&root.join("b.otio")),
+    ]);
+    assert_eq!(output.status.code(), Some(2), "{}", stderr_of(&output));
+    assert!(
+        stderr_of(&output).contains("60000"),
+        "{}",
+        stderr_of(&output)
+    );
+
+    // Hand-edited durations: nothing to render, and a sum that cannot be held.
+    let edit = |name: &str, change: &dyn Fn(&mut Value)| {
+        let mut json = read_json(&project);
+        change(&mut json);
+        let path = root.join(name);
+        fs::write(&path, serde_json::to_string(&json).expect("json")).expect("write");
+        path
+    };
+    let set_duration = |json: &mut Value, frames: f64, copies: usize| {
+        let tracks = json["tracks"]["children"].as_array_mut().expect("tracks");
+        for track in tracks {
+            let children = track["children"].as_array_mut().expect("children");
+            let mut clip = children[0].clone();
+            clip["source_range"]["duration"]["value"] = Value::from(frames);
+            *children = vec![clip; copies];
+        }
+    };
+    for (name, frames, copies, needle) in [
+        ("zero.otio", 0.0, 1, "no frames"),
+        ("huge.otio", 5.0e18, 2, "out of range"),
+    ] {
+        let broken = edit(name, &|json| set_duration(json, frames, copies));
+        for args in [
+            vec![
+                "render",
+                "--project",
+                &s(&broken),
+                "--out",
+                &s(&root.join("o.mp4")),
+            ],
+            vec![
+                "transform",
+                "punch-in",
+                "--project",
+                &s(&broken),
+                "--start-ms",
+                "0",
+                "--end-ms",
+                "1000",
+                "--scale",
+                "1.2",
+                "--out",
+                &s(&root.join("p.otio")),
+            ],
+        ] {
+            let output = run(&args);
+            assert_eq!(
+                output.status.code(),
+                Some(2),
+                "{name} {args:?}: {}",
+                stderr_of(&output)
+            );
+        }
+        let output = run(&["render", "--project", &s(&broken), "--out", &out_path]);
+        assert!(
+            stderr_of(&output).contains(needle),
+            "{name}: {}",
+            stderr_of(&output)
+        );
+    }
+    assert!(!root.join("o.mp4").exists());
+}
+
+#[test]
+fn a_url_too_long_for_the_card_is_cut_and_the_render_says_so() {
+    let root = scratch("long-url");
+    let media = root.join("draft.mp4");
+    generate("draft12", &media);
+    let project = root.join("edit.otio");
+    ok(&[
+        "timeline",
+        "init",
+        "--input",
+        &s(&media),
+        "--out",
+        &s(&project),
+    ]);
+    let url = format!("https://example.com/{}", "very/long/path/".repeat(80));
+    ok(&[
+        "funnel",
+        "attach-bridge",
+        "--project",
+        &s(&project),
+        "--target-url",
+        &url,
+        "--out",
+        &s(&project),
+    ]);
+    let stdout = ok(&[
+        "render",
+        "--project",
+        &s(&project),
+        "--out",
+        &s(&root.join("o.mp4")),
+        "--size",
+        "360x640",
+    ]);
+    assert!(stdout.contains("too long for the frame"), "{stdout}");
+    assert!(
+        stdout.contains(&format!("of {} characters", url.chars().count())),
+        "{stdout}"
+    );
+}

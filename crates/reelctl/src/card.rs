@@ -12,6 +12,10 @@ const GAP: u32 = 1;
 /// Text may use this share of the width.
 const MARGIN: f64 = 0.88;
 const MAX_SCALE: u32 = 10;
+/// Wrapped text and its bar may take this share of the height.
+const HEIGHT_SHARE: f64 = 0.8;
+/// What a cut text ends in.
+const ELLIPSIS: &str = "...";
 
 /// `#rrggbb` as a colour.
 pub fn parse_color(text: &str) -> Result<Rgb<u8>> {
@@ -197,29 +201,65 @@ fn wrap(text: &str, per_line: usize) -> Vec<String> {
         .collect()
 }
 
+/// A drawn card and the text it shows.
+pub struct Card {
+    pub image: RgbImage,
+    /// The text on the card: the whole text, or its start and `...`.
+    pub shown: String,
+    /// Characters in the text that was asked for.
+    pub total: usize,
+}
+
+impl Card {
+    /// The text did not fit in the frame and was cut.
+    pub fn truncated(&self) -> bool {
+        self.shown.chars().count() < self.total
+    }
+}
+
+/// `text` cut to `max` characters, the last three of them `...`.
+fn with_ellipsis(text: &str, max: usize) -> String {
+    if max <= ELLIPSIS.len() {
+        return text.chars().take(max).collect();
+    }
+    let kept: String = text.chars().take(max - ELLIPSIS.len()).collect();
+    format!("{kept}{ELLIPSIS}")
+}
+
 /// The card: `text` centred in `foreground` on `background`, `width` by `height`
 /// pixels, with a bar under it. Text that does not fit on one line at the smallest
-/// size is wrapped.
+/// size is wrapped; text that does not fit in the frame even so is cut and ends in
+/// `...` (the font has no ellipsis character, and a box would not say what it is).
 pub fn draw_card(
     text: &str,
     background: Rgb<u8>,
     foreground: Rgb<u8>,
     width: u32,
     height: u32,
-) -> RgbImage {
+) -> Card {
     let mut image = RgbImage::from_pixel(width, height, background);
     let usable = (f64::from(width) * MARGIN) as u32;
-    let chars = text.chars().count();
+    let total = text.chars().count();
     // Largest scale at which the text is one line and not too tall.
     let single = (1..=MAX_SCALE)
         .rev()
-        .find(|&scale| text_width(chars, scale) <= usable && GLYPH_H * scale <= height / 4);
-    let (scale, lines) = match single {
-        Some(scale) => (scale, vec![text.to_string()]),
+        .find(|&scale| text_width(total, scale) <= usable && GLYPH_H * scale <= height / 4);
+    let (scale, shown, lines) = match single {
+        Some(scale) => (scale, text.to_string(), vec![text.to_string()]),
         None => {
             let scale = 2;
             let per_line = (usable / ((GLYPH_W + GAP) * scale)) as usize;
-            (scale, wrap(text, per_line))
+            // The lines, and the bar under them, may take this much of the height.
+            let room = (f64::from(height) * HEIGHT_SHARE) as u32;
+            let max_lines = ((room / ((GLYPH_H + 2) * scale)) as usize).max(1);
+            let max_chars = per_line.max(1) * max_lines;
+            let shown = if total > max_chars {
+                with_ellipsis(text, max_chars)
+            } else {
+                text.to_string()
+            };
+            let lines = wrap(&shown, per_line);
+            (scale, shown, lines)
         }
     };
     let line_height = (GLYPH_H + 2) * scale;
@@ -253,7 +293,11 @@ pub fn draw_card(
     for step in 0..widest {
         fill(&mut image, bar_x + step, y + scale, scale, foreground);
     }
-    image
+    Card {
+        image,
+        shown,
+        total,
+    }
 }
 
 #[cfg(test)]
@@ -277,7 +321,7 @@ mod tests {
 
     #[test]
     fn the_card_is_the_output_size_with_the_background_in_the_corner() {
-        let image = draw_card("example.com/go", BG, FG, 640, 360);
+        let image = draw_card("example.com/go", BG, FG, 640, 360).image;
         assert_eq!(image.dimensions(), (640, 360));
         assert_eq!(*image.get_pixel(0, 0), BG);
         assert_eq!(*image.get_pixel(639, 359), BG);
@@ -285,7 +329,7 @@ mod tests {
 
     #[test]
     fn the_text_is_drawn_in_the_foreground_near_the_centre() {
-        let image = draw_card("example.com/go", BG, FG, 640, 360);
+        let image = draw_card("example.com/go", BG, FG, 640, 360).image;
         let mut centre = 0;
         for y in 120..240 {
             for x in 80..560 {
@@ -300,15 +344,15 @@ mod tests {
 
     #[test]
     fn different_text_gives_a_different_card() {
-        let a = draw_card("a.co/x", BG, FG, 320, 180);
-        let b = draw_card("a.co/y", BG, FG, 320, 180);
+        let a = draw_card("a.co/x", BG, FG, 320, 180).image;
+        let b = draw_card("a.co/y", BG, FG, 320, 180).image;
         assert_ne!(a.as_raw(), b.as_raw());
     }
 
     #[test]
     fn a_long_url_wraps_and_stays_inside_the_frame() {
         let url = "https://example.com/a/very/long/path/that/does/not/fit/on/one/line?ref=reel&x=1";
-        let image = draw_card(url, BG, FG, 320, 568);
+        let image = draw_card(url, BG, FG, 320, 568).image;
         assert_eq!(image.dimensions(), (320, 568));
         assert!(count(&image, FG) > 0);
         // Nothing is drawn in the outer 4 % margin at the left and right.
@@ -324,5 +368,47 @@ mod tests {
         assert_ne!(glyph('\u{4e2d}'), glyph(' '));
         // Lowercase uses the capital's shape.
         assert_eq!(glyph('a'), glyph('A'));
+    }
+
+    #[test]
+    fn a_url_that_fits_is_shown_whole() {
+        let card = draw_card("example.com/go", BG, FG, 640, 360);
+        assert_eq!(card.shown, "example.com/go");
+        assert!(!card.truncated());
+    }
+
+    #[test]
+    fn a_url_too_long_for_the_card_is_cut_with_an_ellipsis_and_says_so() {
+        let url = format!("https://example.com/{}", "very/long/path/".repeat(60));
+        let card = draw_card(&url, BG, FG, 320, 568);
+        assert!(card.truncated());
+        assert_eq!(card.total, url.chars().count());
+        assert!(card.shown.ends_with("..."), "{}", card.shown);
+        assert!(card.shown.chars().count() < card.total);
+        assert!(url.starts_with(card.shown.trim_end_matches("...")));
+        assert_eq!(card.image.dimensions(), (320, 568));
+        // The text and its bar stay inside the frame: the last rows are plain.
+        for x in 0..320 {
+            assert_eq!(*card.image.get_pixel(x, 567), BG);
+            assert_eq!(*card.image.get_pixel(x, 0), BG);
+        }
+    }
+
+    #[test]
+    fn the_limit_is_the_text_that_fits_in_the_frame() {
+        // Every character that is shown is drawn: nothing is clipped at the bottom.
+        let url = "a".repeat(20_000);
+        for (width, height) in [(320, 568), (1080, 1920), (160, 90)] {
+            let card = draw_card(&url, BG, FG, width, height);
+            assert!(card.truncated(), "{width}x{height}");
+            let rows: Vec<u32> = (0..height)
+                .filter(|&y| (0..width).any(|x| *card.image.get_pixel(x, y) == FG))
+                .collect();
+            let (top, bottom) = (rows[0], rows[rows.len() - 1]);
+            assert!(
+                top > 0 && bottom < height - 1,
+                "{width}x{height}: {top}..{bottom}"
+            );
+        }
     }
 }
