@@ -34,7 +34,7 @@ A new crate, `understand`, plus a `reelctl understand` subcommand. The crate is 
 
 ### Phase 3: Wiring (main session)
 - [x] Task 5: `decompile::decode_frames_at`
-- [ ] Task 6: `openrouter.rs` (backend and catalog) and the key rules
+- [x] Task 6: `openrouter.rs` (backend and catalog) and the key rules
 - [ ] Task 7: `reelctl understand`: exit codes 1–4, `--dry-run`, `--replay`, `--catalog`, end-to-end tests, schema
 
 ### Checkpoint B

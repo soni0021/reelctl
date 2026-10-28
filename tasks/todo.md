@@ -46,9 +46,9 @@ Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/long-to-short-clipper.md](../d
 
 ## Task 6: OpenRouter backend and catalog
 
-- [ ] Backend: key from `OPENROUTER_API_KEY` only; `data_collection: deny` and `require_parameters` on every request; strict json_schema; no retry with looser settings; the key is only in the header
-- [ ] Catalog: the public endpoint listing (no key), parsed into `EndpointInfo`
-- [ ] Offline tests against recorded response bodies; a dummy key never appears in an error message
+- [x] Backend: key from `OPENROUTER_API_KEY` only; `data_collection: deny` and `require_parameters` on every request; strict json_schema; no retry with looser settings; the key is only in the header
+- [x] Catalog: the public endpoint listing (no key), parsed into `EndpointInfo`
+- [x] Offline tests against recorded response bodies; a dummy key never appears in an error message
 
 ## Task 7: `reelctl understand`
 
