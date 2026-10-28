@@ -1,0 +1,181 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "video_summary",
+    "beats",
+    "edit_events",
+    "reel_candidates"
+  ],
+  "properties": {
+    "video_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "topic",
+        "language",
+        "speaker_count",
+        "visual_formats"
+      ],
+      "properties": {
+        "topic": {
+          "type": "string"
+        },
+        "language": {
+          "type": "string"
+        },
+        "speaker_count": {
+          "type": "integer"
+        },
+        "visual_formats": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "talking_head",
+              "slides",
+              "screen_recording",
+              "b_roll",
+              "split_screen",
+              "text_card",
+              "other"
+            ]
+          }
+        }
+      }
+    },
+    "beats": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "start_segment",
+          "end_segment",
+          "kind",
+          "summary",
+          "visual",
+          "insight_density"
+        ],
+        "properties": {
+          "start_segment": {
+            "type": "integer"
+          },
+          "end_segment": {
+            "type": "integer"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "hook",
+              "premise",
+              "claim",
+              "evidence",
+              "story",
+              "example",
+              "reset",
+              "payoff",
+              "cta",
+              "tangent",
+              "filler"
+            ]
+          },
+          "summary": {
+            "type": "string"
+          },
+          "visual": {
+            "type": "string"
+          },
+          "insight_density": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    "edit_events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "t_s",
+          "kind",
+          "note"
+        ],
+        "properties": {
+          "t_s": {
+            "type": "number"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "hard_cut",
+              "punch_in",
+              "zoom_out",
+              "overlay_on",
+              "overlay_off",
+              "b_roll_on",
+              "b_roll_off",
+              "slide_change",
+              "caption_change"
+            ]
+          },
+          "note": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "reel_candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "rank",
+          "start_segment",
+          "end_segment",
+          "hook_segment",
+          "payoff_segment",
+          "cutoff_segment",
+          "title",
+          "open_loop",
+          "visual_suggestion",
+          "why"
+        ],
+        "properties": {
+          "rank": {
+            "type": "integer"
+          },
+          "start_segment": {
+            "type": "integer"
+          },
+          "end_segment": {
+            "type": "integer"
+          },
+          "hook_segment": {
+            "type": "integer"
+          },
+          "payoff_segment": {
+            "type": "integer"
+          },
+          "cutoff_segment": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "open_loop": {
+            "type": "string"
+          },
+          "visual_suggestion": {
+            "type": "string"
+          },
+          "why": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

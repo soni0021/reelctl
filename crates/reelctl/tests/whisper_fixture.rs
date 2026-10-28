@@ -22,7 +22,8 @@ fn reelctl() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_reelctl"));
     command
         .env_remove("REELCTL_WHISPER_MODEL")
-        .env_remove("REELCTL_TRANSNET_WEIGHTS");
+        .env_remove("REELCTL_TRANSNET_WEIGHTS")
+        .env_remove("OPENROUTER_API_KEY");
     command
 }
 
