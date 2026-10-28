@@ -61,7 +61,7 @@ fn ends_sentence(word: &Word) -> bool {
 /// between `before` and `after`, as described on [`segment_words`].
 fn pause_between(pauses: &[&SilenceGap], before: &Word, after: &Word) -> bool {
     let earliest_start = before.end_ms.saturating_sub(SEGMENT_SLACK_MS);
-    let latest_end = after.start_ms + SEGMENT_SLACK_MS;
+    let latest_end = after.start_ms.saturating_add(SEGMENT_SLACK_MS);
     let from = pauses.partition_point(|gap| gap.start_ms < earliest_start);
     pauses
         .iter()
@@ -100,6 +100,15 @@ mod tests {
     fn two_words_around(pause_ms: u64) -> (Vec<Word>, Vec<SilenceGap>) {
         let words = vec![word("one", 0, 1_000), word("two", 1_000 + pause_ms, 2_500)];
         (words, vec![gap(1_000, 1_000 + pause_ms)])
+    }
+
+    #[test]
+    fn a_word_time_near_the_largest_value_does_not_overflow() {
+        let words = vec![word("one", 0, 1_000), word("two", u64::MAX - 10, u64::MAX)];
+        // The slack added to the late word's start saturates instead of panicking.
+        let (_, gaps) = two_words_around(SEGMENT_PAUSE_MS);
+        assert_eq!(segment_words(&words, &gaps).len(), 2);
+        assert_eq!(segment_words(&words, &[]).len(), 1);
     }
 
     #[test]
