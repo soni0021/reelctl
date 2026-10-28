@@ -2300,4 +2300,130 @@ mod tests {
             );
         }
     }
+
+    // ---- the scale constants, each just inside and just outside ----
+
+    /// 90 frames of a punch-in at frame 30, with a 30% block on the picture
+    /// from frame `block_at`.
+    fn punch_in_then_block(shape: (usize, usize), block_at: usize) -> Clip {
+        let (cols, rows) = shape;
+        let big = rect(cols, rows, 0.1, 0.1, 0.65, 0.65);
+        let plain = render(cols, rows, 1.0, 0.5, 0.5);
+        let zoomed = render(cols, rows, 1.18, 0.5, 0.5);
+        let mut clip = Clip::default();
+        for i in 0..90 {
+            let picture = if i < 30 { &plain } else { &zoomed };
+            clip.one(if i >= block_at {
+                with_block(picture, &big)
+            } else {
+                picture.clone()
+            });
+        }
+        clip
+    }
+
+    fn kinds_and_frames(events: &[DetectedEvent]) -> Vec<(MotionKind, u64)> {
+        events.iter().map(|e| (e.kind, e.frame_index)).collect()
+    }
+
+    #[test]
+    fn a_move_is_judged_on_the_picture_a_quarter_second_either_side() {
+        // The move shows from frame 30, compared with frame 27 (1125 ms). A
+        // quarter second before that is frame 21; its last moving frame is 32,
+        // and a quarter second after that is frame 38.
+        let punch_in = (MotionKind::PunchIn, 30);
+        for shape in SHAPES {
+            // A block already there in the picture a quarter second before the
+            // move does not spoil it; one that comes after that picture does.
+            let before = [
+                (19, vec![punch_in]),
+                (21, vec![punch_in]),
+                (23, vec![]),
+                (25, vec![]),
+            ];
+            // One that comes after the picture a quarter second after the move
+            // is a separate overlay; one that comes before it spoils the move.
+            let after = [
+                (36, vec![]),
+                (38, vec![]),
+                (40, vec![punch_in, (MotionKind::OverlayChange, 40)]),
+                (42, vec![punch_in, (MotionKind::OverlayChange, 42)]),
+            ];
+            for (block_at, expected) in before.into_iter().chain(after) {
+                let events = run_clip(shape, &punch_in_then_block(shape, block_at));
+                assert_eq!(
+                    kinds_and_frames(&events),
+                    expected,
+                    "{shape:?} block at {block_at}: {events:?}"
+                );
+            }
+        }
+    }
+
+    /// A step at frame 30 to a mix of the picture zoomed by 1.18 and the first
+    /// picture, which has the share `dissolve` of the mix.
+    fn half_done_punch_in(shape: (usize, usize), dissolve: f32) -> Clip {
+        let (cols, rows) = shape;
+        let plain = render(cols, rows, 1.0, 0.5, 0.5);
+        let zoomed = render(cols, rows, 1.18, 0.5, 0.5);
+        let mut clip = Clip::default();
+        clip.hold(&plain, 30)
+            .hold(&blend(&zoomed, &plain, dissolve), 50);
+        clip
+    }
+
+    #[test]
+    fn a_scale_must_cut_the_difference_to_three_fifths_to_be_an_event() {
+        for shape in SHAPES {
+            // With 35% of the first picture left, the best scale cuts the
+            // difference to half (an event); with 45% left, to 72% (not one).
+            let mostly = run_clip(shape, &half_done_punch_in(shape, 0.35));
+            assert_eq!(
+                kinds_and_frames(&mostly),
+                vec![(MotionKind::PunchIn, 30)],
+                "{shape:?}: {mostly:?}"
+            );
+            let barely = run_clip(shape, &half_done_punch_in(shape, 0.45));
+            assert!(barely.is_empty(), "{shape:?}: {barely:?}");
+        }
+    }
+
+    #[test]
+    fn the_cheap_gate_refines_a_fit_at_0_78_of_the_difference_and_not_at_0_9() {
+        for shape in SHAPES {
+            // With 48% of the first picture left the best coarse scale cuts the
+            // difference to 78%: worth refining, though not an event. With 64%
+            // left it cuts it to 90%: the motion is no scale and is not refined.
+            let before = REFINES.with(std::cell::Cell::get);
+            let _ = run_clip(shape, &half_done_punch_in(shape, 0.48));
+            assert!(
+                REFINES.with(std::cell::Cell::get) > before,
+                "{shape:?}: not refined"
+            );
+            let before = REFINES.with(std::cell::Cell::get);
+            let _ = run_clip(shape, &half_done_punch_in(shape, 0.64));
+            assert_eq!(
+                REFINES.with(std::cell::Cell::get),
+                before,
+                "{shape:?}: refined"
+            );
+        }
+    }
+
+    #[test]
+    fn a_move_larger_than_the_largest_scale_tried_is_reported_as_that_scale() {
+        for shape in SHAPES {
+            let (cols, rows) = shape;
+            for s in [1.30f32, 1.40] {
+                let clip = zoom_clip(cols, rows, 1.0, &[s], (0.5, 0.5), 30, 40);
+                let events = run_clip(shape, &clip);
+                let e = assert_one_move(&events, MotionKind::PunchIn, 1.26, (0.5, 0.5), 0.1);
+                assert!(e.scale.expect("scale") < 1.27, "{shape:?} {s}: {e:?}");
+                let clip = zoom_clip(cols, rows, s, &[1.0], (0.5, 0.5), 30, 40);
+                let events = run_clip(shape, &clip);
+                let e = assert_one_move(&events, MotionKind::ZoomOut, 1.0 / 1.26, (0.5, 0.5), 0.1);
+                assert!(e.scale.expect("scale") > 1.0 / 1.27, "{shape:?} {s}: {e:?}");
+            }
+        }
+    }
 }
