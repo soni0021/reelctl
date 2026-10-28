@@ -210,6 +210,11 @@ TransNetV2 ONNX weights were not provided. Pass --transnet-weights or set \
 REELCTL_TRANSNET_WEIGHTS to the path of transnetv2.onnx. The weights are not \
 vendored or downloaded."
             .to_string()),
+        Some(path) if path.is_dir() => Err(format!(
+            "TransNetV2 ONNX weights path {} is a directory, not a file. Pass the path of \
+transnetv2.onnx itself (--transnet-weights or REELCTL_TRANSNET_WEIGHTS).",
+            path.display()
+        )),
         Some(path) if !path.is_file() => Err(format!(
             "TransNetV2 ONNX weights were not found at {}. The path is \
 configurable (--transnet-weights or REELCTL_TRANSNET_WEIGHTS), but the file is \
@@ -273,6 +278,17 @@ fn library_path(library: Option<&OsStr>) -> Result<PathBuf, String> {
         )),
         Some(value) => {
             let path = PathBuf::from(value);
+            // `ort` tries a relative path beside the executable before the
+            // working directory, so it could load a different file than the
+            // one checked below.
+            if !path.is_absolute() {
+                return Err(format!(
+                    "TransNetV2 needs the ONNX Runtime library: {LIBRARY_ENV} is {}, which is not an \
+absolute path (a relative path may load a different file than the one checked); {}",
+                    path.display(),
+                    library_hint()
+                ));
+            }
             if path.is_file() {
                 Ok(path)
             } else {
@@ -418,6 +434,44 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("not found"), "{text}");
+    }
+
+    #[test]
+    fn weights_that_are_a_directory_say_so() {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let text = reason(TransNetV2Detector::open_with(Some(&dir), None));
+        assert!(text.contains("is a directory, not a file"), "{text}");
+        assert!(text.contains(dir.to_str().unwrap_or_default()), "{text}");
+        assert!(!text.contains("not found"), "{text}");
+        // `auto` falls back with the same reason.
+        match select_with(CutDetectorChoice::Auto, Some(&dir), None).expect("select") {
+            SelectedDetector::Scene(_, Some(reason)) => {
+                assert!(reason.contains("is a directory, not a file"), "{reason}");
+            }
+            other => panic!("expected a fallback, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_relative_library_path_is_refused_even_when_the_file_exists() {
+        // `ort` tries a relative path beside the executable first, so it could
+        // load a different file than the one checked here. `Cargo.toml` exists
+        // relative to the test's working directory (the crate directory).
+        assert!(Path::new("Cargo.toml").is_file());
+        let weights = some_file();
+        let text = reason(TransNetV2Detector::open_with(
+            Some(&weights),
+            Some(OsStr::new("Cargo.toml")),
+        ));
+        assert!(text.contains("absolute"), "{text}");
+        assert!(text.contains("Cargo.toml"), "{text}");
+        assert!(text.contains(LIBRARY_ENV), "{text}");
+        assert!(!text.contains("not a file"), "{text}");
+        let text = reason(TransNetV2Detector::open_with(
+            Some(&weights),
+            Some(OsStr::new("lib/libonnxruntime.dylib")),
+        ));
+        assert!(text.contains("absolute"), "{text}");
     }
 
     #[test]
