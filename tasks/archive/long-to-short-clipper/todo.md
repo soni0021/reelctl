@@ -1,6 +1,6 @@
 # Tasks: long-to-short clipper
 
-Plan: [tasks/plan.md](plan.md). Spec: [docs/specs/long-to-short-clipper.md](../docs/specs/long-to-short-clipper.md). Tick each box in the commit that completes it. Stage explicit paths; never `git add -A` (`.env` holds a key).
+Plan: [plan.md](plan.md). Spec: [docs/specs/long-to-short-clipper.md](../../../docs/specs/long-to-short-clipper.md). Tick each box in the commit that completes it. Stage explicit paths; never `git add -A` (`.env` holds a key).
 
 ## Task 0: Crate skeleton and contract
 

@@ -1,6 +1,6 @@
 # Spec: Long-to-short clipper (`reelctl understand`)
 
-Status: approved 2026-10-28 (built; first live run 2026-10-28, see [status](../status.md)) by the user's message "invoke multiple agent and complete it", with the recommended answer to each open question, the three new dependencies, and the plan written from this spec. The paid live run (criterion 5) is not covered by that approval and needs its own yes. Branch: `feature/long-to-short-clipper`, cut from `main` after `chore/ignore-env` was merged. Implements the first slice of [planer.md](../../planer.md) Component 3 ("Long-to-Short Open-Loop Clipper") and the VLM role planer.md gives to P3. It does not add `visual-motion` (P0 capability map), which stays open.
+Status: approved 2026-10-28 (built and merged 2026-10-28; first live run 2026-10-28, see [status](../status.md)) by the user's message "invoke multiple agent and complete it", with the recommended answer to each open question, the three new dependencies, and the plan written from this spec. The paid live run (criterion 5) is not covered by that approval and needs its own yes. Branch: `feature/long-to-short-clipper`, cut from `main` after `chore/ignore-env` was merged. Implements the first slice of [planer.md](../../planer.md) Component 3 ("Long-to-Short Open-Loop Clipper") and the VLM role planer.md gives to P3. It does not add `visual-motion` (P0 capability map), which stays open.
 
 ## Objective
 
@@ -92,7 +92,7 @@ cargo run -p understand --example understanding_schema
   - `docs/understanding.md`: every `understanding.json` field, the schema, and the ffmpeg command to cut a clip
   - `docs/cli.md`, README, `docs/status.md`, CHANGELOG, and AGENTS.md (P3 VLM role, "P1–P3 not implemented")
   - ADR-015
-  - `tasks/plan.md` and `tasks/todo.md`
+  - `tasks/plan.md` and `tasks/todo.md` (archived to `tasks/archive/long-to-short-clipper/` on merge)
 
 ## Behavior
 

@@ -59,9 +59,9 @@ Same machine, release builds of `main` and `feature/relative-silence` on the sam
 
 The real clip was re-cut from the original recording on 2026-10-25 with its audio copied, not re-encoded, so its word count (125) differs from the 2026-10-21 runs (183); see Known issues.
 
-## Long-to-short clipper, 2026-10-28 (in progress)
+## Long-to-short clipper, 2026-10-28
 
-Branch `feature/long-to-short-clipper` ([spec](specs/long-to-short-clipper.md)). Entries are added as each part lands. The first live run shows the pipeline works and the rules do their job; the 9B model does not respect the 30–60 s length, so a prompt or model change is the next lever (Muse 1.2 was not run). Billing check from the same run: 87 sheets plus the transcript billed 65,852 input tokens against 139,077 estimated, so the bound overestimates by about 2× and does not underestimate sheets.
+Merged into `main` 2026-10-28 from `feature/long-to-short-clipper` ([spec](specs/long-to-short-clipper.md), [ADR-015](decisions/ADR-015-combine-measured-time-with-a-model-that-answers-by-segment-id.md); plan and checklist in `tasks/archive/long-to-short-clipper/`). The first live run shows the pipeline works and the rules do their job; the 9B model does not respect the 30–60 s length, so a prompt or model change is the next lever (Muse 1.2 was not run). Billing check from the same run: 87 sheets plus the transcript billed 65,852 input tokens against 139,077 estimated, so the bound overestimates by about 2× and does not underestimate sheets.
 
 | Check | Result |
 |---|---|

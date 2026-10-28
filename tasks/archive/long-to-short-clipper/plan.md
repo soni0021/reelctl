@@ -1,6 +1,6 @@
 # Implementation Plan: long-to-short clipper (`reelctl understand`)
 
-Spec: [docs/specs/long-to-short-clipper.md](../docs/specs/long-to-short-clipper.md), approved 2026-10-28 ("invoke multiple agent and complete it") with the recommended answers. Branch: `feature/long-to-short-clipper`. Checklist: [tasks/todo.md](todo.md). Earlier plans are in [tasks/archive/](archive/comparative-diff/plan.md).
+Spec: [docs/specs/long-to-short-clipper.md](../../../docs/specs/long-to-short-clipper.md), approved 2026-10-28 ("invoke multiple agent and complete it") with the recommended answers. Branch: `feature/long-to-short-clipper`. Checklist: [todo.md](todo.md). Earlier plans are in [tasks/archive/](../comparative-diff/plan.md).
 
 ## Overview
 
