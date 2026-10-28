@@ -14,6 +14,7 @@ mod histogram;
 mod hwdecode;
 mod linear_resample;
 mod loudness;
+mod motion;
 mod payoff;
 mod pipeline;
 mod resample;
