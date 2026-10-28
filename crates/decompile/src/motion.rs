@@ -1814,7 +1814,7 @@ mod tests {
         for i in 0..20 {
             clip.one(with_animation(&base, &mask, i));
         }
-        clip.hold(&with_animation(&base, &mask, 19), 20);
+        clip.hold(&with_animation(&base, &mask, 500), 20);
         clip.hold(&with_animation(&base, &mask, 999), 60);
         let events = run(cols, rows, &clip);
         assert_eq!(events.len(), 2, "{events:?}");
