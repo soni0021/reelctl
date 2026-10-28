@@ -319,3 +319,102 @@ fn visual_events(
 fn round4(value: f64) -> f64 {
     (value * 10_000.0).round() / 10_000.0
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::motion::{DetectedEvent, MotionKind};
+    use edit_dna::{Cut, VisualEventKind};
+
+    fn event(frame_index: u64, time_ms: u64, kind: MotionKind) -> DetectedEvent {
+        DetectedEvent {
+            time_ms,
+            frame_index,
+            kind,
+            scale: None,
+            center_x: None,
+            center_y: None,
+            area: None,
+        }
+    }
+
+    fn cut_at(frame_index: u64) -> Cut {
+        Cut {
+            frame_index,
+            time_ms: frame_index * 1000 / 24,
+            interval_ms: 0,
+            scene_score: 0.5,
+        }
+    }
+
+    #[test]
+    fn an_event_on_a_resolved_cut_frame_is_dropped_and_the_others_are_kept() {
+        let events = [
+            event(30, 1250, MotionKind::OverlayChange),
+            event(60, 2500, MotionKind::OverlayChange),
+            event(90, 3750, MotionKind::OverlayChange),
+        ];
+        let kept = visual_events(&events, &[cut_at(60), cut_at(61), cut_at(5)]);
+        let frames: Vec<u64> = kept.iter().map(|e| e.frame_index).collect();
+        assert_eq!(frames, vec![30, 90]);
+        // A cut elsewhere drops nothing; no cuts drop nothing.
+        assert_eq!(visual_events(&events, &[cut_at(59)]).len(), 3);
+        assert_eq!(visual_events(&events, &[]).len(), 3);
+        assert!(visual_events(&[], &[cut_at(1)]).is_empty());
+    }
+
+    #[test]
+    fn events_come_out_sorted_by_time_then_frame() {
+        let events = [
+            event(90, 3750, MotionKind::OverlayChange),
+            event(31, 1300, MotionKind::PunchIn),
+            event(30, 1300, MotionKind::ZoomOut),
+            event(12, 500, MotionKind::OverlayChange),
+        ];
+        let out = visual_events(&events, &[]);
+        let order: Vec<(u64, u64)> = out.iter().map(|e| (e.time_ms, e.frame_index)).collect();
+        assert_eq!(order, vec![(500, 12), (1300, 30), (1300, 31), (3750, 90)]);
+    }
+
+    #[test]
+    fn each_kind_maps_to_its_own_record_kind() {
+        let out = visual_events(
+            &[
+                event(1, 10, MotionKind::PunchIn),
+                event(2, 20, MotionKind::ZoomOut),
+                event(3, 30, MotionKind::OverlayChange),
+            ],
+            &[],
+        );
+        let kinds: Vec<VisualEventKind> = out.iter().map(|e| e.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                VisualEventKind::PunchIn,
+                VisualEventKind::ZoomOut,
+                VisualEventKind::OverlayChange
+            ]
+        );
+    }
+
+    #[test]
+    fn measures_are_rounded_to_four_decimals_and_absent_ones_stay_absent() {
+        let mut zoom = event(10, 400, MotionKind::PunchIn);
+        zoom.scale = Some(1.180_049_9);
+        zoom.center_x = Some(0.500_06);
+        zoom.center_y = Some(0.123_449_9);
+        let mut overlay = event(20, 800, MotionKind::OverlayChange);
+        overlay.area = Some(0.075_849_99);
+        let out = visual_events(&[zoom, overlay], &[]);
+        assert_eq!(out[0].time_ms, 400);
+        assert_eq!(out[0].frame_index, 10);
+        assert_eq!(out[0].scale, Some(1.18));
+        assert_eq!(out[0].center_x, Some(0.5001));
+        assert_eq!(out[0].center_y, Some(0.1234));
+        assert_eq!(out[0].area, None);
+        assert_eq!(out[1].area, Some(0.0758));
+        assert_eq!(out[1].scale, None);
+        assert_eq!(out[1].center_x, None);
+        assert_eq!(out[1].center_y, None);
+    }
+}
