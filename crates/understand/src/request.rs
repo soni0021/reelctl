@@ -5,6 +5,7 @@ use serde_json::Value;
 use crate::backend::Part;
 use crate::catalog::EndpointInfo;
 use crate::types::Segment;
+use crate::IMAGE_TOKEN_ESTIMATE;
 
 const SYSTEM_PROMPT: &str = include_str!("prompt.md");
 const REPLY_SCHEMA: &str = include_str!("reply_schema.json");
@@ -26,60 +27,119 @@ pub struct EncodedImage {
     pub jpeg: Vec<u8>,
 }
 
+/// A time in tenths of a second, rounded half up.
+fn tenths(ms: u64) -> u64 {
+    ms.saturating_add(50) / 100
+}
+
+/// `m:ss.s`, with minutes unbounded.
+fn clock(ms: u64) -> String {
+    let t = tenths(ms);
+    format!("{}:{:02}.{}", t / 600, t % 600 / 10, t % 10)
+}
+
+/// `303.0 s`.
+fn seconds(ms: u64) -> String {
+    let t = tenths(ms);
+    format!("{}.{} s", t / 10, t % 10)
+}
+
+/// `5:03.0 (303.0 s)`.
+fn stamp(ms: u64) -> String {
+    format!("{} ({})", clock(ms), seconds(ms))
+}
+
 /// The label that precedes a single frame: `Frame at 5:03.0 (303.0 s)`.
 pub fn frame_label(time_ms: u64) -> String {
-    // Stub: the label is built in its own task.
-    let _ = time_ms;
-    String::new()
+    format!("Frame at {}", stamp(time_ms))
 }
 
 /// The label that precedes a sheet: its frame times in reading order.
 pub fn sheet_label(times_ms: &[u64]) -> String {
-    // Stub: the label is built in its own task.
-    let _ = times_ms;
-    String::new()
+    let noun = if times_ms.len() == 1 {
+        "frame"
+    } else {
+        "frames"
+    };
+    let times: Vec<String> = times_ms.iter().map(|&t| stamp(t)).collect();
+    format!(
+        "Sheet of {} {noun}, left to right then top to bottom, at {}",
+        times_ms.len(),
+        times.join(", ")
+    )
 }
 
 /// The user message: each image preceded by its label, then the numbered segments as one
 /// text part.
 pub fn build_parts(images: &[EncodedImage], segments: &[Segment]) -> Vec<Part> {
-    // Stub: the parts are built in its own task.
-    let _ = (images, segments);
-    Vec::new()
+    let mut parts = Vec::with_capacity(images.len() * 2 + 1);
+    for image in images {
+        let label = match image.times_ms.as_slice() {
+            [time_ms] => frame_label(*time_ms),
+            times_ms => sheet_label(times_ms),
+        };
+        parts.push(Part::Text(label));
+        parts.push(Part::ImageJpeg(image.jpeg.clone()));
+    }
+    parts.push(Part::Text(segment_lines(segments)));
+    parts
 }
 
 /// The segments, one per line: `G12 [0:41.2-0:43.0] text`, with a trailing `…` on a
 /// segment that ends at a pause in the middle of a sentence (`ends_sentence` false).
 pub fn segment_lines(segments: &[Segment]) -> String {
-    // Stub: the transcript format is built in its own task.
-    let _ = segments;
-    String::new()
+    let lines: Vec<String> = segments
+        .iter()
+        .map(|s| {
+            let mark = if s.ends_sentence { "" } else { "…" };
+            format!(
+                "G{} [{}-{}] {}{mark}",
+                s.id,
+                clock(s.start_ms),
+                clock(s.end_ms),
+                s.text
+            )
+        })
+        .collect();
+    lines.join("\n")
 }
 
 /// Input tokens for a request: `images * IMAGE_TOKEN_ESTIMATE`, plus about one token
 /// per 3 characters of `prompt_text` and `segment_text`. It overestimates on purpose.
 pub fn estimate_input_tokens(images: usize, prompt_text: &str, segment_text: &str) -> u64 {
-    // Stub: the estimate is built in its own task.
-    let _ = (images, prompt_text, segment_text);
-    0
+    let text = |s: &str| {
+        let chars = u64::try_from(s.chars().count()).unwrap_or(u64::MAX);
+        chars.div_ceil(3)
+    };
+    u64::try_from(images)
+        .unwrap_or(u64::MAX)
+        .saturating_mul(IMAGE_TOKEN_ESTIMATE)
+        .saturating_add(text(prompt_text))
+        .saturating_add(text(segment_text))
 }
 
-/// Endpoints whose quantization is in `quants`.
+/// Endpoints whose quantization is in `quants`, ignoring case. An endpoint that states
+/// none counts as `unknown`.
 pub fn eligible_endpoints<'a>(
     endpoints: &'a [EndpointInfo],
     quants: &[String],
 ) -> Vec<&'a EndpointInfo> {
-    // Stub: the filter is built in its own task.
-    let _ = (endpoints, quants);
-    Vec::new()
+    endpoints
+        .iter()
+        .filter(|endpoint| {
+            let quantization = endpoint.quantization.as_deref().unwrap_or("unknown");
+            quants.iter().any(|q| q.eq_ignore_ascii_case(quantization))
+        })
+        .collect()
 }
 
 /// An upper bound on the cost in US dollars: input tokens at the highest prompt price
 /// among `endpoints`, plus `max_tokens` at the highest completion price.
 pub fn cost_upper_bound(input_tokens: u64, max_tokens: u32, endpoints: &[&EndpointInfo]) -> f64 {
-    // Stub: the bound is built in its own task.
-    let _ = (input_tokens, max_tokens, endpoints);
-    0.0
+    let highest =
+        |price: fn(&EndpointInfo) -> f64| endpoints.iter().map(|e| price(e)).fold(0.0, f64::max);
+    input_tokens as f64 * highest(|e| e.prompt_usd_per_token)
+        + f64::from(max_tokens) * highest(|e| e.completion_usd_per_token)
 }
 
 #[cfg(test)]

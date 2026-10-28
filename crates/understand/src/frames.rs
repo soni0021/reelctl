@@ -3,9 +3,13 @@
 //! Decoding the frames is `reelctl`'s job (through `decompile`); this module only
 //! plans times and arranges images it is given.
 
-use image::RgbImage;
+use image::codecs::jpeg::JpegEncoder;
+use image::{ExtendedColorType, RgbImage};
 
 use crate::error::FrameError;
+use crate::{FRAME_CUT_OFFSET_MS, FRAME_MERGE_MS, FRAME_WIDTH, IMAGE_TOKEN_ESTIMATE};
+
+const JPEG_QUALITY: u8 = 80;
 
 /// A decoded frame, already scaled to [`crate::FRAME_WIDTH`].
 #[derive(Debug, Clone)]
@@ -40,18 +44,84 @@ pub enum Layout {
 /// Sample times in milliseconds, ascending and without duplicates: every `every_s`
 /// seconds from 0 up to `duration_ms`, plus [`crate::FRAME_CUT_OFFSET_MS`] before
 /// and after each cut. Times closer than [`crate::FRAME_MERGE_MS`] merge into the
-/// earlier one, and times past the duration are dropped.
+/// earlier one, and times past the duration are dropped. A cut within 300 ms of the
+/// start has no frame before it. An `every_s` of 0 turns the regular grid off, leaving
+/// only the frames around the cuts.
 pub fn sample_times(duration_ms: u64, cut_times_ms: &[u64], every_s: u32) -> Vec<u64> {
-    // Stub: the sampling plan is built in its own task.
-    let _ = (duration_ms, cut_times_ms, every_s);
-    Vec::new()
+    let mut times = Vec::new();
+    if every_s > 0 {
+        let step = u64::from(every_s) * 1_000;
+        let mut t = 0;
+        while t <= duration_ms {
+            times.push(t);
+            match t.checked_add(step) {
+                Some(next) => t = next,
+                None => break,
+            }
+        }
+    }
+    for &cut in cut_times_ms {
+        if let Some(before) = cut.checked_sub(FRAME_CUT_OFFSET_MS) {
+            times.push(before);
+        }
+        times.push(cut.saturating_add(FRAME_CUT_OFFSET_MS));
+    }
+    times.retain(|&t| t <= duration_ms);
+    times.sort_unstable();
+    times.dedup();
+
+    // Each time is measured from the last one kept, so a chain of close times
+    // cannot drag the frames away from where they were asked for.
+    let mut merged: Vec<u64> = Vec::with_capacity(times.len());
+    for t in times {
+        if merged.last().is_none_or(|&last| t - last >= FRAME_MERGE_MS) {
+            merged.push(t);
+        }
+    }
+    merged
 }
 
 /// Tile `frames` into `cols` by `rows` sheets, in order. The last sheet may have empty tiles.
+/// Every sheet has the same size: `cols` tiles of [`crate::FRAME_WIDTH`] across and `rows`
+/// tiles of the tallest frame down. A frame wider than its tile is cropped.
 pub fn tile(frames: &[FrameImage], cols: u32, rows: u32) -> Result<Vec<Sheet>, FrameError> {
-    // Stub: tiling is built in its own task.
-    let _ = (frames, cols, rows);
-    Err(FrameError::NoFrames)
+    if frames.is_empty() || cols == 0 || rows == 0 {
+        return Err(FrameError::NoFrames);
+    }
+    let tile_height = frames.iter().map(|f| f.image.height()).max().unwrap_or(0);
+    // JPEG cannot hold a side longer than 65,535 pixels.
+    let side = |tile: u32, count: u32| {
+        tile.checked_mul(count)
+            .filter(|&px| px <= u32::from(u16::MAX))
+            .ok_or_else(|| FrameError::Encode(format!("a {cols}x{rows} sheet is too large")))
+    };
+    let width = side(FRAME_WIDTH, cols)?;
+    let height = side(tile_height, rows)?;
+    let per_row = cols as usize;
+    let per_sheet = per_row.saturating_mul(rows as usize);
+
+    let sheets = frames
+        .chunks(per_sheet)
+        .map(|chunk| {
+            let mut image = RgbImage::new(width, height);
+            for (row, line) in chunk.chunks(per_row).enumerate() {
+                for (col, frame) in line.iter().enumerate() {
+                    // `col < cols` and `row < rows`, so these fit in a `u32`.
+                    let (x0, y0) = (col as u32 * FRAME_WIDTH, row as u32 * tile_height);
+                    for (x, y, pixel) in frame.image.enumerate_pixels() {
+                        if x < FRAME_WIDTH {
+                            image.put_pixel(x0 + x, y0 + y, *pixel);
+                        }
+                    }
+                }
+            }
+            Sheet {
+                times_ms: chunk.iter().map(|f| f.time_ms).collect(),
+                image,
+            }
+        })
+        .collect();
+    Ok(sheets)
 }
 
 /// With `Auto`, single frames when the request fits the model's context, otherwise the
@@ -65,19 +135,35 @@ pub fn choose_layout(
     max_tokens: u32,
     context_tokens: u64,
 ) -> Layout {
-    // Stub: the layout choice is built in its own task.
-    let _ = (frame_count, text_tokens, max_tokens, context_tokens);
+    // An overflow means the request is far past any context, so it does not fit.
+    let fits = |images: usize| {
+        u64::try_from(images)
+            .ok()
+            .and_then(|n| n.checked_mul(IMAGE_TOKEN_ESTIMATE))
+            .and_then(|tokens| tokens.checked_add(text_tokens))
+            .and_then(|tokens| tokens.checked_add(u64::from(max_tokens)))
+            .is_some_and(|total| total <= context_tokens)
+    };
     match mode {
+        SheetMode::Single => Layout::Single,
         SheetMode::Grid(n) => Layout::Grid(n),
-        SheetMode::Auto | SheetMode::Single => Layout::Single,
+        SheetMode::Auto if fits(frame_count) => Layout::Single,
+        SheetMode::Auto if fits(frame_count.div_ceil(4)) => Layout::Grid(2),
+        SheetMode::Auto => Layout::Grid(3),
     }
 }
 
 /// Encode an image as JPEG.
 pub fn encode_jpeg(image: &RgbImage) -> Result<Vec<u8>, FrameError> {
-    // Stub: encoding is built in its own task.
-    let _ = image;
-    Err(FrameError::Encode("not implemented".to_string()))
+    let (width, height) = image.dimensions();
+    if width == 0 || height == 0 {
+        return Err(FrameError::Encode("the image is empty".to_string()));
+    }
+    let mut jpeg = Vec::new();
+    JpegEncoder::new_with_quality(&mut jpeg, JPEG_QUALITY)
+        .encode(image.as_raw(), width, height, ExtendedColorType::Rgb8)
+        .map_err(|e| FrameError::Encode(e.to_string()))?;
+    Ok(jpeg)
 }
 
 #[cfg(test)]
@@ -155,6 +241,9 @@ mod tests {
     fn times_before_zero_are_dropped_not_clamped() {
         assert_eq!(sample_times(10_000, &[200], 5), vec![0, 500, 5_000, 10_000]);
         assert_eq!(sample_times(10_000, &[0], 5), vec![0, 300, 5_000, 10_000]);
+        // Without the grid's 0, a clamped frame would show up as a 0.
+        assert_eq!(sample_times(10_000, &[200], 0), vec![500]);
+        assert_eq!(sample_times(10_000, &[0], 0), vec![300]);
     }
 
     #[test]
