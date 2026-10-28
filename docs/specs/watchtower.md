@@ -1,6 +1,6 @@
 # Spec: Outlier and growth watchtower (`watchtower`, P1)
 
-Status: written 2026-10-28 under the user's "p1-p3" and the answer "build against recorded fixtures" to the Virlo question; the user has not reviewed it line by line. Branch: `feature/watchtower`. Follows [planer.md](../../planer.md) Component 1 and the P1 row of section 7. Depends on `reelctl decompile` (done).
+Status: built (watchtower/); written 2026-10-28 under the user's "p1-p3" and the answer "build against recorded fixtures" to the Virlo question; the user has not reviewed it line by line. Branch: `feature/watchtower`. Follows [planer.md](../../planer.md) Component 1 and the P1 row of section 7. Depends on `reelctl decompile` (done).
 
 ## Objective
 

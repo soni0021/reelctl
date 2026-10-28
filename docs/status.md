@@ -59,6 +59,18 @@ Same machine, release builds of `main` and `feature/relative-silence` on the sam
 
 The real clip was re-cut from the original recording on 2026-10-25 with its audio copied, not re-encoded, so its word count (125) differs from the 2026-10-21 runs (183); see Known issues.
 
+## Watchtower, 2026-10-28
+
+Go module `watchtower/` ([spec](specs/watchtower.md), [guide](watchtower.md)), built against recorded data. Apple M3 MacBook Air.
+
+| Check | Result |
+|---|---|
+| `go test ./...` (offline, no `reelctl` binary), `gofmt -l`, `go vet` | Pass. Unit tests for the median, multiplier, slope, surging rule, 25% sentence threshold and parser; integration tests through a stub `reelctl` against golden `digest.json` and `digest.md`; a separate test asserts values computed outside the program (multipliers 12.0, 23.8 and 26.1 for the breakouts, 1.0, 1.5 and 1.27 for the baseline posts, follower growth 319.6 a day) |
+| Mutation checks (agent that built it) | 33 mutations in scratch copies, all caught; some may have been caught only by the golden test |
+| One real run through `target/release/reelctl` on four fixture clips (`draft12`, `noisy12`, `outlier12`, `textured_cuts12`) arranged as one creator with 5 old posts, 2 baseline posts and 2 breakouts | `1 creators, 1 surging, 0 failures`; surging by multiplier (50× and 60×). Blueprint for 2 breakouts against 2 baseline posts: mean shot length 6.0 s → 3.5 s (−42%), cuts per minute 5.0 → 12.5, pauses per minute 5.0 → 0.0, loudness −21.7 → −21.8 LUFS. Words per minute are voiced bursts there (no whisper model), not a word rate |
+
+Known limits: no Virlo client (no key, and its response format is not in the repo), so nothing has run on live data; the digest numbers are checked only against hand-made and recorded data and synthetic clips; the `visual_events` metrics are exercised by unit tests only, not by the golden digest; post ids must be unique across creators; `failures[].detail` may quote paths.
+
 ## Long-to-short clipper, 2026-10-28
 
 Merged into `main` 2026-10-28 from `feature/long-to-short-clipper` ([spec](specs/long-to-short-clipper.md), [ADR-015](decisions/ADR-015-combine-measured-time-with-a-model-that-answers-by-segment-id.md); plan and checklist in `tasks/archive/long-to-short-clipper/`). The first live run shows the pipeline works and the rules do their job; the 9B model does not respect the 30–60 s length, so a prompt or model change is the next lever (Muse 1.2 was not run). Billing check from the same run: 87 sheets plus the transcript billed 65,852 input tokens against 139,077 estimated, so the bound overestimates by about 2× and does not underestimate sheets.
