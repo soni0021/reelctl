@@ -18,12 +18,12 @@ P0's success metric ([planer.md](../../planer.md), section 7): decompile any 60 
 
 The long-to-short clipper (`reelctl understand`, [spec](long-to-short-clipper.md), [ADR-015](../decisions/ADR-015-combine-measured-time-with-a-model-that-answers-by-segment-id.md)) is P3's vision-language role and planer.md's Component 3, started ahead of `visual-motion` and merged 2026-10-28; its cut labels cover part of what `visual-motion` would add. `visual-motion` stays open.
 
-Build order: `whisper-coverage` → `decode-inputs` → `fast-decode` → `comparative-diff` → `visual-motion`. `transnet-cuts` is deferred. `whisper-coverage` goes first because it fixes wrong output from a feature already on `main`, and a Reel's hook is in its first seconds. The two decode modules share one code path, and `fast-decode` carries the most risk. `comparative-diff` only reads `edit_dna.json` files and could be built in parallel.
+Build order: `whisper-coverage` → `decode-inputs` → `fast-decode` → `comparative-diff` → `visual-motion`. `transnet-cuts` was deferred and was built on 2026-10-28 after decision 2 was lifted (see below). `whisper-coverage` goes first because it fixes wrong output from a feature already on `main`, and a Reel's hook is in its first seconds. The two decode modules share one code path, and `fast-decode` carries the most risk. `comparative-diff` only reads `edit_dna.json` files and could be built in parallel.
 
 Decisions, answered by the user on 2026-10-25 with the recommended options:
 
 1. **`visual-motion` in P0?** Yes, as a spec limited to detecting overlay changes and punch-in zooms as edit events that end a static window. Full Bézier zoom curves and `.cube` LUT extraction would stay in Pass 1b. This changes the AGENTS.md P0 gap list.
-2. **`transnet-cuts`:** download the TransNetV2 ONNX weights? Not now. The scene-score detector finds the hard cuts in every clip tested so far; TransNetV2 matters for soft transitions, which `visual-motion` partly covers.
+2. **`transnet-cuts`:** download the TransNetV2 ONNX weights? Not now. The scene-score detector finds the hard cuts in every clip tested so far; TransNetV2 matters for soft transitions, which `visual-motion` partly covers. *Lifted 2026-10-28: the user's blanket "Do all of them" covered the download; the weights are at `~/models/transnet/transnetv2.onnx` and the module is built ([spec](transnet-cuts.md)).*
 3. **If `fast-decode` cannot reach 500 ms without losing frame-accurate cuts,** which gives? Keep frame accuracy and revise the target to the measured time, recorded in an ADR.
 
 Not in this map: P1–P3 and the `--whisper-language` flag. They are tracked in [status.md](../status.md#next-steps).

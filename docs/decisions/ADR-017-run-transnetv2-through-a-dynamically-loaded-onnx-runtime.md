@@ -28,7 +28,7 @@ ADR-002 left TransNetV2 unlinked because its weights were not available and P0 d
 - 6.9 KB per frame (224 MB for 18 minutes), and resampling point samples cannot undo their aliasing.
 
 ### Make TransNetV2 the default when weights exist
-- It costs about 7 ms per video frame (see the spec), so a default would add about 13 s to a 60 s reel's decompile. Opt-in by weights path keeps the default fast.
+- It costs 7 to 13 ms per video frame (see the spec), so a default would add 13 to 23 s to a 60 s reel's decompile. Opt-in by weights path keeps the default fast.
 
 ## Consequences
 - A process that ran the model must call `decompile::release_onnx_runtime()` before it exits (`reelctl` does): ONNX Runtime 1.21 aborts at exit if its environment is still alive (exit status 134 after the output was written). `ort` allows one environment per process for good, so nothing can open the model again after the release.
