@@ -169,7 +169,7 @@ impl StubbedPass {
     pub fn lut_unimplemented() -> Self {
         Self {
             status: PassStatus::Unimplemented,
-            reason: ".cube LUT synthesis is Pass 1b. Per-shot RGB histograms are recorded; a matching 3D LUT is not synthesized on the timed structural path.".to_string(),
+            reason: ".cube LUT synthesis needs two videos, so it is not part of decompile: use `reelctl look --draft <video> --outlier <video> --out <file.cube>`. Per-shot RGB histograms are recorded here.".to_string(),
         }
     }
 }

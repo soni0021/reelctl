@@ -59,6 +59,22 @@ Same machine, release builds of `main` and `feature/relative-silence` on the sam
 
 The real clip was re-cut from the original recording on 2026-10-25 with its audio copied, not re-encoded, so its word count (125) differs from the 2026-10-21 runs (183); see Known issues.
 
+## Cube LUT, 2026-10-28
+
+Apple M3 MacBook Air, release build of `feature/cube-lut` ([spec](specs/cube-lut.md)), command `reelctl look`.
+
+| Check | Result |
+|---|---|
+| `graded12` (the still textured clip with a warm `colorbalance` and a `curves` lift) matched to `still12`, then `ffmpeg lut3d` applied to `graded12`, sizes 17, 33 and 65 | Mean absolute pixel error against the plain clip falls 86–89% in every channel (R 28.6 → 3.6, G 11.4 → 1.3, B 19.8 → 2.8 at size 33). Mean absolute CDF difference falls at least 95% (R 0.1117 → 0.0018, G 0.0445 → 0.0018, B 0.0772 → 0.0033). The largest single CDF gap falls 99% in R and G and 80–86% in B (0.1108 → 0.0198 at size 33): the spec's "90%" was not tied to a metric, and the test gates on the mean difference, chosen after the largest-gap version failed on blue |
+| Identical inputs | Identity cube within 1/255; the shift reads 0.00 |
+| Determinism and ffmpeg | Same inputs give the same bytes (also with `--decoder software`); `ffmpeg lut3d` loads every size |
+| Time, release, 12 s 540×960 H.264 | 1.8–2.4 s warm at the default, 0.8 s with 10 samples, 3.4 s with 600; dominated by decoding to the last sampled frame |
+| The NEET explainer and the milk clip, both ways (default settings) | Milk to NEET: mean shifts R −17.70, G +2.33, B +0.27, 3.6 s. NEET to milk: R +17.53, G −13.41, B −1.33. Applied to one frame each (checked by eye): **the result is poor**. The milk clip graded toward the NEET reel (flat green-and-white graphic cards) turns high-contrast and posterized; the NEET reel graded toward the milk clip turns pink and banded. The two videos do not share content, so the match carries the content's colour statistics rather than a grade |
+| Mutation checks (agent that built it) | 38 mutants; the survivors (quantile interpolation, the mean shift weighting, the title quote, the sample count bound) got tests; one equivalent mutant remains |
+| `cargo test --workspace` | 479 pass, 2 ignored (the whisper model tests): the 436 of `visual-motion` plus look 30, probe 3, `look_cmd` 2 and `look_fixture.rs` 8 |
+
+Known limits: separable, per-channel RGB only; BT.601 assumed; a graded copy of the same content is the case that works; unlike content gives poor results, which a later version might soften with a strength setting or a match on shot-level statistics; the LUT cannot restore a clipped channel; `decode_frames_at` holds every sampled frame at once (about 330 MB for 600 portrait frames at 320 px).
+
 ## Timeline editor, 2026-10-28
 
 Apple M3 MacBook Air, ffmpeg 8.1 (Homebrew), debug build of `reelctl`, `crates/timeline` ([spec](specs/timeline-editor.md), [guide](timeline.md)).

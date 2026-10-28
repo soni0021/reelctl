@@ -23,8 +23,10 @@
 use std::path::Path;
 use std::sync::OnceLock;
 
+mod probe;
 mod sample;
 
+pub use probe::probe_duration_ms;
 pub use sample::{decode_frames_at, SampledFrame};
 
 use ffmpeg_next::decoder::Audio as AudioDecoder;

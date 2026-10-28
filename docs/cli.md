@@ -221,6 +221,19 @@ Two flags are hidden from `--help`, like `whisper-worker`, and exist so the test
 
 Exit codes specific to this command: 2 for `--every-s 0`, a `--dna` with a duration of 0, or a `--dna` without whisper words or with no words at all (all checked before any network access, so no price listing is fetched), 3 when `OPENROUTER_API_KEY` is not set (and neither `--dry-run` nor `--replay` was given), 4 when the cost upper bound is over `--max-cost-usd`. A failed model call (an HTTP error, no matching provider, a reply that is not the schema, a reply cut off at `max_tokens`) exits with 1 and says which.
 
+## reelctl look
+
+```
+reelctl look --draft draft.mp4 --outlier outlier.mp4 --out outlier.cube [--size 17|33|65] [--samples 60] [--decoder auto|software]
+```
+
+Writes a `.cube` 3D LUT that moves the draft's colour toward the outlier's. It samples `--samples` frames (1 to 600, default 60) evenly from each video at 320 px wide, builds a 256-level histogram per colour channel from each, and maps the draft's cumulative distribution onto the outlier's channel by channel. The file is Adobe/Resolve `.cube` (`LUT_3D_SIZE`, red varying fastest) and loads with `ffmpeg -vf lut3d=outlier.cube`. It does not run on the timed `decompile` path and adds nothing to `signal_ms`.
+
+One line on stdout: `size=33 samples_draft=60 samples_outlier=60 mean_shift_r=-17.70 mean_shift_g=2.33 mean_shift_b=0.27 out=outlier.cube`. The three shifts are the change the LUT makes to each channel's mean over the draft's sampled frames, on a 0–255 scale. Identical inputs give an identity LUT. The same inputs give the same bytes.
+
+Exit codes: 2 for a bad argument or a missing or unreadable file (checked before any decoding), 1 for a file that does not decode. No `.cube` is written on failure.
+
+**Limits.** The match is separable and per channel in RGB: it moves tone and colour cast, and cannot reproduce split toning, a hue-selective grade or a saturation change. Colours use libswscale's BT.601 defaults and HDR is not tone-mapped. It matches distributions, not looks: on footage of the same kind (talking head to talking head, or a clip against a graded copy of itself) it transfers the grade; between very different content, such as a photographic clip and a flat-colour graphic reel, it transfers the content's colour statistics and posterizes or tints the result (see [status](status.md#cube-lut-2026-10-28)).
 ## Editing: timeline, transform, funnel, render, qa
 
 Deterministic edits over an OpenTimelineIO project. Each command reads one `.otio`, applies one change, and writes one (atomically; `--out` may equal `--project`). Running a command twice with the same arguments gives the same file. The project format and metadata keys are in [timeline.md](timeline.md). `init` needs `ffprobe`; `render` and `qa inspect-boundaries` need `ffmpeg`; a missing tool exits 1 and names it.

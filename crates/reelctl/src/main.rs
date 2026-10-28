@@ -1,4 +1,4 @@
-//! `reelctl decompile`, `reelctl diff`, and `reelctl understand`.
+//! `reelctl decompile`, `reelctl diff`, `reelctl understand`, and `reelctl look`.
 
 #![warn(clippy::all)]
 
@@ -17,6 +17,7 @@ use diff::{compare_many, render_text, NamedReel};
 use edit_dna::EditDna;
 
 mod card;
+mod look_cmd;
 mod timeline_cmd;
 mod understand_cmd;
 
@@ -38,6 +39,7 @@ fn run() -> Result<()> {
         Command::Decompile(args) => decompile(args),
         Command::Diff(args) => diff(args),
         Command::Understand(args) => understand_cmd::understand(args),
+        Command::Look(args) => look_cmd::look(args),
         Command::Timeline(command) => timeline_cmd::timeline(command),
         Command::Transform(command) => timeline_cmd::transform(command),
         Command::Funnel(command) => timeline_cmd::funnel(command),
@@ -67,6 +69,9 @@ enum Command {
     /// Pick Reel-sized clips from a long video and label its cuts, with a hosted
     /// vision-language model (needs OPENROUTER_API_KEY).
     Understand(understand_cmd::UnderstandArgs),
+    /// Write a .cube 3D LUT that moves a draft's colour toward an outlier's, by
+    /// per-channel histogram matching of sampled frames.
+    Look(look_cmd::LookArgs),
     /// Make and edit an OpenTimelineIO project: `init`, `cut-silence`.
     Timeline(timeline_cmd::TimelineCommand),
     /// Change the picture of a project: `punch-in`.
