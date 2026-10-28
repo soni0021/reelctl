@@ -1,0 +1,67 @@
+{
+  "schema_version": 2,
+  "duration_ms": 30000,
+  "fps": 30.0,
+  "frame_size": {
+    "width": 720,
+    "height": 1280
+  },
+  "cuts": [
+    {
+      "frame_index": 120,
+      "time_ms": 4000,
+      "interval_ms": 4000,
+      "scene_score": 0.62
+    },
+    {
+      "frame_index": 240,
+      "time_ms": 8000,
+      "interval_ms": 4000,
+      "scene_score": 0.62
+    },
+    {
+      "frame_index": 360,
+      "time_ms": 12000,
+      "interval_ms": 4000,
+      "scene_score": 0.62
+    },
+    {
+      "frame_index": 480,
+      "time_ms": 16000,
+      "interval_ms": 4000,
+      "scene_score": 0.62
+    },
+    {
+      "frame_index": 600,
+      "time_ms": 20000,
+      "interval_ms": 4000,
+      "scene_score": 0.62
+    },
+    {
+      "frame_index": 720,
+      "time_ms": 24000,
+      "interval_ms": 4000,
+      "scene_score": 0.62
+    },
+    {
+      "frame_index": 840,
+      "time_ms": 28000,
+      "interval_ms": 4000,
+      "scene_score": 0.62
+    }
+  ],
+  "silence_gaps": [
+    {
+      "start_ms": 5000,
+      "end_ms": 5400,
+      "duration_ms": 400
+    },
+    {
+      "start_ms": 15000,
+      "end_ms": 15150,
+      "duration_ms": 150
+    }
+  ],
+  "words_per_minute": 150,
+  "integrated_lufs": -16.0
+}

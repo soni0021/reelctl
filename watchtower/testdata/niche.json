@@ -1,0 +1,318 @@
+{
+  "niche": "neet-prep",
+  "creators": [
+    {
+      "handle": "surger",
+      "snapshots": [
+        {
+          "date": "2026-10-15",
+          "followers": 100000,
+          "total_views": 5000000
+        },
+        {
+          "date": "2026-10-16",
+          "followers": 100100,
+          "total_views": 5020000
+        },
+        {
+          "date": "2026-10-17",
+          "followers": 100200,
+          "total_views": 5040000
+        },
+        {
+          "date": "2026-10-18",
+          "followers": 100300,
+          "total_views": 5060000
+        },
+        {
+          "date": "2026-10-19",
+          "followers": 100400,
+          "total_views": 5080000
+        },
+        {
+          "date": "2026-10-20",
+          "followers": 100500,
+          "total_views": 5100000
+        },
+        {
+          "date": "2026-10-21",
+          "followers": 100600,
+          "total_views": 5120000
+        }
+      ],
+      "posts": [
+        {
+          "id": "s1",
+          "url": "https://example.test/reel/s1",
+          "posted_at": "2026-09-01T10:00:00Z",
+          "views": 10000
+        },
+        {
+          "id": "s2",
+          "url": "https://example.test/reel/s2",
+          "posted_at": "2026-09-04T10:00:00Z",
+          "views": 12000
+        },
+        {
+          "id": "s3",
+          "url": "https://example.test/reel/s3",
+          "posted_at": "2026-09-07T10:00:00Z",
+          "views": 8000
+        },
+        {
+          "id": "s4",
+          "url": "https://example.test/reel/s4",
+          "posted_at": "2026-09-10T10:00:00Z",
+          "views": 10000
+        },
+        {
+          "id": "s5",
+          "url": "https://example.test/reel/s5",
+          "posted_at": "2026-09-13T10:00:00Z",
+          "views": 11000
+        },
+        {
+          "id": "s6",
+          "url": "https://example.test/reel/s6",
+          "posted_at": "2026-09-16T10:00:00Z",
+          "views": 10000,
+          "media_path": "media/s6.mp4"
+        },
+        {
+          "id": "s7",
+          "url": "https://example.test/reel/s7",
+          "posted_at": "2026-09-19T10:00:00Z",
+          "views": 15000,
+          "media_path": "media/s7.mp4"
+        },
+        {
+          "id": "s8",
+          "url": "https://example.test/reel/s8",
+          "posted_at": "2026-09-22T10:00:00Z",
+          "views": 120000,
+          "media_path": "media/s8.mp4"
+        },
+        {
+          "id": "s9",
+          "url": "https://example.test/reel/s9",
+          "posted_at": "2026-09-26T10:00:00Z",
+          "views": 250000,
+          "media_path": "media/s9.mp4"
+        },
+        {
+          "id": "s10",
+          "url": "https://example.test/reel/s10",
+          "posted_at": "2026-10-02T10:00:00Z",
+          "views": 14000,
+          "media_path": "media/s10.mp4"
+        },
+        {
+          "id": "s11",
+          "url": "https://example.test/reel/s11",
+          "posted_at": "2026-10-08T10:00:00Z",
+          "views": 300000,
+          "media_path": "media/s11.mp4"
+        }
+      ]
+    },
+    {
+      "handle": "rocket",
+      "snapshots": [
+        {
+          "date": "2026-10-15",
+          "followers": 10000,
+          "total_views": 400000
+        },
+        {
+          "date": "2026-10-16",
+          "followers": 10300,
+          "total_views": 409000
+        },
+        {
+          "date": "2026-10-17",
+          "followers": 10650,
+          "total_views": 418000
+        },
+        {
+          "date": "2026-10-18",
+          "followers": 10950,
+          "total_views": 427000
+        },
+        {
+          "date": "2026-10-19",
+          "followers": 11300,
+          "total_views": 436000
+        },
+        {
+          "date": "2026-10-20",
+          "followers": 11600,
+          "total_views": 445000
+        },
+        {
+          "date": "2026-10-21",
+          "followers": 11900,
+          "total_views": 454000
+        }
+      ],
+      "posts": [
+        {
+          "id": "r1",
+          "url": "https://example.test/reel/r1",
+          "posted_at": "2026-10-01T10:00:00Z",
+          "views": 20000
+        },
+        {
+          "id": "r2",
+          "url": "https://example.test/reel/r2",
+          "posted_at": "2026-10-02T10:00:00Z",
+          "views": 21000
+        },
+        {
+          "id": "r3",
+          "url": "https://example.test/reel/r3",
+          "posted_at": "2026-10-03T10:00:00Z",
+          "views": 19000
+        },
+        {
+          "id": "r4",
+          "url": "https://example.test/reel/r4",
+          "posted_at": "2026-10-04T10:00:00Z",
+          "views": 20000
+        },
+        {
+          "id": "r5",
+          "url": "https://example.test/reel/r5",
+          "posted_at": "2026-10-05T10:00:00Z",
+          "views": 22000
+        },
+        {
+          "id": "r6",
+          "url": "https://example.test/reel/r6",
+          "posted_at": "2026-10-06T10:00:00Z",
+          "views": 21000
+        },
+        {
+          "id": "r7",
+          "url": "https://example.test/reel/r7",
+          "posted_at": "2026-10-07T10:00:00Z",
+          "views": 23000
+        }
+      ]
+    },
+    {
+      "handle": "steady",
+      "snapshots": [
+        {
+          "date": "2026-10-17",
+          "followers": 50000,
+          "total_views": 900000
+        },
+        {
+          "date": "2026-10-18",
+          "followers": 50020,
+          "total_views": 901000
+        },
+        {
+          "date": "2026-10-19",
+          "followers": 50045,
+          "total_views": 902100
+        },
+        {
+          "date": "2026-10-20",
+          "followers": 50060,
+          "total_views": 903000
+        },
+        {
+          "date": "2026-10-21",
+          "followers": 50080,
+          "total_views": 904200
+        }
+      ],
+      "posts": [
+        {
+          "id": "t1",
+          "url": "https://example.test/reel/t1",
+          "posted_at": "2026-10-01T10:00:00Z",
+          "views": 5000
+        },
+        {
+          "id": "t2",
+          "url": "https://example.test/reel/t2",
+          "posted_at": "2026-10-02T10:00:00Z",
+          "views": 5200
+        },
+        {
+          "id": "t3",
+          "url": "https://example.test/reel/t3",
+          "posted_at": "2026-10-03T10:00:00Z",
+          "views": 4800
+        },
+        {
+          "id": "t4",
+          "url": "https://example.test/reel/t4",
+          "posted_at": "2026-10-04T10:00:00Z",
+          "views": 5100
+        },
+        {
+          "id": "t5",
+          "url": "https://example.test/reel/t5",
+          "posted_at": "2026-10-05T10:00:00Z",
+          "views": 4900
+        },
+        {
+          "id": "t6",
+          "url": "https://example.test/reel/t6",
+          "posted_at": "2026-10-06T10:00:00Z",
+          "views": 5300
+        },
+        {
+          "id": "t7",
+          "url": "https://example.test/reel/t7",
+          "posted_at": "2026-10-07T10:00:00Z",
+          "views": 5000
+        },
+        {
+          "id": "t8",
+          "url": "https://example.test/reel/t8",
+          "posted_at": "2026-10-08T10:00:00Z",
+          "views": 5200
+        }
+      ]
+    },
+    {
+      "handle": "newbie",
+      "snapshots": [
+        {
+          "date": "2026-10-20",
+          "followers": 800,
+          "total_views": 20000
+        },
+        {
+          "date": "2026-10-21",
+          "followers": 805,
+          "total_views": 20100
+        }
+      ],
+      "posts": [
+        {
+          "id": "n1",
+          "url": "https://example.test/reel/n1",
+          "posted_at": "2026-10-10T10:00:00Z",
+          "views": 900
+        },
+        {
+          "id": "n2",
+          "url": "https://example.test/reel/n2",
+          "posted_at": "2026-10-14T10:00:00Z",
+          "views": 1100
+        },
+        {
+          "id": "n3",
+          "url": "https://example.test/reel/n3",
+          "posted_at": "2026-10-18T10:00:00Z",
+          "views": 1000
+        }
+      ]
+    }
+  ]
+}

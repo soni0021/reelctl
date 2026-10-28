@@ -1,0 +1,288 @@
+{
+  "generated_at": "2026-10-28T06:00:00Z",
+  "niche": "neet-prep",
+  "min_score": 10,
+  "min_velocity": 0.02,
+  "creators": [
+    {
+      "handle": "surger",
+      "surging": true,
+      "surging_by": [
+        "multiplier"
+      ],
+      "best_post_id": "s11",
+      "best_multiplier": 26.087,
+      "velocity": {
+        "snapshots": 7,
+        "followers_per_day": 100,
+        "followers_share_per_day": 0.001,
+        "views_per_day": 20000,
+        "views_share_per_day": 0.004
+      },
+      "breakouts": [
+        {
+          "id": "s8",
+          "url": "https://example.test/reel/s8",
+          "posted_at": "2026-09-22T10:00:00Z",
+          "views": 120000,
+          "multiplier": 12,
+          "edit_dna": "dna/s8.edit_dna.json"
+        },
+        {
+          "id": "s9",
+          "url": "https://example.test/reel/s9",
+          "posted_at": "2026-09-26T10:00:00Z",
+          "views": 250000,
+          "multiplier": 23.8095,
+          "edit_dna": "dna/s9.edit_dna.json"
+        },
+        {
+          "id": "s11",
+          "url": "https://example.test/reel/s11",
+          "posted_at": "2026-10-08T10:00:00Z",
+          "views": 300000,
+          "multiplier": 26.087,
+          "edit_dna": "dna/s11.edit_dna.json"
+        }
+      ],
+      "baseline_posts": 3,
+      "blueprint": {
+        "breakouts": 3,
+        "baseline_posts": 3,
+        "change_threshold": 0.25,
+        "metrics": [
+          {
+            "key": "mean_shot_length_ms",
+            "label": "Mean shot length",
+            "unit": "ms",
+            "before": 4500,
+            "after": 1583.3333,
+            "change": -0.6481
+          },
+          {
+            "key": "median_shot_length_ms",
+            "label": "Median shot length",
+            "unit": "ms",
+            "before": 4666.6667,
+            "after": 1583.3333,
+            "change": -0.6607
+          },
+          {
+            "key": "cuts_per_minute",
+            "label": "Cuts per minute",
+            "unit": "per_minute",
+            "before": 12.3333,
+            "after": 37.6667,
+            "change": 2.0541
+          },
+          {
+            "key": "pauses_per_minute",
+            "label": "Pauses per minute",
+            "unit": "per_minute",
+            "before": 2.6667,
+            "after": 0.6667,
+            "change": -0.75
+          },
+          {
+            "key": "silent_share",
+            "label": "Silent share",
+            "unit": "share",
+            "before": 0.0194,
+            "after": 0.0022,
+            "change": -0.8857
+          },
+          {
+            "key": "words_per_minute",
+            "label": "Words per minute",
+            "unit": "per_minute",
+            "before": 140,
+            "after": 150,
+            "change": 0.0714
+          },
+          {
+            "key": "integrated_lufs",
+            "label": "Integrated loudness",
+            "unit": "lufs",
+            "before": -16,
+            "after": -11.8333,
+            "change": 0.2604
+          }
+        ],
+        "sentences": [
+          "Mean shot length dropped from 4.5 s to 1.6 s (−65%) across 3 breakouts against 3 baseline posts.",
+          "Median shot length dropped from 4.7 s to 1.6 s (−66%) across 3 breakouts against 3 baseline posts.",
+          "Cuts per minute rose from 12.3 to 37.7 (+205%) across 3 breakouts against 3 baseline posts.",
+          "Pauses per minute dropped from 2.7 to 0.7 (−75%) across 3 breakouts against 3 baseline posts.",
+          "Silent share dropped from 1.9% to 0.2% (−89%) across 3 breakouts against 3 baseline posts.",
+          "Integrated loudness rose from -16.0 LUFS to -11.8 LUFS (+26%) across 3 breakouts against 3 baseline posts."
+        ],
+        "notes": [
+          "visual_events was missing from 3 of 6 files, so visual events are not compared."
+        ]
+      },
+      "skipped": [
+        {
+          "post": "s1",
+          "reason": "not_enough_history",
+          "detail": "0 of 5 earlier posts needed"
+        },
+        {
+          "post": "s2",
+          "reason": "not_enough_history",
+          "detail": "1 of 5 earlier posts needed"
+        },
+        {
+          "post": "s3",
+          "reason": "not_enough_history",
+          "detail": "2 of 5 earlier posts needed"
+        },
+        {
+          "post": "s4",
+          "reason": "not_enough_history",
+          "detail": "3 of 5 earlier posts needed"
+        },
+        {
+          "post": "s5",
+          "reason": "not_enough_history",
+          "detail": "4 of 5 earlier posts needed"
+        }
+      ]
+    },
+    {
+      "handle": "rocket",
+      "surging": true,
+      "surging_by": [
+        "velocity"
+      ],
+      "best_post_id": "r7",
+      "best_multiplier": 1.122,
+      "velocity": {
+        "snapshots": 7,
+        "followers_per_day": 319.6429,
+        "followers_share_per_day": 0.032,
+        "views_per_day": 9000,
+        "views_share_per_day": 0.0225
+      },
+      "breakouts": [],
+      "baseline_posts": 2,
+      "blueprint": null,
+      "skipped": [
+        {
+          "post": "r1",
+          "reason": "not_enough_history",
+          "detail": "0 of 5 earlier posts needed"
+        },
+        {
+          "post": "r2",
+          "reason": "not_enough_history",
+          "detail": "1 of 5 earlier posts needed"
+        },
+        {
+          "post": "r3",
+          "reason": "not_enough_history",
+          "detail": "2 of 5 earlier posts needed"
+        },
+        {
+          "post": "r4",
+          "reason": "not_enough_history",
+          "detail": "3 of 5 earlier posts needed"
+        },
+        {
+          "post": "r5",
+          "reason": "not_enough_history",
+          "detail": "4 of 5 earlier posts needed"
+        },
+        {
+          "post": "r6",
+          "reason": "no_media",
+          "detail": "the post has no media_path, so it cannot be decompiled"
+        },
+        {
+          "post": "r7",
+          "reason": "no_media",
+          "detail": "the post has no media_path, so it cannot be decompiled"
+        },
+        {
+          "reason": "blueprint_not_computed",
+          "detail": "0 decompiled breakouts and 0 decompiled baseline posts, need 2 of each"
+        }
+      ]
+    },
+    {
+      "handle": "steady",
+      "surging": false,
+      "surging_by": [],
+      "best_post_id": "t6",
+      "best_multiplier": 1.06,
+      "velocity": {
+        "snapshots": 5,
+        "followers_per_day": 20,
+        "followers_share_per_day": 0.0004,
+        "views_per_day": 1040,
+        "views_share_per_day": 0.0012
+      },
+      "breakouts": [],
+      "baseline_posts": 3,
+      "blueprint": null,
+      "skipped": [
+        {
+          "post": "t1",
+          "reason": "not_enough_history",
+          "detail": "0 of 5 earlier posts needed"
+        },
+        {
+          "post": "t2",
+          "reason": "not_enough_history",
+          "detail": "1 of 5 earlier posts needed"
+        },
+        {
+          "post": "t3",
+          "reason": "not_enough_history",
+          "detail": "2 of 5 earlier posts needed"
+        },
+        {
+          "post": "t4",
+          "reason": "not_enough_history",
+          "detail": "3 of 5 earlier posts needed"
+        },
+        {
+          "post": "t5",
+          "reason": "not_enough_history",
+          "detail": "4 of 5 earlier posts needed"
+        }
+      ]
+    },
+    {
+      "handle": "newbie",
+      "surging": false,
+      "surging_by": [],
+      "best_multiplier": null,
+      "velocity": null,
+      "breakouts": [],
+      "baseline_posts": 0,
+      "blueprint": null,
+      "skipped": [
+        {
+          "post": "n1",
+          "reason": "not_enough_history",
+          "detail": "0 of 5 earlier posts needed"
+        },
+        {
+          "post": "n2",
+          "reason": "not_enough_history",
+          "detail": "1 of 5 earlier posts needed"
+        },
+        {
+          "post": "n3",
+          "reason": "not_enough_history",
+          "detail": "2 of 5 earlier posts needed"
+        },
+        {
+          "reason": "velocity_not_computed",
+          "detail": "2 snapshots in the 7 days ending 2026-10-21, need 3"
+        }
+      ]
+    }
+  ],
+  "failures": []
+}
