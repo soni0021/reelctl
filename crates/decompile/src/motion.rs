@@ -251,7 +251,7 @@ impl MotionDetector {
             luma: buf,
         });
         while let Some(front) = self.ring.front() {
-            if self.ring.len() > MAX_FRAMES || front.time_ms + HISTORY_MS < time_ms {
+            if self.ring.len() > MAX_FRAMES || front.time_ms.saturating_add(HISTORY_MS) < time_ms {
                 if let Some(old) = self.ring.pop_front() {
                     self.spare.push(old.luma);
                 }
@@ -343,7 +343,7 @@ impl MotionDetector {
             end_time,
             cx: fit.cx,
             cy: fit.cy,
-            resolve_at: burst.last_time + EXT_MS,
+            resolve_at: burst.last_time.saturating_add(EXT_MS),
         });
     }
 
@@ -463,7 +463,7 @@ impl MotionDetector {
             cand_index: index,
             cand_time: time,
             ref_index: reference.index,
-            verify_at: time + PERSIST_MS,
+            verify_at: time.saturating_add(PERSIST_MS),
         });
     }
 
@@ -2424,6 +2424,116 @@ mod tests {
                 let e = assert_one_move(&events, MotionKind::ZoomOut, 1.0 / 1.26, (0.5, 0.5), 0.1);
                 assert!(e.scale.expect("scale") > 1.0 / 1.27, "{shape:?} {s}: {e:?}");
             }
+        }
+    }
+
+    // ---- times at the edge of the range, and times that go back ----
+
+    /// `clip` fed with the frame times `time(i)`.
+    fn run_timed(
+        cols: usize,
+        rows: usize,
+        clip: &Clip,
+        time: impl Fn(usize) -> u64,
+    ) -> Vec<DetectedEvent> {
+        let mut det = MotionDetector::new(cols, rows);
+        for (i, frame) in clip.frames.iter().enumerate() {
+            det.push(i as u64, time(i), frame, clip.cuts.contains(&i));
+        }
+        det.finish()
+    }
+
+    /// An overlay at frame 30 and a punch-in at frame 60, 40 frames of tail.
+    fn overlay_and_punch_in(cols: usize, rows: usize) -> Clip {
+        let plain = render(cols, rows, 1.0, 0.5, 0.5);
+        let zoomed = render(cols, rows, 1.18, 0.5, 0.5);
+        let mask = block_mask(cols, rows);
+        let mut clip = Clip::default();
+        clip.hold(&plain, 30)
+            .hold(&with_block(&plain, &mask), 30)
+            .hold(&with_block(&zoomed, &mask), 70);
+        clip
+    }
+
+    #[test]
+    fn a_clip_that_ends_at_the_largest_time_gives_the_events_of_the_same_clip_at_zero() {
+        for (cols, rows) in SHAPES {
+            let clip = overlay_and_punch_in(cols, rows);
+            let at_zero = run_timed(cols, rows, &clip, time_of);
+            assert_eq!(
+                kinds_and_frames(&at_zero),
+                vec![(MotionKind::OverlayChange, 30), (MotionKind::PunchIn, 60)],
+                "{cols}x{rows}: {at_zero:?}"
+            );
+            let base = u64::MAX - time_of(clip.frames.len() - 1);
+            let at_the_end = run_timed(cols, rows, &clip, |i| base + time_of(i));
+            let moved: Vec<DetectedEvent> = at_zero
+                .iter()
+                .map(|e| DetectedEvent {
+                    time_ms: e.time_ms + base,
+                    ..e.clone()
+                })
+                .collect();
+            assert_eq!(at_the_end, moved);
+        }
+    }
+
+    #[test]
+    fn a_change_in_the_last_frames_before_the_largest_time_does_not_overflow() {
+        for (cols, rows) in SHAPES {
+            let plain = render(cols, rows, 1.0, 0.5, 0.5);
+            let zoomed = render(cols, rows, 1.18, 0.5, 0.5);
+            let blk = with_block(&plain, &block_mask(cols, rows));
+            // A move, an overlay, and both, ending on the last frame that
+            // can be timed, and again two frames before it.
+            for tail in [0usize, 1, 2, 12] {
+                for last in [&zoomed, &blk] {
+                    let mut clip = Clip::default();
+                    clip.hold(&plain, 40).hold(last, 1 + tail);
+                    let end = clip.frames.len() - 1;
+                    let events =
+                        run_timed(cols, rows, &clip, |i| u64::MAX - time_of(end) + time_of(i));
+                    assert!(events.iter().all(|e| e.frame_index <= end as u64));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_frame_whose_time_goes_back_is_taken_at_the_time_of_the_one_before() {
+        let (cols, rows) = (160, 90);
+        let clip = overlay_and_punch_in(cols, rows);
+        let clean = run_timed(cols, rows, &clip, time_of);
+        // Around the overlay (frame 30) and the move (frame 60), where a
+        // glitch lands on a comparison, and a few elsewhere.
+        let glitches = [2, 31, 33, 36, 61, 63, 66, 129];
+        for glitch in glitches {
+            // Frame `glitch` says 0 ms; it counts as its predecessor's time.
+            let went_back = run_timed(
+                cols,
+                rows,
+                &clip,
+                |i| {
+                    if i == glitch {
+                        0
+                    } else {
+                        time_of(i)
+                    }
+                },
+            );
+            let held = run_timed(cols, rows, &clip, |i| {
+                if i == glitch {
+                    time_of(i - 1)
+                } else {
+                    time_of(i)
+                }
+            });
+            assert_eq!(went_back, held, "glitch at {glitch}");
+            assert_eq!(
+                kinds_and_frames(&went_back),
+                kinds_and_frames(&clean),
+                "glitch at {glitch}"
+            );
         }
     }
 }
