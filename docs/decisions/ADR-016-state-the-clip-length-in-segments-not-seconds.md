@@ -10,7 +10,14 @@ Accepted. Refines [ADR-015](ADR-015-combine-measured-time-with-a-model-that-answ
 The first live run of `reelctl understand` on the 28.6-minute lecture (Qwen3.5-9B, $0.0082) returned no clip that met the rules: two picks were 130 and 234 s long against a 60 s maximum, with the payoff about 50 s in. The prompt said "30-60 s" and the transcript lines carry times, but the model has to add up times over 535 lines to know a span's length, and a 9B model does not. Adding a bolder "hard limit" sentence did not help (one pick of 92 s, others with segment IDs that do not exist). Counting IDs is something a model does reliably.
 
 ## Decision
-`system_prompt` takes the segments and writes the length limit in segments: the video's mean segment length (first start to last end over the number of segments, pauses included) turns 50 s, 60 s and 9 s into "about N segments after `start_segment`", "never more than M" and "the payoff about P segments in". It also tells the model that pauses over 0.18 s are cut afterwards, so a span should be 45 to 60 s before cutting. The rules in code (ADR-015) are unchanged and still decide what passes.
+`system_prompt` takes the segments and writes the length limit in segments: the video's mean segment length (first start to last end over the number of segments, pauses included, printed as measured with no clamp) turns 50 s, 60 s and 9 s into a count of segments. It also tells the model that pauses over 0.18 s are cut afterwards, so a span should be 45 to 60 s before cutting. The rules in code (ADR-015) are unchanged and still decide what passes.
+
+A span counts both ends: from `start_segment` to `cutoff_segment` inclusive is `cutoff_segment - start_segment + 1` segments. The prompt therefore states the maximum as a count of segments, "a span of more than M segments counting both ends" with M = floor(60 s / mean), and gives the ID distance too (`cutoff_segment - start_segment` at most M - 1), so M segments last at most 60 s at the mean. The 50 s aim is "about N segments counting both ends", "about N - 1 IDs after `start_segment`". A first version said "about N IDs after" and "never more than M", which allowed M + 1 segments, 63 s at a 3 s mean (found by the audit).
+
+The prompt is assembled from `prompt.md`, with the length rule and the candidate count filled in by code from `length_rule.md` or `length_rule_short.md`:
+
+- A video of 70 s or more gets the length rule above. A video under 70 s cannot hold a 45 to 60 s clip, so it gets a rule that says to return one candidate covering its strongest span, with no length aim, and asks for one candidate instead of 3 to 5.
+- Over 12 s per segment, one segment is already past the 6 to 12 s payoff window, so the payoff offset is left out. Over 20 s per segment a span is only one or two segments and the prompt says that in plain words ("a span is one or two segments"; "a single segment" over 30 s, with a note that one segment is over 60 s when the mean is). Counts of one are written "1 segment".
 
 ## Consequences
 - The prompt is built per video, so the input-token estimate uses the built prompt.

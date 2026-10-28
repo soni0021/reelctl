@@ -410,7 +410,10 @@ fn the_api_key_never_appears_in_any_output() {
         .arg(&lecture.catalog)
         // The key is read on this run (no --replay). If the cap check were lost the
         // request would go out, so every proxy variable points at a closed local port:
-        // the call fails on this machine and nothing leaves it.
+        // the call fails on this machine and nothing leaves it. NO_PROXY is removed
+        // because ureq honours it and would skip the dead proxy for a listed host.
+        .env_remove("NO_PROXY")
+        .env_remove("no_proxy")
         .env("ALL_PROXY", "http://127.0.0.1:9")
         .env("HTTPS_PROXY", "http://127.0.0.1:9")
         .env("HTTP_PROXY", "http://127.0.0.1:9")

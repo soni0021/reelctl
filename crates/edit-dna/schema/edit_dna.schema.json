@@ -245,6 +245,82 @@
       ],
       "type": "object"
     },
+    "VisualEvent": {
+      "description": "A change inside a shot that is not a cut. `time_ms` and `frame_index` are\nthe first frame that shows the change in full, as for a cut. A field that\ndoes not apply to the kind is `null`.",
+      "properties": {
+        "area": {
+          "description": "Changed share of the frame for `overlay_change`, `0..=1`. `null` for zooms.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "center_x": {
+          "description": "Fixed point of a zoom move as a share of the frame width, `0..=1`.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "center_y": {
+          "description": "Fixed point of a zoom move as a share of the frame height, `0..=1`.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "frame_index": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "kind": {
+          "$ref": "#/$defs/VisualEventKind"
+        },
+        "scale": {
+          "description": "Factor between the picture before and after a zoom move. `null` for\n`overlay_change`.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "time_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "time_ms",
+        "frame_index",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "VisualEventKind": {
+      "description": "What a [`VisualEvent`] is.",
+      "oneOf": [
+        {
+          "const": "punch_in",
+          "description": "A fast scale-up of the picture (`scale` above 1).",
+          "type": "string"
+        },
+        {
+          "const": "zoom_out",
+          "description": "A fast scale-down of the picture (`scale` below 1).",
+          "type": "string"
+        },
+        {
+          "const": "overlay_change",
+          "description": "A block of the frame changed and stayed changed (a caption, a graphic).",
+          "type": "string"
+        }
+      ]
+    },
     "Word": {
       "description": "One word, or one silence-delimited voiced burst when no whisper model was given.",
       "properties": {
@@ -364,6 +440,14 @@
       "description": "Level in dB below which a 10 ms window counts as silent in this recording.\nA version 1 file, which has no such field, used a fixed -40 dBFS.",
       "format": "double",
       "type": "number"
+    },
+    "visual_events": {
+      "default": [],
+      "description": "Punch-ins, zoom-outs and overlay changes inside shots, in time order.\nEmpty in a version 1 or 2 file, which did not look for them.",
+      "items": {
+        "$ref": "#/$defs/VisualEvent"
+      },
+      "type": "array"
     },
     "words": {
       "items": {

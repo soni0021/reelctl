@@ -873,3 +873,132 @@ fn diff_can_print_a_text_report_and_json_is_the_default() {
     assert_eq!(json.stdout, default.stdout, "json is the default");
     let _ = fs::remove_dir_all(&root);
 }
+
+// Visual events: punch-ins, zoom-outs and overlay changes measured in pixels. The
+// clips plant them on a still textured background with no cut, and write what they
+// planted next to the video.
+
+fn decompile_clip(root: &std::path::Path, kind: &str) -> (EditDna, serde_json::Value) {
+    let mp4 = root.join(format!("{kind}.mp4"));
+    generate(kind, &mp4);
+    let (dna, _) = decompile_with(root, &mp4, kind, "auto");
+    let sidecar = fs::read(root.join(format!("{kind}.events.json"))).expect("sidecar");
+    (dna, serde_json::from_slice(&sidecar).expect("sidecar json"))
+}
+
+#[test]
+fn planted_punch_in_zoom_out_and_overlay_are_found_in_portrait_and_landscape() {
+    let root = scratch("motion");
+    for kind in ["motion12", "motion12_wide"] {
+        let (dna, planted) = decompile_clip(&root, kind);
+        assert!(dna.cuts.is_empty(), "{kind}: {:?}", dna.cuts);
+        let planted = planted["events"].as_array().expect("events");
+        assert_eq!(planted.len(), 3, "{kind}");
+        assert_eq!(
+            dna.visual_events.len(),
+            planted.len(),
+            "{kind}: {:?}",
+            dna.visual_events
+        );
+        let found: serde_json::Value = serde_json::to_value(&dna.visual_events).expect("json");
+        for want in planted {
+            let at = want["frame_index"].as_i64().expect("frame");
+            let event = found
+                .as_array()
+                .expect("found")
+                .iter()
+                .find(|event| event["kind"] == want["kind"])
+                .unwrap_or_else(|| panic!("{kind}: no {} in {found}", want["kind"]));
+            let got = event["frame_index"].as_i64().expect("frame");
+            assert!((got - at).abs() <= 2, "{kind}: {event} against {want}");
+            if want["kind"] == "overlay_change" {
+                let (got, want) = (
+                    event["area"].as_f64().expect("area"),
+                    want["area"].as_f64().expect("area"),
+                );
+                assert!(
+                    (got - want).abs() <= 0.3 * want,
+                    "{kind}: area {got} {want}"
+                );
+                assert!(event["scale"].is_null(), "{kind}: {event}");
+            } else {
+                let (got, want_scale) = (
+                    event["scale"].as_f64().expect("scale"),
+                    want["scale"].as_f64().expect("scale"),
+                );
+                assert!(
+                    (got - want_scale).abs() <= 0.03,
+                    "{kind}: scale {got} {want_scale}"
+                );
+                assert!(
+                    (event["center_x"].as_f64().expect("x") - 0.5).abs() <= 0.1
+                        && (event["center_y"].as_f64().expect("y") - 0.5).abs() <= 0.1,
+                    "{kind}: {event}"
+                );
+                assert!(event["area"].is_null(), "{kind}: {event}");
+            }
+        }
+    }
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_still_textured_clip_and_a_clip_with_a_cut_have_no_visual_events() {
+    let root = scratch("still");
+    let (still, _) = decompile_clip(&root, "still12");
+    assert!(still.cuts.is_empty() && still.visual_events.is_empty());
+    // draft12 is a solid-colour clip with one planted cut: that is a cut, not an event.
+    let draft = root.join("draft.mp4");
+    generate("draft12", &draft);
+    let (dna, _) = decompile_with(&root, &draft, "draft", "auto");
+    assert_eq!(dna.cuts.len(), 1);
+    assert!(dna.visual_events.is_empty(), "{:?}", dna.visual_events);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn diff_splits_a_static_window_at_the_events_that_the_pixels_show() {
+    let root = scratch("motion-diff");
+    let (dna, _) = decompile_clip(&root, "motion12");
+    let outlier = root.join("outlier.edit_dna.json");
+    // The outlier is the clip with its events removed; the draft is the real clip.
+    let mut plain = dna.clone();
+    plain.visual_events.clear();
+    fs::write(&outlier, serde_json::to_vec(&plain).expect("json")).expect("write");
+    let run = |draft: &std::path::Path| {
+        let output = reelctl()
+            .args(["diff", "--draft"])
+            .arg(draft)
+            .arg("--outlier")
+            .arg(&outlier)
+            .output()
+            .expect("spawn diff");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("json");
+        report["flags"]
+            .as_array()
+            .expect("flags")
+            .iter()
+            .filter(|flag| flag["kind"] == "static_window")
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    // Events at 4.25, 6.25 and 8.0 s leave a 4.25 s and a 4.0 s stretch; the 2.0 s and
+    // 1.75 s ones between them are not static.
+    let windows = run(&root.join("motion12.mp4"));
+    let spans: Vec<(u64, u64)> = windows
+        .iter()
+        .map(|flag| {
+            (
+                flag["start_ms"].as_u64().expect("start"),
+                flag["end_ms"].as_u64().expect("end"),
+            )
+        })
+        .collect();
+    assert_eq!(spans, vec![(0, 4_250), (8_000, 12_000)], "{windows:?}");
+    let _ = fs::remove_dir_all(&root);
+}
