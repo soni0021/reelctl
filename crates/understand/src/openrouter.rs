@@ -2,8 +2,9 @@
 //!
 //! The API key is read from the process environment only ([`key_from_env`]), is
 //! sent only as an `Authorization` header, and is never printed, logged, or written:
-//! [`OpenRouterBackend`] has no `Debug` output that shows it, and error text is
-//! scrubbed of it. Every request carries `data_collection: deny` and
+//! [`OpenRouterBackend`] has no `Debug` output that shows it, and every error that
+//! leaves [`OpenRouterBackend::analyze`] passes through [`scrub_error`], the one place
+//! that removes it. Every request carries `data_collection: deny` and
 //! `require_parameters: true`, and there is no retry with looser settings: if no
 //! provider qualifies, the call fails and says so.
 //!
@@ -59,6 +60,30 @@ fn scrub(text: &str, secret: &str) -> String {
         text.to_string()
     } else {
         text.replace(secret, "[key]")
+    }
+}
+
+/// The longest error text that leaves this module.
+const ERROR_TEXT_LIMIT: usize = 2_000;
+
+/// `error` with `key` removed from every text in it, then cut to [`ERROR_TEXT_LIMIT`].
+///
+/// This is the single place errors are made safe to show. The match has no wildcard, so
+/// a new [`BackendError`] variant does not compile until it is handled here. The key is
+/// removed before the text is cut, so the cut cannot leave a piece of it.
+fn scrub_error(error: BackendError, key: &str) -> BackendError {
+    let clean = |text: String| shorten(&scrub(&text, key), ERROR_TEXT_LIMIT);
+    match error {
+        BackendError::NoProvider { model, reason } => BackendError::NoProvider {
+            model: clean(model),
+            reason: clean(reason),
+        },
+        BackendError::Http(text) => BackendError::Http(clean(text)),
+        BackendError::Status { status, body } => BackendError::Status {
+            status,
+            body: clean(body),
+        },
+        BackendError::BadReply(text) => BackendError::BadReply(clean(text)),
     }
 }
 
@@ -141,8 +166,7 @@ pub(crate) fn read_stream(reader: impl BufRead) -> Result<Streamed, BackendError
             .map_err(|err| BackendError::BadReply(format!("an event was not JSON: {err}")))?;
         if let Some(error) = event.get("error") {
             return Err(BackendError::BadReply(format!(
-                "the stream reported an error: {}",
-                shorten(&error.to_string(), 1_000)
+                "the stream reported an error: {error}"
             )));
         }
         if let Some(provider) = event.get("provider").and_then(Value::as_str) {
@@ -193,17 +217,19 @@ pub(crate) fn reply_from(streamed: Streamed, elapsed_ms: u64) -> Result<VlmReply
     })
 }
 
-/// An HTTP error status as a [`BackendError`], without the key and without more than
-/// 2,000 characters of the body.
-pub(crate) fn status_error(status: u16, body: &str, model: &str, key: &str) -> BackendError {
-    let body = shorten(&scrub(body, key), 2_000);
+/// An HTTP error status as a [`BackendError`]. The text is not yet safe to show:
+/// [`scrub_error`] makes it so.
+pub(crate) fn status_error(status: u16, body: &str, model: &str) -> BackendError {
     if status == 404 && body.to_lowercase().contains("no endpoints") {
         return BackendError::NoProvider {
             model: model.to_string(),
-            reason: body,
+            reason: body.to_string(),
         };
     }
-    BackendError::Status { status, body }
+    BackendError::Status {
+        status,
+        body: body.to_string(),
+    }
 }
 
 /// The hosted model backend.
@@ -236,8 +262,9 @@ impl OpenRouterBackend {
     }
 }
 
-impl VlmBackend for OpenRouterBackend {
-    fn analyze(&self, request: &VlmRequest) -> Result<VlmReply, BackendError> {
+impl OpenRouterBackend {
+    /// The call, with error text exactly as the transport and the server gave it.
+    fn call(&self, request: &VlmRequest) -> Result<VlmReply, BackendError> {
         let body = build_body(request);
         let started = Instant::now();
         let mut response = self
@@ -247,18 +274,22 @@ impl VlmBackend for OpenRouterBackend {
             .header("Content-Type", "application/json")
             .header("X-Title", "reelctl understand")
             .send_json(&body)
-            .map_err(|err| BackendError::Http(scrub(&err.to_string(), &self.key)))?;
+            .map_err(|err| BackendError::Http(err.to_string()))?;
         let status = response.status().as_u16();
         if !(200..300).contains(&status) {
             let text = response.body_mut().read_to_string().unwrap_or_default();
-            return Err(status_error(status, &text, &request.model, &self.key));
+            return Err(status_error(status, &text, &request.model));
         }
         let reader = BufReader::new(response.body_mut().as_reader());
-        let streamed = read_stream(reader).map_err(|err| match err {
-            BackendError::Http(text) => BackendError::Http(scrub(&text, &self.key)),
-            other => other,
-        })?;
+        let streamed = read_stream(reader)?;
         reply_from(streamed, started.elapsed().as_millis() as u64)
+    }
+}
+
+impl VlmBackend for OpenRouterBackend {
+    fn analyze(&self, request: &VlmRequest) -> Result<VlmReply, BackendError> {
+        self.call(request)
+            .map_err(|error| scrub_error(error, &self.key))
     }
 }
 
@@ -329,12 +360,16 @@ impl OpenRouterCatalog {
 }
 
 /// Model IDs look like `vendor/name:variant`; anything else is refused before it
-/// reaches a URL.
+/// reaches a URL. Every `/`-separated segment must be non-empty and not `.` or `..`, so
+/// an ID cannot climb out of the `/models/` path.
 fn valid_model_id(model: &str) -> bool {
     !model.is_empty()
         && model
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '/' | '-'))
+        && model
+            .split('/')
+            .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
 }
 
 impl ModelCatalog for OpenRouterCatalog {
@@ -499,7 +534,7 @@ mod tests {
     #[test]
     fn a_status_error_has_no_key_and_a_short_body() {
         let body = format!("bad request, key {KEY} rejected {}", "x".repeat(5_000));
-        let err = status_error(401, &body, "m", KEY);
+        let err = scrub_error(status_error(401, &body, "m"), KEY);
         let text = err.to_string();
         assert!(!text.contains(KEY), "{text}");
         assert!(text.contains("[key]"));
@@ -509,12 +544,7 @@ mod tests {
 
     #[test]
     fn no_matching_provider_is_its_own_error() {
-        let err = status_error(
-            404,
-            "No endpoints found matching your data policy",
-            "m",
-            KEY,
-        );
+        let err = status_error(404, "No endpoints found matching your data policy", "m");
         assert!(matches!(err, BackendError::NoProvider { .. }), "{err}");
     }
 
@@ -561,11 +591,42 @@ mod tests {
         assert!(valid_model_id("qwen/qwen3.5-9b"));
         assert!(valid_model_id("meta/muse-spark-1.2:free"));
         for bad in ["", "a b", "a?b", "a#b", "../x", "a\nb", "a%2Fb"] {
-            if bad == "../x" {
-                // Dots and slashes are allowed characters; the path stays under /models/.
-                continue;
-            }
             assert!(!valid_model_id(bad), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn model_ids_cannot_climb_out_of_the_models_path() {
+        for bad in [
+            "..",
+            ".",
+            "../x",
+            "x/..",
+            "a/../b",
+            "a/./b",
+            "./x",
+            "/x",
+            "x/",
+            "a//b",
+            "/",
+            "../../etc",
+        ] {
+            assert!(!valid_model_id(bad), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn real_model_ids_are_accepted() {
+        for good in [
+            "qwen/qwen3.5-9b",
+            "anthropic/claude-sonnet-4.5",
+            "meta-llama/llama-3.1-8b-instruct:free",
+            "meta/muse-spark-1.2:free",
+            "vendor/name.with.dots",
+            "vendor/sub/name",
+            "x",
+        ] {
+            assert!(valid_model_id(good), "{good:?}");
         }
     }
 
@@ -659,6 +720,110 @@ mod tests {
             "{text}"
         );
         assert!(!text.contains(KEY), "{text}");
+    }
+
+    #[test]
+    fn scrub_error_cleans_every_text_of_every_variant_and_cuts_after_cleaning() {
+        let dirty = format!("a {KEY} b");
+        for error in [
+            BackendError::NoProvider {
+                model: dirty.clone(),
+                reason: dirty.clone(),
+            },
+            BackendError::Http(dirty.clone()),
+            BackendError::Status {
+                status: 500,
+                body: dirty.clone(),
+            },
+            BackendError::BadReply(dirty.clone()),
+        ] {
+            let clean = scrub_error(error, KEY);
+            assert_no_key(&clean);
+            assert!(clean.to_string().contains("a [key] b"), "{clean}");
+        }
+        // The key straddles the cut: cleaning first leaves no piece of it.
+        let long = format!("{}{KEY}", "x".repeat(ERROR_TEXT_LIMIT - 5));
+        let cut = scrub_error(BackendError::Http(long), KEY);
+        let shown = cut.to_string();
+        assert!(!shown.contains("sk-or"), "{shown}");
+        assert!(shown.chars().count() < ERROR_TEXT_LIMIT + 100, "{shown}");
+    }
+
+    #[test]
+    fn a_no_provider_answer_stays_a_no_provider_error_and_is_scrubbed() {
+        let err = scrub_error(
+            status_error(404, &format!("No endpoints found for {KEY}"), "m"),
+            KEY,
+        );
+        assert!(matches!(err, BackendError::NoProvider { .. }), "{err}");
+        assert_no_key(&err);
+    }
+
+    /// Assert that neither the Display nor the Debug of `err` shows the key.
+    fn assert_no_key(err: &BackendError) {
+        let shown = err.to_string();
+        let debug = format!("{err:?}");
+        assert!(!shown.contains(KEY), "Display: {shown}");
+        assert!(!debug.contains(KEY), "Debug: {debug}");
+    }
+
+    #[test]
+    fn a_key_echoed_in_a_stream_error_event_is_not_shown() {
+        let (url, _) = serve_once(
+            "200 OK",
+            "text/event-stream",
+            format!("data: {{\"error\": {{\"message\": \"rejected {KEY}\", \"code\": 401}}}}\n\n"),
+        );
+        let backend = OpenRouterBackend::with_base_url(KEY.to_string(), url);
+        let err = backend.analyze(&request()).expect_err("error");
+        assert!(matches!(err, BackendError::BadReply(_)), "{err}");
+        assert!(err.to_string().contains("rejected"), "{err}");
+        assert_no_key(&err);
+    }
+
+    #[test]
+    fn a_key_echoed_in_a_malformed_reply_is_not_shown() {
+        // serde's error for a wrong type quotes the offending value.
+        let content = json!({"video_summary": KEY}).to_string();
+        let (url, _) = serve_once("200 OK", "text/event-stream", stream_text(&content, "stop"));
+        let backend = OpenRouterBackend::with_base_url(KEY.to_string(), url);
+        let err = backend.analyze(&request()).expect_err("error");
+        assert!(matches!(err, BackendError::BadReply(_)), "{err}");
+        assert_no_key(&err);
+    }
+
+    #[test]
+    fn a_key_in_an_event_that_is_not_json_is_not_shown() {
+        let (url, _) = serve_once(
+            "200 OK",
+            "text/event-stream",
+            format!("data: {KEY} is not json\n\n"),
+        );
+        let backend = OpenRouterBackend::with_base_url(KEY.to_string(), url);
+        let err = backend.analyze(&request()).expect_err("error");
+        assert!(matches!(err, BackendError::BadReply(_)), "{err}");
+        assert_no_key(&err);
+    }
+
+    #[test]
+    fn a_key_in_a_transport_error_is_not_shown() {
+        // The server answers with a status line that is not HTTP; the transport error
+        // may quote what it read.
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let address = listener.local_addr().expect("address");
+        std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut buffer = [0u8; 8192];
+            let _ = stream.read(&mut buffer);
+            let _ = stream.write_all(format!("{KEY}/9.9 200 OK\r\n\r\n").as_bytes());
+        });
+        let backend =
+            OpenRouterBackend::with_base_url(KEY.to_string(), format!("http://{address}"));
+        let err = backend.analyze(&request()).expect_err("error");
+        assert!(matches!(err, BackendError::Http(_)), "{err:?}");
+        assert_no_key(&err);
     }
 
     #[test]
