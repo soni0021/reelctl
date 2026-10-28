@@ -34,22 +34,41 @@ pub fn decode_frames_at(
     width: u32,
     setting: DecoderSetting,
 ) -> Result<Vec<SampledFrame>, DecompileError> {
+    decode_frames_at_with_decoder(path, times_ms, width, setting).map(|(frames, _)| frames)
+}
+
+/// `decode_frames_at`, and which decoder produced the frames.
+pub(crate) fn decode_frames_at_with_decoder(
+    path: &Path,
+    times_ms: &[u64],
+    width: u32,
+    setting: DecoderSetting,
+) -> Result<(Vec<SampledFrame>, DecoderUsed), DecompileError> {
     ensure_ffmpeg().map_err(|err| stage("ffmpeg init", err))?;
     if times_ms.is_empty() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), DecoderUsed::Software));
     }
     match choose_decoder(video_codec(path)?, setting) {
-        Plan::Software(_) => sample_with(path, None, times_ms, width),
+        Plan::Software(used) => Ok((sample_with(path, None, times_ms, width)?, used)),
         Plan::TryHardware => {
             let attempt = HardwareDevice::create().and_then(|device| {
                 sample_with(path, Some(&device), times_ms, width).map_err(|err| err.to_string())
             });
             match attempt {
-                Ok(frames) => Ok(frames),
-                Err(_) => sample_with(path, None, times_ms, width),
+                Ok(frames) => Ok((frames, DecoderUsed::Hardware)),
+                Err(reason) => Ok((
+                    sample_with(path, None, times_ms, width)?,
+                    DecoderUsed::Fallback(reason),
+                )),
             }
         }
     }
+}
+
+/// Whether a frame shown at `time_ms` is too far before `target` to be worth
+/// scaling: more than two frame periods early, so a later frame will serve it.
+fn far_before(target: u64, time_ms: u64, frame_ms: u64) -> bool {
+    target > time_ms && target - time_ms > frame_ms.saturating_mul(2)
 }
 
 /// The latest frame converted, for times past the last frame.
@@ -70,6 +89,10 @@ struct Sampler<'a> {
     width: u32,
     frame_ms: u64,
     latest: Option<Latest>,
+    /// A copy of the newest frame, unscaled, when it was too far before the next
+    /// time to be scaled. It is newer than `latest` and is scaled only if no later
+    /// frame arrives, so a time past the end still gets the last frame.
+    last_raw: Option<(u64, VideoFrame)>,
     /// The scaler and the source it was made for.
     scaler: Option<((Pixel, u32, u32), ffmpeg::software::scaling::Context)>,
     out: VideoFrame,
@@ -87,6 +110,7 @@ impl<'a> Sampler<'a> {
             width: width.max(2),
             frame_ms,
             latest: None,
+            last_raw: None,
             scaler: None,
             out: VideoFrame::empty(),
         }
@@ -109,9 +133,11 @@ impl<'a> Sampler<'a> {
         let Some(target) = self.target() else {
             return Ok(());
         };
-        if target > time_ms && target - time_ms > self.frame_ms.saturating_mul(2) {
+        if far_before(target, time_ms, self.frame_ms) {
+            self.keep_raw(frame, time_ms);
             return Ok(());
         }
+        self.last_raw = None;
         let (width, height, rgb) = self.scale(frame)?;
         while let Some(target) = self.target() {
             if target > time_ms {
@@ -138,6 +164,22 @@ impl<'a> Sampler<'a> {
             });
         }
         Ok(())
+    }
+
+    /// Remember `frame` unscaled as the newest one, reusing the last copy's
+    /// buffers when it has the same shape.
+    fn keep_raw(&mut self, frame: &VideoFrame, time_ms: u64) {
+        match self.last_raw.as_mut() {
+            Some((kept_ms, kept))
+                if kept.format() == frame.format()
+                    && kept.width() == frame.width()
+                    && kept.height() == frame.height() =>
+            {
+                kept.clone_from(frame);
+                *kept_ms = time_ms;
+            }
+            _ => self.last_raw = Some((time_ms, frame.clone())),
+        }
     }
 
     /// Scale to RGB at the target width: `(width, height, packed rows)`.
@@ -189,6 +231,15 @@ impl<'a> Sampler<'a> {
 
     /// Give every time still pending the latest frame kept, and collect the results.
     fn finish(mut self, path: &Path) -> Result<Vec<SampledFrame>, DecompileError> {
+        if let Some((time_ms, raw)) = self.last_raw.take() {
+            let (width, height, rgb) = self.scale(&raw)?;
+            self.latest = Some(Latest {
+                time_ms,
+                width,
+                height,
+                rgb,
+            });
+        }
         while let Some(target) = self.target() {
             let latest = self
                 .latest
@@ -398,6 +449,63 @@ mod tests {
     }
 
     #[test]
+    fn several_times_past_the_end_all_get_the_last_decoded_frame() {
+        let path = red_then_blue("pastmany", &h264());
+        // 2 s at 24 fps: 48 frames, the last shown at 1,958 ms.
+        let frames = decode_frames_at(
+            &path,
+            &[500, 5_000, 6_000, 7_000],
+            80,
+            DecoderSetting::Software,
+        )
+        .expect("frames");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(
+            frames.iter().map(|f| f.requested_ms).collect::<Vec<_>>(),
+            [500, 5_000, 6_000, 7_000]
+        );
+        assert!(near(centre(&frames[0]), [255, 0, 0], 12));
+        assert!(frames[0].time_ms >= 500 && frames[0].time_ms < 500 + 42);
+        for frame in &frames[1..] {
+            assert!(near(centre(frame), [0, 0, 255], 12), "{:?}", centre(frame));
+            assert!(
+                (1_950..=1_960).contains(&frame.time_ms),
+                "a time past the end got the frame at {} ms",
+                frame.time_ms
+            );
+        }
+        assert_eq!(frames[1].rgb, frames[3].rgb);
+    }
+
+    #[test]
+    fn one_time_past_the_end_is_not_an_error() {
+        let path = red_then_blue("pastone", &h264());
+        let frames = decode_frames_at(&path, &[5_000], 80, DecoderSetting::Software)
+            .expect("a time past the end still gets a frame");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].requested_ms, 5_000);
+        assert!(
+            (1_950..=1_960).contains(&frames[0].time_ms),
+            "{}",
+            frames[0].time_ms
+        );
+        assert!(near(centre(&frames[0]), [0, 0, 255], 12));
+    }
+
+    #[test]
+    fn a_frame_is_far_before_a_time_only_beyond_two_frame_periods() {
+        // 42 ms frames: exactly two periods (84 ms) early is still worth scaling.
+        assert!(!far_before(1_000, 916, 42));
+        assert!(far_before(1_000, 915, 42));
+        // At or after the target is never early.
+        assert!(!far_before(1_000, 1_000, 42));
+        assert!(!far_before(1_000, 1_500, 42));
+        // A huge frame period does not overflow.
+        assert!(!far_before(1_000, 0, u64::MAX));
+    }
+
+    #[test]
     fn the_size_keeps_the_aspect_ratio_with_an_even_height() {
         let path = red_then_blue("size", &h264());
         let frames = decode_frames_at(&path, &[0], 80, DecoderSetting::Software).expect("frames");
@@ -434,8 +542,18 @@ mod tests {
         let path = red_then_blue("ten", &hevc);
         let soft =
             decode_frames_at(&path, &[500, 1_500], 80, DecoderSetting::Software).expect("software");
-        let auto = decode_frames_at(&path, &[500, 1_500], 80, DecoderSetting::Auto).expect("auto");
+        let (auto, used) =
+            decode_frames_at_with_decoder(&path, &[500, 1_500], 80, DecoderSetting::Auto)
+                .expect("auto");
         let _ = std::fs::remove_file(&path);
+        if cfg!(target_os = "macos") {
+            // A silent fallback to software would match software by construction.
+            let note = decode_note(VideoFormat::default(), &used);
+            assert!(
+                used == DecoderUsed::Hardware && note.contains("Apple media engine"),
+                "the media engine did not run: {used:?}: {note}"
+            );
+        }
         assert!(
             near(centre(&soft[0]), [255, 0, 0], 16),
             "{:?}",
