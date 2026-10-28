@@ -1158,6 +1158,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "timeline"
+version = "0.1.0"
+dependencies = [
+ "edit-dna",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "tinystr"
 version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"

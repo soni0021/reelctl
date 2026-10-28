@@ -6,6 +6,7 @@ members = [
     "crates/diff",
     "crates/filmstrip",
     "crates/understand",
+    "crates/timeline",
     "crates/reelctl",
 ]
 
