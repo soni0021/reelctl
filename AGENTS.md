@@ -44,7 +44,7 @@ Update the docs in the same commit as every change, without waiting to be asked;
 
 - whisper.cpp runs only when `--whisper-model` or `REELCTL_WHISPER_MODEL` names a model; weights are never downloaded or committed. Without one, `asr_backend` is `silence_bursts` and `asr_ms` times that estimator.
 - TransNetV2 / `ort` is unlinked: weights are not vendored. `--cut-detector auto` uses the FFmpeg scene-score `CutDetector` unless a weight file exists (then detection still fails closed until an ort-backed build is wired).
-- Optical-flow Bézier zoom curves and `.cube` LUT stay `StubbedPass` (`status: unimplemented`). Those are Pass 1b, not this tree. Punch-in zooms, zoom-outs and overlay changes are measured as edit events (`visual_events`, module `visual-motion` in [docs/specs/p0-capability-map.md](docs/specs/p0-capability-map.md)); only a move that completes within 600 ms (a longer run is a drift) counts, so a slow push-in is not an event.
+- Zoom curves are measured (`zoom_curves`, schema version 4): one cubic-bezier(1/3, y1, 2/3, y2) per punch-in and zoom-out. Slow drifts have no curve. The `.cube` LUT stays `StubbedPass` in `edit_dna.json`; `reelctl look` makes one from two videos. Punch-in zooms, zoom-outs and overlay changes are measured as edit events (`visual_events`, module `visual-motion` in [docs/specs/p0-capability-map.md](docs/specs/p0-capability-map.md)); only a move that completes within 600 ms (a longer run is a drift) counts, so a slow push-in is not an event.
 
 ## Learned User Preferences
 

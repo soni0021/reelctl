@@ -59,6 +59,22 @@ Same machine, release builds of `main` and `feature/relative-silence` on the sam
 
 The real clip was re-cut from the original recording on 2026-10-25 with its audio copied, not re-encoded, so its word count (125) differs from the 2026-10-21 runs (183); see Known issues.
 
+## Zoom curves, 2026-10-29
+
+Apple M3 MacBook Air, branch `feature/zoom-curves` ([spec](specs/zoom-curves.md)). Each measured `punch_in` and `zoom_out` gets a cubic Bézier easing, `cubic-bezier(1/3, y1, 2/3, y2)`, fitted by least squares to the per-frame scale of the move.
+
+| Check | Result |
+|---|---|
+| `ease12` (six moves over 12 frames with planted cubics), planted against recovered (y1, y2), fit_rms | Punch-in ease-in (0.0, 0.3) → (0.051, 0.361), 0.004; zoom-out ease-in (0.0, 0.3) → (0.051, 0.364), 0.003; punch-in ease-out (0.6, 1.0) → (0.611, 0.977), 0.003; zoom-out ease-out (0.6, 1.0) → (0.560, 0.920), 0.004; punch-in overshoot (0.1, 1.4) → (0.100, 1.395), 0.004; zoom-out (0.4, 0.8) → (0.403, 0.804), 0.002. Largest error 0.08 (the ease-out tail). The test tolerance is 0.1 |
+| `motion12` and `motion12_wide` (6-frame smoothstep) | Reproduced within 0.05 at five points on both clips; one curve per move, none for the overlay |
+| Other fields of `edit_dna.json` | Identical on 19 clips against the build before the change apart from `signal_ms`, `asr_ms`, `schema_version` and `zoom_curves`; 23 earlier generated outputs byte-identical after the new fixture |
+| Cost on `bench60_textured` (24 moves) | 1.7% of `signal_ms`, measured inside the process (the first version was 4.9%, over the 3% budget). The spec's median of 10 A/B runs could not be taken: the machine was at load 5–45; the best-of-N values were +0.0% to +1.3%. **A quiet-machine confirmation is still open.** A clip with no zoom event adds no work |
+| Real footage | No punch-in or zoom-out is found on the NEET reel (1 overlay), the milk clip, the lecture proxy or the 28.6-minute lecture (20 overlays), so there are no real curves; the fit on compressed real zooms is untested |
+| Mutation checks | Clamp, sample minimum, normalisation, the singular-system guard and the track mutants are caught; one survives: moving the lower clamp bound `Y_MIN` (the test compares against the constant itself). After merging `main` the 5 sampled threshold mutants of the detector and the unsaturated-time mutants are still caught |
+| `cargo test --workspace` after merging `main` | decompile 201, diff 42, edit-dna 10, filmstrip 1, reelctl 3, `p0_fixture` 21, `understand_fixture` 12, whisper 1 (2 ignored), understand 204 |
+
+Known limits: the trim tolerances (0.5% at the start, 1% at the end) were set after looking at `ease12` and sit near the scale-fit noise measured on synthetic footage (about 0.001), so real compressed video may widen the trimmed window; a move needs at least 4 usable samples (a 3-sample move has no curve: `bezier: null`); `end_ms` can be one or two frames after the event's `time_ms`; progress is linear in scale; zoom-outs that overshoot below the frame cannot be planted; the track uses the move's own centre, accurate to 0.05 of the frame, so an off-centre punch-in's track has a small centre error. No independent audit has run on this work yet.
+
 ## Visual motion, 2026-10-28
 
 Apple M3 MacBook Air, release build of `feature/visual-motion` ([spec](specs/visual-motion.md)). Real footage is kept outside the repo.
@@ -243,7 +259,8 @@ Already listed in [AGENTS.md](../AGENTS.md) as P0 gaps:
 |---|---|---|
 | Word timing needs a model | Without `--whisper-model`, `words` are voiced bursts named `burst-N` and `words_per_minute` counts bursts | Closed 2026-10-21, merged into `main`: with a model, whisper.cpp gives real words timed with DTW ([ADR-007](decisions/ADR-007-whisper-cpp-word-timing.md)). `reelctl` never downloads a model |
 | TransNetV2 not linked | Every cut comes from the scene-score detector; `--cut-detector transnet` exits with an error | TransNetV2 ONNX weights and an `ort` dependency |
-| Zoom curves and `.cube` LUT | Reported as `"status": "unimplemented"` | Pass 1b work |
+| Zoom curves | Measured since 2026-10-29 (`zoom_curves`, schema 4); see the Zoom curves section | Closed |
+| `.cube` LUT | `cube_lut` reported as `"status": "unimplemented"` in `edit_dna.json` | A LUT needs two videos: `reelctl look` (separate branch) |
 
 Not yet listed in AGENTS.md:
 

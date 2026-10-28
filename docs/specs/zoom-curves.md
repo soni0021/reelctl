@@ -1,6 +1,6 @@
 # Spec: Zoom easing curves (`zoom-curves`)
 
-Status: written 2026-10-28 under the user's blanket "Do all of them"; the user has not reviewed it line by line. The answers at the end are the recommended ones. Branch: `feature/zoom-curves`, cut from `feature/visual-motion` (it reads the detector's scale fits). Module `zoom-curves` in the [P0 capability map](p0-capability-map.md). Follows [planer.md](../../planer.md) Pass 1 ("exact camera punch-in ratios and cubic Bézier easing curves"). Depends on [visual-motion](visual-motion.md).
+Status: built (see [status](../status.md#zoom-curves-2026-10-29)); written 2026-10-28 under the user's blanket "Do all of them"; the user has not reviewed it line by line. The answers at the end are the recommended ones. Branch: `feature/zoom-curves`, cut from `feature/visual-motion` (it reads the detector's scale fits). Module `zoom-curves` in the [P0 capability map](p0-capability-map.md). Follows [planer.md](../../planer.md) Pass 1 ("exact camera punch-in ratios and cubic Bézier easing curves"). Depends on [visual-motion](visual-motion.md).
 
 ## Objective
 
@@ -33,7 +33,7 @@ Rust workspace as today. No new dependencies. The track comes from `crates/decom
 ]}}
 ```
 
-- `event_index` points into `visual_events`. `start_ms` is the time of the last frame before the move (the anchor, as measured), `end_ms` the event's time.
+- `event_index` points into `visual_events`. `start_ms` is the last frame within 0.5% of the starting scale (the anchor is taken three frames early), `end_ms` the first frame after which the scale stays within 1% of its final scale (one or two frames after the event's `time_ms` for a slow ease-out).
 - `from_scale` and `to_scale` are the scale at the anchor (1 by definition, so the field is the total factor's start, kept for readers that compose curves) and the measured total.
 - `bezier` is `[x1, y1, x2, y2]` with `x1 = 1/3` and `x2 = 2/3`; `y1` and `y2` between −0.5 and 1.5 (overshoot is allowed and real).
 - `samples` is the number of measured frames used and `fit_rms` the root mean square of the difference between the curve and the measured progress, in units of progress.
@@ -41,7 +41,7 @@ Rust workspace as today. No new dependencies. The track comes from `crates/decom
 
 ### Measuring
 
-The detector hands each event its measured scale track: the cumulative scale at every frame of the move, taken from the fits it already makes between consecutive frames, not from a second search. The fit is least squares on `y1`, `y2` over the samples (progress = measured scale change over total scale change, time = share of the move's duration), by a direct solve (the model is linear in `y1`, `y2`), clamped to the allowed range.
+For each move that resolved as an event, the detector runs one extra scale search per frame at the move's own centre, against the anchor, warm-started from the previous frame (from the anchor to the end of the run plus 125 ms). It never runs on a still frame or on an unresolved run. The fits the detector already makes give only anchor-to-last and before-to-after, not per-frame scales. The fit is least squares on `y1`, `y2` over the samples (progress = measured scale change over total scale change, time = share of the move's duration), by a direct solve (the model is linear in `y1`, `y2`), clamped to the allowed range.
 
 ### Cost
 
@@ -64,7 +64,7 @@ No second decode and no new per-frame work for still frames. The fit runs once p
 
 1. The planted ease-in, ease-out and overshoot are recovered within 0.1 on both control values.
 2. `motion12` and `motion12_wide` give one curve per move; every other field is identical to the build before the change.
-3. On the NEET reel and the lecture, the curves for the events the detector finds are listed in `status.md` with their `fit_rms`.
+3. On the NEET reel and the lecture, no punch-in or zoom-out is found, so `curves` is `[]`; this is recorded in `status.md` and the fit on real compressed zooms stays untested.
 4. `signal_ms` on `bench60_textured` rises by at most 3% over the visual-motion build.
 5. `docs/edit-dna.md`, the schema, `status.md`, the capability map, README and CHANGELOG match; AGENTS.md's P0 gap list no longer lists zoom curves.
 
