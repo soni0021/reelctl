@@ -9,7 +9,7 @@ Plan: [plan.md](plan.md). Spec: [docs/specs/visual-motion.md](../docs/specs/visu
 ## Task 2: Detector
 - [x] Overlay rules (appear, grow, fade, vanish within persistence, brightness shift, moving block)
 - [x] Scale fit (about centre and corner, eased over frames, below floor, noise)
-- [ ] Mutation checks on each threshold (the first audit found 23 of 34 constants unpinned; a fix is in progress)
+- [x] Mutation checks on each threshold (23 of 26 scalar constants and `REFINE` pinned; `HISTORY_MS`, `MAX_FRAMES` and `COARSE_LN` are not, with reasons in status.md)
 
 ## Task 3: Fixtures
 - [x] `motion12`, `still12`, `motion12_wide`, `bench60_textured` and the planted-event sidecar
