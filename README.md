@@ -5,9 +5,13 @@
 - `reelctl decompile` turns an MP4 into `edit_dna.json`: cut times, punch-ins, zoom-outs and overlay changes measured in pixels (`visual_events`), silence gaps, loudness, per-shot color, whether there is a cut near the 9-second payoff mark, and, given a whisper model, timed words. It also writes a `timeline_view` PNG at each cut, so an agent can inspect cuts without opening the video.
 - `reelctl diff` decompiles a draft and flags dead air, long stretches with no cut, and a missing payoff cue. With one to three outliers (`--outlier` up to three times) it also compares cut rhythm in 5 s windows, pause density, speaking rate, and loudness, as JSON or as a text table (`--format text`).
 
+- `reelctl timeline`, `transform punch-in`, `funnel attach-bridge`, `render` and `qa inspect-boundaries` edit an OpenTimelineIO project deterministically (cut silence and filler words, punch-in zoom, a long-form bridge card) and render it with `ffmpeg`. See [docs/timeline.md](docs/timeline.md) and [docs/cli.md](docs/cli.md).
+
+- `watchtower/` is a separate Go module (not part of the Cargo workspace) that ranks a niche's creators by outlier multiplier and growth velocity, runs `reelctl decompile` on their breakout Reels, compares the last five breakouts with the baseline posts on measured fields, and writes a digest. It reads recorded JSON files; the live Virlo client is not built. See [docs/watchtower.md](docs/watchtower.md).
+
 - `reelctl understand` takes a 20–60 minute video and its whisper-timed `edit_dna.json`, sends sampled frames and numbered transcript segments to a hosted vision-language model (OpenRouter; needs `OPENROUTER_API_KEY`), and writes `understanding.json`: Reel-sized clips picked by segment ID and checked by code (hook, cliffhanger, length; a clip that breaks a rule is kept with a flag naming it), and a label for what each cut really was. Every quote is whisper's text and every time is measured. See [docs/understanding.md](docs/understanding.md).
 
-This repository is P0 of the plan in [planer.md](planer.md). P1–P3 (trend watchtower, timeline editor, specialist video model) are specified there and not built. Current state, measurements, and known gaps are in [docs/status.md](docs/status.md).
+This repository is P0 of the plan in [planer.md](planer.md). P1 has a first slice (the Go watchtower, reading recorded data) and P2 has a first slice (OpenTimelineIO edits and an ffmpeg render); the rest of P2 (Smelter, manimgx, RobustVideoMatting, reframe, captions, voice) and P3 (a fine-tuned vision-language model, deferred by the user) are specified there and not built. Current state, measurements, and known gaps are in [docs/status.md](docs/status.md).
 
 ## Quick start
 
@@ -54,7 +58,7 @@ Add `--whisper-model <model.bin>` to `decompile` for real words instead of voice
 
 ## Architecture
 
-The Cargo workspace has six crates:
+The Cargo workspace has these crates (the Go watchtower is a separate module in `watchtower/`):
 
 | Crate | Role |
 |---|---|
@@ -63,6 +67,7 @@ The Cargo workspace has six crates:
 | `diff` | Pacing flags, and a comparison, for a draft against one to three outliers |
 | `filmstrip` | `timeline_view` PNGs at cut boundaries |
 | `understand` | Long-video understanding: transcript segments, frame plan, the model request and cost bound, clip rules, and `understanding.json` (no ffmpeg or whisper dependency) |
+| `timeline` | The OpenTimelineIO subset, edit operations and the ffmpeg filter-graph builder (pure) |
 | `reelctl` | The command-line tool |
 
 ```

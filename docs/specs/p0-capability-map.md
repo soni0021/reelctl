@@ -16,6 +16,8 @@ P0's success metric ([planer.md](../../planer.md), section 7): decompile any 60 
 
 The long-to-short clipper (`reelctl understand`, [spec](long-to-short-clipper.md), [ADR-015](../decisions/ADR-015-combine-measured-time-with-a-model-that-answers-by-segment-id.md)) is P3's vision-language role and planer.md's Component 3, started ahead of `visual-motion` and merged 2026-10-28; its cut labels cover part of what `visual-motion` would add. `visual-motion` stays open.
 
+Beyond P0 (written 2026-10-28 under the user's "p1-p3"): [watchtower](watchtower.md) (P1, a Go module, recorded-fixture source first; built, see [status](../status.md#watchtower-2026-10-28)) and [timeline-editor](timeline-editor.md) (P2 first slice: OTIO JSON and an ffmpeg render; built, see [status](../status.md#timeline-editor-2026-10-28)). P3 (fine-tuning a Qwen3-VL LoRA) is deferred by the user's message "skip fine tuning for now".
+
 Build order: `whisper-coverage` → `decode-inputs` → `fast-decode` → `comparative-diff` → `visual-motion`. `transnet-cuts` is deferred. `whisper-coverage` goes first because it fixes wrong output from a feature already on `main`, and a Reel's hook is in its first seconds. The two decode modules share one code path, and `fast-decode` carries the most risk. `comparative-diff` only reads `edit_dna.json` files and could be built in parallel.
 
 Decisions, answered by the user on 2026-10-25 with the recommended options:
