@@ -74,11 +74,16 @@ Merged into `main` 2026-10-28 from `feature/long-to-short-clipper` ([spec](specs
 
 Prompt tuning, 2026-10-28 ([ADR-016](decisions/ADR-016-state-the-clip-length-in-segments-not-seconds.md)), same lecture, frames and transcript, tight length 30–60 s as the pass line:
 
+Each cell is one run (model output varies). Cells give clips within 30–60 s tight, of the clips returned.
+
 | Prompt | Qwen3.5-9B | Muse 1.2 |
 |---|---|---|
-| First (length in seconds) | 0 of 3 clips; cost $0.0082 | 1 of 5 (the earlier prototype run); cost $0.12 |
-| Length in segments (this change) | 4 of 5; 1 of 5 meets every rule; cost $0.0088 | 3 of 4; 2 of 4 meet every rule; cost $0.127 |
+| Length in seconds (first) | 0 of 3; 0 meet every rule; $0.0082 | not run with this prompt |
+| "Hard limit" wording | 0 of 1 (two picks rejected: start after end); $0.0090 | not run |
+| Fixed counts, "about 3 s per segment" | 1 of 1 (three picks rejected: segment IDs that do not exist); $0.0075 | 2 of 5; 1 meets every rule; $0.1289 |
+| Counts from this video's mean segment length (this change) | 4 of 5; 1 meets every rule; $0.0088 | 4 of 4; 2 meet every rule; $0.1271 |
 
+Six paid runs, about $0.29 in all.
 The remaining flags are the payoff time (3.7–15 s in against 6–12 s) and one start 13 s into its sentence. In both runs the lecture's one cut stayed unlabelled. Muse reads the 346 frames one by one (`sheet=single`, bound $0.71, cap raised to $0.75 for the run).
 
 Audit of the branch (a clean checkout of f31f5f8: fmt, check and 348 tests green, 18 mutation checks on cost, key and exit-code gates, 15 caught): 18 findings, fixed on the branch. A time past the last decodable frame returned a stale earlier frame (now the last frame, with a test that fails if the gate's `>` becomes `>=`, checked); the 10-bit hardware test now asserts the media engine ran; the written `understanding.json` is validated against its schema; `--every-s 0`, an empty transcript and a zero duration exit 2 before any network access, each with a test; every backend error is scrubbed of the key in one function, with loopback tests for a key echoed in a stream error and a malformed reply; model ids with `..` or empty segments are rejected; a word near `u64::MAX` no longer overflows; the docs for the clip end rule, the sample output and the cost figures were corrected. After the fixes: 364 tests pass, 2 ignored; the whole `understand` command through `--replay` on the lecture (decode, tiling and JPEG encoding, no model) takes 10.6 and 11.0 s, the same as the 10.8 s decode alone before the stale-frame fix, and the `--dry-run` plan is unchanged.
