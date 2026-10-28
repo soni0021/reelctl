@@ -1,6 +1,6 @@
 # Spec: `.cube` LUT from a reference reel (`cube-lut`)
 
-Status: written 2026-10-28 under the user's blanket "Do all of them"; the user has not reviewed it line by line. The answers at the end are the recommended ones. Branch: `feature/cube-lut`. Module `cube-lut` in the [P0 capability map](p0-capability-map.md). Follows [planer.md](../../planer.md) Pass 1 ("per-shot RGB/LAB color histograms to synthesize a matching .cube 3D LUT").
+Status: built (see [status.md](../status.md#cube-lut-2026-10-28)); written 2026-10-28 under the user's blanket "Do all of them"; the user has not reviewed it line by line. The answers at the end are the recommended ones. Branch: `feature/cube-lut`. Module `cube-lut` in the [P0 capability map](p0-capability-map.md). Follows [planer.md](../../planer.md) Pass 1 ("per-shot RGB/LAB color histograms to synthesize a matching .cube 3D LUT").
 
 ## Objective
 
@@ -45,7 +45,7 @@ Rust workspace as today. A new crate `crates/look` (pure: histograms, matching, 
 ## Testing Strategy
 
 - **Unit tests (crate `look`):** histograms of known pixel sets; matching two equal distributions gives the identity; a pure brightness offset gives that offset; a distribution compressed into a narrow range stretches; empty or single-valued channels do not divide by zero; the match is monotonic; the `.cube` writer's header and size (n³ lines, red fastest); a writer and reader round trip; sizes 17, 33, 65.
-- **End to end:** a textured fixture and a copy graded by `ffmpeg` (a warm `colorbalance` and a `curves` lift): `reelctl look --draft graded --outlier plain` then `ffmpeg -vf lut3d` on the graded clip; the mean absolute error per channel against the plain clip falls by at least 80% and the per-channel CDF distance by at least 90%. Identical files give an identity LUT. `ffmpeg` loads the file without error. Two runs give identical bytes. Missing file exits 2.
+- **End to end:** a textured fixture and a copy graded by `ffmpeg` (a warm `colorbalance` and a `curves` lift): `reelctl look --draft graded --outlier plain` then `ffmpeg -vf lut3d` on the graded clip; the mean absolute error per channel against the plain clip falls by at least 80% and the mean absolute difference between the per-channel cumulative distributions (the earth mover's distance, in units of the 0–1 level range) by at least 90%. The largest single gap between the two CDFs (the Kolmogorov–Smirnov distance) is reported too but is not a criterion: it is dominated by one level, and on the fixture's blue channel it falls 80–86%. Identical files give an identity LUT. `ffmpeg` loads the file without error. Two runs give identical bytes. Missing file exits 2.
 - **Real reels:** the NEET explainer and the milk clip in both directions; the numbers and one applied frame each way recorded in `status.md` (judged by eye as well as by the shift).
 
 ## Success Criteria

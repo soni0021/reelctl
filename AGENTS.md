@@ -6,11 +6,12 @@ Read CONSTRAINTS.md before writing code. Do not weaken it to make a change pass.
 
 This repository is a Cargo workspace. P0 is the Rust decompiler and reel-diff CLI:
 
-- `crates/reelctl` — `reelctl decompile`, `reelctl diff`, and `reelctl understand`
+- `crates/reelctl` — `reelctl decompile`, `reelctl diff`, `reelctl understand`, and `reelctl look`
 - `crates/edit-dna` — serde types and JSON schema for `edit_dna.json`
 - `crates/decompile` — decode, cuts, silence, loudness, per-shot color
 - `crates/diff` — pacing flags
 - `crates/filmstrip` — `timeline_view` PNGs at cut boundaries
+- `crates/look` — `reelctl look`: per-channel histogram matching and the `.cube` writer and reader (pure)
 - `crates/understand` — `reelctl understand`: transcript segments, frame plan, the model request and cost bound, clip rules, and `understanding.json` (no dependency on `decompile`)
 - `fixtures/` — synthetic ffmpeg clips (no scraped Reels)
 
@@ -44,7 +45,7 @@ Update the docs in the same commit as every change, without waiting to be asked;
 
 - whisper.cpp runs only when `--whisper-model` or `REELCTL_WHISPER_MODEL` names a model; weights are never downloaded or committed. Without one, `asr_backend` is `silence_bursts` and `asr_ms` times that estimator.
 - TransNetV2 / `ort` is unlinked: weights are not vendored. `--cut-detector auto` uses the FFmpeg scene-score `CutDetector` unless a weight file exists (then detection still fails closed until an ort-backed build is wired).
-- Optical-flow Bézier zoom curves and `.cube` LUT stay `StubbedPass` (`status: unimplemented`). Those are Pass 1b, not this tree. Punch-in zooms, zoom-outs and overlay changes are measured as edit events (`visual_events`, module `visual-motion` in [docs/specs/p0-capability-map.md](docs/specs/p0-capability-map.md)); only moves that complete within 12 frames count, so a slow drift is a zoom-curves matter.
+- Optical-flow Bézier zoom curves stay `StubbedPass` (`status: unimplemented`) until the `zoom-curves` module lands. A `.cube` LUT is made by `reelctl look` from two videos; `cube_lut` in `edit_dna.json` stays `unimplemented` because one video cannot make one. Punch-in zooms, zoom-outs and overlay changes are measured as edit events (`visual_events`, module `visual-motion` in [docs/specs/p0-capability-map.md](docs/specs/p0-capability-map.md)); only moves that complete within 12 frames count, so a slow drift is a zoom-curves matter.
 
 ## Learned User Preferences
 

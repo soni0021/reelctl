@@ -5,6 +5,8 @@
 - `reelctl decompile` turns an MP4 into `edit_dna.json`: cut times, punch-ins, zoom-outs and overlay changes measured in pixels (`visual_events`), silence gaps, loudness, per-shot color, whether there is a cut near the 9-second payoff mark, and, given a whisper model, timed words. It also writes a `timeline_view` PNG at each cut, so an agent can inspect cuts without opening the video.
 - `reelctl diff` decompiles a draft and flags dead air, long stretches with no cut, and a missing payoff cue. With one to three outliers (`--outlier` up to three times) it also compares cut rhythm in 5 s windows, pause density, speaking rate, and loudness, as JSON or as a text table (`--format text`).
 
+- `reelctl look` builds a `.cube` 3D LUT that moves a draft's colour toward an outlier's by per-channel histogram matching on sampled frames. It works well on the same content graded differently and poorly between very different content (see [docs/cli.md](docs/cli.md)).
+
 - `reelctl understand` takes a 20–60 minute video and its whisper-timed `edit_dna.json`, sends sampled frames and numbered transcript segments to a hosted vision-language model (OpenRouter; needs `OPENROUTER_API_KEY`), and writes `understanding.json`: Reel-sized clips picked by segment ID and checked by code (hook, cliffhanger, length; a clip that breaks a rule is kept with a flag naming it), and a label for what each cut really was. Every quote is whisper's text and every time is measured. See [docs/understanding.md](docs/understanding.md).
 
 This repository is P0 of the plan in [planer.md](planer.md). P1–P3 (trend watchtower, timeline editor, specialist video model) are specified there and not built. Current state, measurements, and known gaps are in [docs/status.md](docs/status.md).
