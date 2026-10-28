@@ -50,7 +50,11 @@ pub(crate) fn progress_at(y1: f64, y2: f64, t: f64) -> f64 {
 /// fewer than [`MIN_SAMPLES`] samples, or samples that cannot tell the two
 /// numbers apart (all at the same time, or only at the ends).
 pub(crate) fn fit_bezier(samples: &[(f64, f64)]) -> Option<BezierFit> {
-    if samples.len() < MIN_SAMPLES {
+    if samples.len() < MIN_SAMPLES
+        || samples
+            .iter()
+            .any(|&(t, p)| !t.is_finite() || !p.is_finite())
+    {
         return None;
     }
     // Progress minus the t^3 term is a(t)*y1 + b(t)*y2: normal equations.
@@ -263,13 +267,14 @@ mod tests {
         let fit = fit_bezier(&step).expect("a fit");
         assert!(fit.y1 <= Y_MAX && fit.y1 >= Y_MIN, "y1 {}", fit.y1);
         assert!(fit.y2 <= Y_MAX && fit.y2 >= Y_MIN, "y2 {}", fit.y2);
-        assert_eq!(fit.y1, Y_MAX, "the step wants more than the range allows");
+        // The documented range, written out: docs/edit-dna.md and the schema state it.
+        assert_eq!(fit.y1, 1.5, "the step wants more than the range allows");
         // The other way: a move that dips far below its start first.
         let dip: Vec<(f64, f64)> = (0..=8)
             .map(|i| (i as f64 / 8.0, if i == 8 { 1.0 } else { -2.0 }))
             .collect();
         let fit = fit_bezier(&dip).expect("a fit");
-        assert_eq!(fit.y1, Y_MIN);
+        assert_eq!(fit.y1, -0.5);
         assert!(fit.y2 >= Y_MIN && fit.y2 <= Y_MAX, "y2 {}", fit.y2);
     }
 
@@ -391,5 +396,38 @@ mod tests {
         assert!(curve_from_track(&tiny).is_none());
         assert!(curve_from_track(&[]).is_none());
         assert!(curve_from_track(&[point(1000, 1.0)]).is_none());
+    }
+
+    #[test]
+    fn a_sample_that_is_not_a_number_has_no_curve() {
+        let samples = [(0.0, 0.0), (0.25, 0.1), (0.5, f64::NAN), (1.0, 1.0)];
+        assert!(fit_bezier(&samples).is_none());
+        let infinite = [(0.0, 0.0), (0.5, f64::INFINITY), (0.75, 0.9), (1.0, 1.0)];
+        assert!(fit_bezier(&infinite).is_none());
+    }
+
+    /// A track at 24 fps (42 ms steps from 1000 ms) whose scale is
+    /// `1 + 0.2 * progress`, one point per entry.
+    fn track_of(progress: &[f64]) -> Vec<ScalePoint> {
+        progress
+            .iter()
+            .enumerate()
+            .map(|(k, p)| point(1000 + k as u64 * 42, 1.0 + 0.2 * p))
+            .collect()
+    }
+
+    fn span_of(progress: &[f64]) -> (u64, u64) {
+        let curve = curve_from_track(&track_of(progress)).expect("an entry");
+        (curve.start_ms, curve.end_ms)
+    }
+
+    #[test]
+    fn the_trim_tolerances_sit_where_the_comments_say() {
+        // 0.4% of the move is still the start (START_TOL is 0.5%), 0.8% has begun.
+        assert_eq!(span_of(&[0.0, 0.004, 0.3, 0.7, 0.995, 1.0]), (1042, 1168));
+        assert_eq!(span_of(&[0.0, 0.008, 0.3, 0.7, 0.995, 1.0]), (1000, 1168));
+        // 0.5% short of the total is already the end (END_TOL is 1%), 1.5% is not.
+        assert_eq!(span_of(&[0.0, 0.3, 0.7, 0.995, 1.0, 1.0]), (1000, 1126));
+        assert_eq!(span_of(&[0.0, 0.3, 0.7, 0.985, 1.0, 1.0]), (1000, 1168));
     }
 }

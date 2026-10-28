@@ -461,7 +461,7 @@ impl MotionDetector {
     /// anchor, at the move's own centre. A move is a resolved event by now, so
     /// this runs a few times per event and never on a still frame. Each frame
     /// starts its search where the frames before it ended (a move is smooth),
-    /// so a frame costs about ten evaluations of `cost`.
+    /// so a frame costs at least 9 and at most 66 evaluations of `cost` (the typical count is not measured).
     fn scale_track(&self, pending: &PendingMove, geom: Geom) -> Vec<ScalePoint> {
         let mut track = vec![ScalePoint {
             time_ms: pending.anchor_time,

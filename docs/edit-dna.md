@@ -67,7 +67,7 @@ Each entry of `curves`:
 | `from_scale` | The scale at `start_ms`, relative to itself: always `1` |
 | `to_scale` | The total factor of the move, equal to the event's `scale` |
 | `bezier` | `[x1, y1, x2, y2]`, a CSS `cubic-bezier(x1, y1, x2, y2)`: the progress of the scale (0 at the start, 1 at the end, as a share of the change in scale) against the share of the move's time. `x1` is `1/3` and `x2` is `2/3` (rounded to 4 decimals) because the time control points are fixed, so `y1` and `y2` are the two fitted numbers. They lie between −0.5 and 1.5; `y2` above 1 means the scale overshoots its end and comes back. `null` when the move has fewer than 3 measured frames (a one-frame snap) or the measured frames cannot tell `y1` from `y2` |
-| `samples` | Frames from `start_ms` to `end_ms`, both included |
+| `samples` | Frames from `start_ms` to `end_ms`, both included; `0` with `start_ms` and `end_ms` both set to the event's time when the detector kept no scale track for the move (`bezier` and `fit_rms` are `null`) |
 | `fit_rms` | Root mean square of the measured progress minus the fitted curve, in units of progress. `null` when `bezier` is. A value near 0.01 is a good fit; above about 0.05 the move is not well described by one cubic |
 
 A move is at most about 12 to 16 frames, so the fit has few samples; a slow push-in that is not an event has no curve. See [the zoom-curves spec](specs/zoom-curves.md).

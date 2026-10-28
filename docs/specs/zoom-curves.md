@@ -45,7 +45,7 @@ For each move that resolved as an event, the detector runs one extra scale searc
 
 ### Cost
 
-No second decode and no new per-frame work for still frames. The fit runs once per event on at most 13 points. Part of `signal_ms`; measured against the build before the change.
+No second decode and no new per-frame work for still frames. The fit runs once per event on the frames of the move: about 13 at 24 fps for a 12-frame move, up to about 17 for a move of 600 ms. Part of `signal_ms`; measured against the build before the change.
 
 ## Boundaries
 
