@@ -82,6 +82,7 @@ The Cargo workspace has these crates (the Go watchtower is a separate module in 
 | `compositor` | `reelctl compositor isolate-presenter`: RobustVideoMatting presenter cut-out. A pure core (downsample ratio, recurrent state, alpha, compositing, frame pipeline) behind a `MattingModel` trait, the `ort` session, and the `ffprobe`/`ffmpeg` edges; no `unsafe` |
 | `dataset` | `reelctl dataset` and `reelctl eval`: record builder, JSONL and manifest, split by reel, and the scoring metrics (pure; takes bytes, returns bytes) |
 | `scenes` | Chart specs, the fixed manimgx scene template and the fail-closed worker runner for `reelctl overlay` |
+| `studio` | The core of `reelctl serve` (being built): the content-addressed store and the SQLite catalogue, then checkpoints, the job queue and the command catalogue ([spec](docs/specs/studio-service.md)) |
 | `progress` | `--progress json` events (NDJSON on stderr) and the cancel flag and child registry every crate with a long loop or a child process uses |
 | `reelctl` | The command-line tool |
 

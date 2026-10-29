@@ -480,6 +480,18 @@ What this means:
 - `reelctl diff` flags dead air over 180 ms, more than 2.5 s without a cut, and a missing payoff cue when the outlier has one.
 - The JSON Schema is generated from the Rust types and matches them.
 
+## Studio store and catalogue (2026-10-29)
+
+Task 2 of [studio-service](specs/studio-service.md): `crates/studio`, 11 unit tests, in the cloud container.
+- The same bytes are one object, read-only (0400) in a 0700 `.reelstudio/`.
+- A folder is a tree object with the same hash for the same contents, and it lays out again by hard links.
+- A changed object reads back as an error.
+- A symbolic link in an output is refused.
+- An empty catalogue gets schema 1, and a newer schema is refused and left untouched.
+- Eight threads writing to one catalogue file lose nothing (WAL).
+
+Nothing uses it yet.
+
 ## Progress and cancel (2026-10-29)
 
 `--progress json` and clean cancel (task 1 of [studio-service](specs/studio-service.md)), tested in `crates/reelctl/tests/progress_fixture.rs` in the cloud container:

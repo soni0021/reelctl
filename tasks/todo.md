@@ -10,7 +10,7 @@ Plan: [plan.md](plan.md). Spec: [docs/specs/studio-service.md](../docs/specs/stu
 - [x] SIGTERM stops children and leaves no temporary file; without the flag, output is unchanged
 
 ## Task 2: Store and catalogue
-- [ ] Objects, trees, read-only files; schema version 1 and migrations; assets by reference
+- [x] Objects, trees, read-only files; schema version 1 and migrations; assets by reference
 
 ## Task 3: Checkpoints
 - [ ] Append, head, revert, branch, diff; cache key and `force`
