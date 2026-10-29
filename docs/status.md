@@ -500,7 +500,16 @@ Task 3 (`checkpoint.rs`, 8 more tests, 19 in all):
 - The cache key ignores argument key order and changes with the command, any argument, any input hash or the `reelctl` version.
 - A succeeded job's outputs are found by its key.
 
-Nothing uses it yet.
+Task 4 (`jobs.rs` and `queue.rs`, 12 more tests, 31 in all, six runs in a row with no failure):
+- A job's output becomes a checkpoint, and its scratch folder is removed.
+- Four heavy jobs never run two at a time; four light ones run together.
+- A chain passes an output to the next job's input, and a failure fails the jobs that wait on it.
+- The same job again is a cache hit with no run, unless forced.
+- A queued job and a running job are cancelled, and a retry runs again.
+- After a restart, the job that was running is interrupted and the queued one runs.
+- Bad submissions are refused.
+
+The runner is a fake that writes files; nothing runs `reelctl` yet.
 
 ## Progress and cancel (2026-10-29)
 

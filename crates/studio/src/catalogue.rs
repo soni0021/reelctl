@@ -57,6 +57,7 @@ CREATE TABLE jobs (
     result TEXT,
     error TEXT,
     env_names TEXT NOT NULL,
+    force INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     started_at INTEGER,
     finished_at INTEGER

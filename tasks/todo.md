@@ -16,7 +16,7 @@ Plan: [plan.md](plan.md). Spec: [docs/specs/studio-service.md](../docs/specs/stu
 - [x] Append, head, revert, branch, diff; the cache key and the cached-outputs lookup (`force` is the queue's, task 4)
 
 ## Task 4: Queue
-- [ ] Classes, priority, `after`, cancel, interrupted on restart; consumers ingest outputs
+- [x] Classes, priority, `after`, cancel, interrupted on restart; consumers ingest outputs (with a fake runner; the real one is task 5/6)
 
 ## Task 5: Command catalogue
 - [ ] Typed args to argv and env for every command; `make-reels` moved onto it, its tests unchanged
