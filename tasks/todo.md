@@ -1,32 +1,31 @@
-# Todo: make-reels
+# Todo: studio-service (M1)
 
-Plan: [plan.md](plan.md). Spec: [docs/specs/make-reels.md](../docs/specs/make-reels.md). Tick each box in the commit that completes it. Stage explicit paths; never `git add -A` (`.env` holds a key).
+Plan: [plan.md](plan.md). Spec: [docs/specs/studio-service.md](../docs/specs/studio-service.md). Tick each box in the commit that completes it. Stage explicit paths; never `git add -A` (`.env` holds a key).
 
 ## Task 0: Spec
-- [x] User approves `docs/specs/make-reels.md` and ADR-025 (2026-10-29; captions customizable, reels "custom + picked")
+- [ ] User approves the spec, ADR-028 and ADR-029, and the open questions
 
-## Task 1: Edits on a trimmed clip
-- [x] `timeline from-clip` (refusals, metadata, frame snapping)
-- [x] Every edit and the render tested on a clip that starts after 0 (auto-punch-in since the audit fix)
+## Task 1: Progress and cancel
+- [ ] `--progress json` events from every long loop; the result event equals the stdout line
+- [ ] SIGTERM stops children and leaves no temporary file; without the flag, output is unchanged
 
-## Task 2: Bridge
-- [x] `attach-bridge --append`; old records still read
+## Task 2: Store and catalogue
+- [ ] Objects, trees, read-only files; schema version 1 and migrations; assets by reference
 
-## Task 3: Auto punch-in
-- [x] Windows through the edits, scale from the outliers, idempotent (the curve is not used yet: see the spec)
+## Task 3: Checkpoints
+- [ ] Append, head, revert, branch, diff; cache key and `force`
 
-## Task 4: Reframe
-- [x] Compositor alpha-only entry (fake model test)
-- [x] Pure plan: centroid, dead zone, speed, ease, cuts, edges, thinning
-- [x] Render crop expression checked against ffmpeg; Smelter refuses
-- [x] `--follow centre`; fail-closed messages
+## Task 4: Queue
+- [ ] Classes, priority, `after`, cancel, interrupted on restart; consumers ingest outputs
 
-## Task 5: Captions
-- [x] Mapping, grouping, style (presets, file, flags), drawing with `ab_glyph`, font lookup; other edits refuse; `overlay remove --captions`
+## Task 5: Command catalogue
+- [ ] Typed args to argv and env for every command; `make-reels` moved onto it, its tests unchanged
 
-## Task 6: make-reels
-- [x] Child steps with a minimal environment, cost gate and prompt, `make_reels.json`, exit codes
-- [x] `lecture70` with words written by the test, `--understand-replay` reply, end-to-end test
+## Task 6: `reelctl serve`
+- [ ] Socket, lock, peer uid; JSON-RPC and events; understand plan/run gate; gc; doctor
 
-## Mac (user)
-- [ ] Real lecture run; reframe ms per frame and the presenter-in-frame check recorded in status.md
+## Task 7: `pipelines.make_reels`
+- [ ] The M0 chain as jobs and checkpoints
+
+## Task 8: End to end
+- [ ] `serve_fixture.rs` covers the success criteria
