@@ -11,6 +11,7 @@ pub mod checkpoint;
 pub mod commands;
 pub mod error;
 pub mod jobs;
+pub mod pipeline;
 pub mod protocol;
 pub mod queue;
 pub mod service;

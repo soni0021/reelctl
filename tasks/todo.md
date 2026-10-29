@@ -26,6 +26,7 @@ Plan: [plan.md](plan.md). Spec: [docs/specs/studio-service.md](../docs/specs/stu
 
 ## Task 7: `pipelines.make_reels`
 - [ ] The M0 chain as jobs and checkpoints
+  - [x] The step list and clip choice as pure code in `crates/studio/src/pipeline.rs` (2 tests); `make-reels` and `pipelines.make_reels` not yet moved onto it
 
 ## Task 8: End to end
 - [ ] `serve_fixture.rs` covers the success criteria
