@@ -22,7 +22,7 @@ Plan: [plan.md](plan.md). Spec: [docs/specs/make-reels.md](../docs/specs/make-re
 - [x] `--follow centre`; fail-closed messages
 
 ## Task 5: Captions
-- [ ] Mapping, grouping, escaping, font lookup; other edits refuse; `overlay remove --captions`
+- [x] Mapping, grouping, style (presets, file, flags), drawing with `ab_glyph`, font lookup; other edits refuse; `overlay remove --captions`
 
 ## Task 6: make-reels
 - [ ] Child steps with a minimal environment, cost gate and prompt, `make_reels.json`, exit codes

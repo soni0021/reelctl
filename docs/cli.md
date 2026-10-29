@@ -344,8 +344,12 @@ Draws a chart with `manimgx`, a separately installed program ([ADR-022](decision
 
 ```
 reelctl overlay add-chart --project edit.otio --spec chart.json --out edit.otio [--assets-dir DIR] [--manimgx PATH] [--skip-inspect] [--timeout-s 300]
-reelctl overlay remove --project edit.otio --id ID --out edit.otio
+reelctl overlay remove --project edit.otio (--id ID | --captions) --out edit.otio
+reelctl overlay captions --project edit.otio --dna take.edit_dna.json [--preset bold|clean|boxed|karaoke|minimal] [--style style.json] [style flags] --out edit.otio
+reelctl overlay captions --list-presets
 ```
+
+`overlay captions` burns word captions into the project from the DNA's whisper words (its `asr_backend` must be `whisper_cpp`: voiced bursts are not words, exit 2). Words are placed through the edits (a word an edit cut in two stays on its longer side; words cut out, on the card or past the bridge are dropped) and grouped: at most `--words-per-group`, never across a hard cut or a pause of `--min-gap-ms`. The style is the preset, then the `--style` JSON file (the flag names with underscores; an unknown field is exit 2), then the flags: `--font` (.ttf or .otf; default Arial Bold on macOS, DejaVu Sans Bold on Linux; none found is exit 2), `--font-size` (percent of the output height, 2–12), `--color`, `--highlight-color` (`#rrggbb` or `none`), `--outline-color`, `--outline-width` (0–12 px at 1080 wide), `--shadow` (0–12), `--box-color`, `--box-opacity` (0–1), `--position top|middle|bottom`, `--margin` (0–40 percent), `--words-per-group` (1–5), `--max-chars` (8–40, then the group wraps to two lines), `--case as-is|upper|lower`, `--min-gap-ms` (100–2000). `--list-presets` prints every preset as JSON. Add captions last: `cut-silence`, `punch-in`, `auto-punch-in` and `attach-bridge` refuse a captioned project (exit 2); `overlay remove --captions` takes them out. `render` draws them itself (this ffmpeg has no `drawtext`) and lays them over the footage on their exact frames; `render --backend smelter` refuses a captioned project. Stdout: `captions: out= groups= words= dropped= preset= font= unchanged=`.
 
 | Command | Stdout line |
 |---|---|

@@ -219,6 +219,7 @@ pub fn attach_bridge(
     pauses: &[(u64, u64)],
 ) -> Result<BridgeReport> {
     crate::overlay::refuse_overlays(timeline)?;
+    crate::captions::refuse_captions(timeline)?;
     let rate = check_editable(timeline)?;
     if !request.cutoff_pct.is_finite() || request.cutoff_pct <= 0.0 || request.cutoff_pct >= 1.0 {
         return Err(TimelineError::invalid(format!(
@@ -269,6 +270,7 @@ pub fn append_bridge(
     card_ms: u64,
 ) -> Result<BridgeReport> {
     crate::overlay::refuse_overlays(timeline)?;
+    crate::captions::refuse_captions(timeline)?;
     let rate = check_editable(timeline)?;
     check_card(target_url, card_ms)?;
     if let Some(report) = existing_bridge(timeline, target_url, card_ms, None)? {

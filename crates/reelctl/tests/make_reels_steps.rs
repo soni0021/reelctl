@@ -416,11 +416,48 @@ fn the_clip_steps_chain_and_render() {
     let after: f64 = ranges.iter().map(|(_, d)| d).sum();
     assert_eq!(after, before + 48.0);
 
+    // Captions go last: any other edit refuses a captioned project.
+    let captioned = root.join("05-captions.otio");
+    let stdout = ok(&[
+        "overlay",
+        "captions",
+        "--project",
+        &s(&bridged),
+        "--dna",
+        &s(&lecture.dna),
+        "--preset",
+        "bold",
+        "--out",
+        &s(&captioned),
+    ]);
+    assert!(stdout.starts_with("captions: out="), "{stdout}");
+    assert!(stdout.contains("preset=bold"), "{stdout}");
+    exits_2(
+        &[
+            "transform",
+            "punch-in",
+            "--project",
+            &s(&captioned),
+            "--start-ms",
+            "0",
+            "--end-ms",
+            "1000",
+            "--scale",
+            "1.2",
+            "--out",
+            &s(&root.join("x.otio")),
+        ],
+        "add captions last",
+    );
+    let groups = read_json(&captioned)["metadata"]["reelctl"]["captions"]["groups"].clone();
+    let first = &groups[0];
+    let caption_frame = (first["start"].as_i64().unwrap() + first["end"].as_i64().unwrap()) / 2;
+
     let video = root.join("reel.mp4");
     ok(&[
         "render",
         "--project",
-        &s(&bridged),
+        &s(&captioned),
         "--out",
         &s(&video),
         "--size",
@@ -449,6 +486,51 @@ fn the_clip_steps_chain_and_render() {
     );
     let frames: f64 = stream["nb_read_frames"].as_str().unwrap().parse().unwrap();
     assert_eq!(frames, after);
+
+    // On a caption's frame there is near-white text in the lower half of the
+    // picture and none in the upper half; the footage is flat red or blue.
+    let frame = rgb_frame(&video, caption_frame as u32, 360, 640);
+    let white = |rows: std::ops::Range<usize>| {
+        rows.flat_map(|y| (0..360).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                let at = (y * 360 + x) * 3;
+                frame[at] > 220 && frame[at + 1] > 220 && frame[at + 2] > 220
+            })
+            .count()
+    };
+    assert!(
+        white(320..640) > 100,
+        "{} white pixels below the middle",
+        white(320..640)
+    );
+    assert_eq!(white(0..320), 0);
+}
+
+/// Frame `index` of `video` as `width` x `height` RGB bytes.
+fn rgb_frame(video: &Path, index: u32, width: usize, height: usize) -> Vec<u8> {
+    let output = Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "error", "-i"])
+        .arg(video)
+        .args([
+            "-vf",
+            &format!("select=eq(n\\,{index})"),
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "pipe:1",
+        ])
+        .output()
+        .expect("spawn ffmpeg");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout.len(), width * height * 3);
+    output.stdout
 }
 
 /// A 4 s, 640x360 clip whose luma rises from left to right (0 at x=0, 255 at

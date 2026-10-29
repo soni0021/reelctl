@@ -345,7 +345,7 @@ pub(crate) fn load_project(path: &Path) -> Result<Timeline> {
     Timeline::from_json(&text).map_err(|error| usage(format!("{}: {error}", path.display())))
 }
 
-fn load_dna(path: &Path) -> Result<EditDna> {
+pub(crate) fn load_dna(path: &Path) -> Result<EditDna> {
     let text = fs::read_to_string(path)
         .map_err(|error| usage(format!("cannot read edit DNA {}: {error}", path.display())))?;
     serde_json::from_str(&text)
@@ -986,6 +986,7 @@ fn ffmpeg_args(
     media: &[PathBuf],
     card_paths: &[PathBuf],
     overlay_paths: &[PathBuf],
+    caption_pattern: Option<&Path>,
     output: &Path,
 ) -> Vec<std::ffi::OsString> {
     let mut args: Vec<std::ffi::OsString> =
@@ -1021,6 +1022,21 @@ fn ffmpeg_args(
             args.push(part.into());
         }
         args.push(path.into());
+    }
+    // The captions: an image sequence with one picture per timeline frame, last.
+    if let Some(pattern) = caption_pattern {
+        for part in [
+            "-protocol_whitelist",
+            PROTOCOLS,
+            "-framerate",
+            plan.frame_rate.as_str(),
+            "-start_number",
+            "0",
+            "-i",
+        ] {
+            args.push(part.into());
+        }
+        args.push(pattern.into());
     }
     args.push("-filter_complex".into());
     args.push(plan.filter_graph.clone().into());
@@ -1138,6 +1154,15 @@ pub(crate) fn render_ffmpeg(job: &RenderJob<'_>) -> Result<RenderOutcome> {
         card_paths.push(path);
     }
 
+    let caption_pattern = match &plan.captions {
+        Some(captions) => Some(crate::captions_draw::write_caption_sequence(
+            captions,
+            plan.size,
+            &scratch.0.join("captions"),
+        )?),
+        None => None,
+    };
+
     // Render beside the output, then rename. The temporary file is removed on every
     // way out but a kill, so a failed run leaves nothing behind. Its directory is
     // made absolute, so the path cannot be read as an option.
@@ -1156,6 +1181,7 @@ pub(crate) fn render_ffmpeg(job: &RenderJob<'_>) -> Result<RenderOutcome> {
             &media,
             &card_paths,
             &overlay_paths,
+            caption_pattern.as_deref(),
             &temporary.path,
         ))
         .stdin(Stdio::null())

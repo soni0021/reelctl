@@ -35,7 +35,7 @@ Rust, inside the existing crates:
 - `crates/compositor`: a new alpha-only entry point.
 - `crates/reelctl/src`: `make_reels_cmd.rs`, with the new subcommands added to `timeline_cmd.rs` and `overlay_cmd.rs`.
 
-No new dependencies.
+One new dependency: `ab_glyph`, which draws the captions ([ADR-026](../decisions/ADR-026-draw-captions-in-reelctl-with-ab-glyph.md)). Homebrew's ffmpeg has no `drawtext`. The draft said there would be no new dependencies; that changed on 2026-10-29, when the user chose to have reelctl draw the captions.
 
 ## Design
 
@@ -139,12 +139,12 @@ An unknown field in the JSON file, or a value out of range, exits 2 with the fie
   - a word cut in two by an edit is kept on the side with most of its length
   - words after the bridge cut, or on the card, are dropped
 - **Groups.** Groups of `--words-per-group` words are shown from the first word's start to the last word's end. A group never crosses a cut in the timeline or a pause of `--min-gap-ms` or more. Unless the highlight is `none`, the current word is drawn in the highlight colour.
-- **Stored.** The groups are a caption track (`kind: reelctl.captions`) with one item per group.
-- **Edits after captions.** `cut-silence`, `punch-in`, `auto-punch-in`, `attach-bridge` and `reframe` refuse a project with captions, as they refuse overlays (exit 2, "add captions last"). `overlay remove --captions` takes them out.
-- **Render.** `render` draws them with `drawtext`, one filter per group, with `enable='between(t,a,b)'`. They are placed in the lower third of the output frame, which is the reframed vertical frame. Text is escaped for the filter.
+- **Stored.** The resolved style and the groups (timeline frames, with each word's frames) are in `metadata.reelctl.captions`.
+- **Edits after captions.** `cut-silence`, `punch-in`, `auto-punch-in` and `attach-bridge` refuse a project with captions (`reframe` changes no timing and is allowed), as they refuse overlays (exit 2, "add captions last"). `overlay remove --captions` takes them out.
+- **Render.** `reelctl` draws one transparent picture per caption state (a group, with the spoken word highlighted) with `ab_glyph` ([ADR-026](../decisions/ADR-026-draw-captions-in-reelctl-with-ab-glyph.md)). `render` lays them over the footage as an image sequence with one picture per timeline frame, so they land exactly on their frames. Position and margin are relative to the output frame, which is the reframed vertical frame.
 - **Font.** No font is bundled or downloaded. The default is the first that exists of `/System/Library/Fonts/Supplemental/Arial Bold.ttf` (macOS) and `/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf` (Linux). `--font` overrides it. If none is found, exit 2 with the paths that were tried.
 - **Smelter.** It refuses a captioned project with exit 2, for now.
-- stdout: `captions: out= groups= words= dropped= font=`
+- stdout: `captions: out= groups= words= dropped= preset= font= unchanged=`
 
 ### 6. `reelctl make-reels`
 
@@ -211,14 +211,14 @@ Each step's own files are kept in `reel-<N>/` (`clip.otio` after each step as `N
     - centroid with a threshold, low mass holding the position, dead zone, speed limit, ease, a jump at a cut, edge clamping, keyframe thinning
     - inputs are synthetic alpha frames: a box moving left to right, a still box, an empty frame, a cut
   - The crop expression builder: values at keyframes and between them, compared with ffmpeg's evaluator on a test clip.
-  - `captions`: mapping through removed spans, split words, the bridge, grouping at cuts and pauses, `drawtext` escaping of `'`, `:`, `%` and `\`.
+  - `captions`: mapping through removed spans, split words and the bridge; grouping at cuts and pauses; style merging and range errors; and the picture each frame shows. The drawing is checked on pixels: text in its band, the highlight on the right word, the outline, the box.
   - `bridge --append`, and reading an old bridge record.
 - **Compositor:** the alpha-only entry point runs with the existing fake `MattingModel`. Tests check that it reads every frame, carries the state, uses the ratio, and writes no file.
 - **End to end** in `crates/reelctl/tests/make_reels_fixture.rs`:
   - A new `generate.sh` clip, `lecture90`: 90 s, 1280×720, a bright moving box as the "presenter" on a flat background, a planted cut, planted silences, and a tone. Its whisper words come from a checked-in DNA sidecar, because the cloud has no whisper model; `--dna` skips the decompile step.
   - `understand` runs with `--replay` and a checked-in reply, so no model is called.
   - `reframe` falls back to `centre`, since there is no RVM model in the cloud, and the note says so.
-  - The test checks that two reels render, each 1080×1920, with the expected lengths. The card is at the end, captions are present (a `drawtext` in the logged filter graph), and `diff` of each render has no dead-air flag. It also checks `make_reels.json`'s fields, and that a second run writes identical `.otio` files.
+  - The test checks that two reels render, each 1080×1920, with the expected lengths. The card is at the end, captions are present (white text pixels in the caption band on a caption's frame), and `diff` of each render has no dead-air flag. It also checks `make_reels.json`'s fields, and that a second run writes identical `.otio` files.
   - The environment is stripped as AGENTS.md requires.
 - **Manual, on the Mac** (the user): a real lecture from `Reels/` with the Apex whisper model, RVM weights and one live `understand` call after a yes. Look at whether the crop keeps the presenter in frame through the cuts, and record the ms per frame of the reframe measure in `docs/status.md`.
 

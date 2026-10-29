@@ -395,6 +395,11 @@ pub fn build_smelter_plan(timeline: &Timeline, size: Option<RenderSize>) -> Resu
             "the project has chart overlays, which the Smelter backend does not draw; render with --backend ffmpeg",
         ));
     }
+    if crate::captions::has_captions(timeline) {
+        return Err(TimelineError::invalid(
+            "the project has captions, which the Smelter backend does not draw; render with --backend ffmpeg",
+        ));
+    }
     if crate::reframe::reframe_of(timeline)?.is_some() {
         return Err(TimelineError::invalid(
             "the project is reframed (metadata.reelctl.reframe), which the Smelter backend does not crop; render with --backend ffmpeg",

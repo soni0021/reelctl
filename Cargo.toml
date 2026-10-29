@@ -21,6 +21,8 @@ license = "MIT"
 publish = false
 
 [workspace.dependencies]
+# Draws caption text from a .ttf or .otf font (this ffmpeg has no drawtext).
+ab_glyph = "0.2"
 anyhow = "1"
 base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }

@@ -215,6 +215,7 @@ pub fn auto_punch_in_like(
     outliers: &[&EditDna],
 ) -> Result<AutoPunchReport> {
     crate::overlay::refuse_overlays(timeline)?;
+    crate::captions::refuse_captions(timeline)?;
     let rate = check_editable(timeline)?;
     let windows = static_windows(timeline, dna, rate)?
         .into_iter()

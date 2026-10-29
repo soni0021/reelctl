@@ -16,6 +16,7 @@ use decompile::{
 use diff::{compare_many, render_text, NamedReel};
 use edit_dna::EditDna;
 
+mod captions_draw;
 mod card;
 mod compositor_cmd;
 mod dataset_cmd;

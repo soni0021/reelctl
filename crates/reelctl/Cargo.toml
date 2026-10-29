@@ -11,6 +11,7 @@ name = "reelctl"
 path = "src/main.rs"
 
 [dependencies]
+ab_glyph.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 compositor = { path = "../compositor" }

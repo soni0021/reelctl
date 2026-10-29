@@ -23,6 +23,7 @@ The edit commands need the video and audio items to match one for one in duratio
 | `Timeline` | `cuts` | One entry per span `cut-silence` removed: `{reason: "silence" or "filler", source_start_ms, source_end_ms, start_frame, end_frame, text?}`, in the media's own time, sorted by `start_frame`. |
 | `Timeline` | `bridge` | `{url, cutoff_pct, appended, card_ms, cut_frame, cut_ms, frames_before, in_pause}`. `cutoff_pct` is `null` and `appended` `true` for `--append`; a record written before `--append` has no `appended` and reads as a cut. |
 | `Timeline` | `reframe` | `{aspect, follow, crop_width, crop_height, keyframes: [{source_frame, x}], note}`: the crop window in source pixels and its left edge `x` (a share of the source width, 0 to 1) at source frames in increasing order, joined by straight lines and held before the first and after the last. |
+| `Timeline` | `captions` | `{style, groups: [{start, end, words: [{text, start, end}]}], dropped}`: the resolved caption style (every field) and the groups in timeline frames. `dropped` counts the words that were not in the footage. |
 | `Timeline` | `clip` | `{understanding, index, start_ms, end_ms, start_frame, end_frame, hook_id, last_id}`: the `understanding.json` (absolute path) and the clip pick `from-clip` made the project from, with its frames after snapping. |
 | `Clip` | `fade_ms` | The audio fade at the clip's joins (see Render). |
 | `Clip` | `punch_in` | `{scale, ramp_frames, start, end}`; `start` and `end` are `RationalTime`s in frames **of this clip** (a punch-in over several clips has the same span in each clip's own time, so `start` can be negative and `end` can be past the clip's end). |
@@ -64,6 +65,12 @@ All of them read one project and write one, atomically (a temporary file in the 
 - Fails with exit 1 and a message that names the tool when `ffmpeg` is not on `PATH`. The rendered length equals the project's length: the same frame count, and the audio within one AAC frame of the video.
 
 **`qa inspect-boundaries`** writes one `timeline_view` PNG (the `crates/filmstrip` layout) per join between neighbouring video items into `--out-dir`: two frames before the join and two after, decoded in process with `decompile`'s frame sampler; the audio waveform for 400 ms on each side, decoded with `ffmpeg` (16 kHz mono); and, when the DNA is readable, its word ticks placed on the edited timeline. A side that is the card is a dark frame and silence. The waveform is the source audio as it is in the media, before the render's fade.
+
+## Captions (`overlay captions`)
+
+The words come from the DNA (whisper only). Each word is rounded to frames and put on the timeline piece it overlaps most: a word cut in two by `cut-silence` keeps its longer side, and a word in no footage (cut out, on the card, after the bridge's cut) is dropped. Groups take words in order up to `words_per_group` and start again at a pause of `min_gap_ms` or more, or at a hard cut (a join where the footage is not continuous, or a card). A group is shown from its first word's start to its last word's end, but never into the next group. With a highlight, a group has one picture per word, each shown from its word's start (the group's start, for the first) to the next word's start.
+
+`render` asks `reelctl` to draw each picture ([ADR-026](decisions/ADR-026-draw-captions-in-reelctl-with-ab-glyph.md)), with `ab_glyph` and the style's font. The text is centred, wrapped into two lines of similar length past `max_chars`, and placed at `margin` from the `position` edge of the output. The box, shadow, outline, text and highlight are painted in that order. The pictures become an image sequence with one picture per timeline frame (hard links, or a transparent blank), the render's last input: `settb=expr=<1/rate>,setpts=N,format=rgba`, laid over the footage with `overlay=x=0:y=0:eof_action=pass` before any chart overlay, so the frame each picture lands on is exact.
 
 ## Chart overlays (`overlay add-chart`)
 
