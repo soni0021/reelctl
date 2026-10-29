@@ -637,6 +637,23 @@ mod tests {
             .is_ok_and(|status| status.success())
     }
 
+    /// No process is left running `sleep <marker>`, whether or not the child got as far
+    /// as writing its pid.
+    fn assert_none_left(marker: &str) {
+        for _ in 0..60 {
+            let found = Command::new("pgrep")
+                .args(["-f", &format!("sleep {marker}")])
+                .output()
+                .map(|output| !output.stdout.is_empty())
+                .unwrap_or(false);
+            if !found {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        panic!("a child sleeping {marker} is still running");
+    }
+
     fn assert_dies(pidfile: &Path) {
         let pid = fs::read_to_string(pidfile).expect("the child wrote its pid");
         let pid = pid.trim();
@@ -653,6 +670,8 @@ mod tests {
     /// rendering), a result for the fake to write, a child script that records its pid
     /// and waits.
     struct Rig {
+        /// A sleep length no other test uses, so `pgrep` finds this rig's child alone.
+        marker: String,
         dir: Scratch,
         media: PathBuf,
         prepared: PathBuf,
@@ -668,13 +687,25 @@ mod tests {
         let prepared = dir.0.join("prepared.mp4");
         make_mp4(&prepared, written_frames);
         let pidfile = dir.0.join("pid");
+        let marker = format!(
+            "120.{}",
+            dir.0
+                .file_name()
+                .map(
+                    |name| name.to_string_lossy().bytes().fold(7u64, |sum, byte| sum
+                        .wrapping_mul(31)
+                        .wrapping_add(u64::from(byte)))
+                )
+                .unwrap_or(0)
+        );
         let child = dir.script(
             "smelter",
-            &format!("echo $$ > {}\nexec sleep 120", pidfile.display()),
+            &format!("echo $$ > {}\nexec sleep {marker}", pidfile.display()),
         );
         fs::create_dir_all(dir.0.join("out")).expect("out dir");
         let out = dir.0.join("out").join("result.mp4");
         Rig {
+            marker,
             dir,
             media,
             prepared,
@@ -697,12 +728,19 @@ mod tests {
         let rig = rig("happy", 34);
         let fake = fake_writing(rig.prepared.clone(), rig.pidfile.clone(), |_| None);
         let timeline = project(&rig.media, 30, false);
+        let started = Instant::now();
         let outcome = render(
             &backend(rig.child.clone(), fake.port()),
             &timeline,
             &rig.out,
         )
         .expect("render");
+        // The child sleeps for 120 s: the render must kill it, not wait for it.
+        assert!(
+            started.elapsed() < Duration::from_secs(60),
+            "{:?}",
+            started.elapsed()
+        );
         assert_eq!((outcome.frames, outcome.duration_ms), (30, 1000));
         assert!(outcome.notes.is_empty(), "{:?}", outcome.notes);
         // The fake wrote 34 frames (30 and the four of margin); the file has 30.
@@ -730,7 +768,10 @@ mod tests {
         let envfile = rig.dir.0.join("env.txt");
         let child = rig.dir.script(
             "smelter-env",
-            &format!("env | sort > {}\nexec sleep 120", envfile.display()),
+            &format!(
+                "env | sort > {0}.tmp\nmv {0}.tmp {0}\nexec sleep 120",
+                envfile.display()
+            ),
         );
         let fake = fake_writing(rig.prepared.clone(), envfile.clone(), |_| None);
         let timeline = project(&rig.media, 30, false);
@@ -966,7 +1007,7 @@ mod tests {
             error.to_string().contains("did not answer GET /status"),
             "{error}"
         );
-        assert_dies(&rig.pidfile);
+        assert_none_left(&rig.marker);
     }
 
     #[test]

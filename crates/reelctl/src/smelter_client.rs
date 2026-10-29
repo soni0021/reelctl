@@ -398,6 +398,16 @@ mod tests {
     }
 
     #[test]
+    fn success_is_any_2xx_and_nothing_else() {
+        let status = |code| Response {
+            status: code,
+            body: String::new(),
+        };
+        assert!(status(200).ok() && status(299).ok());
+        assert!(!status(199).ok() && !status(300).ok() && !status(500).ok());
+    }
+
+    #[test]
     fn a_chunked_body_is_joined() {
         let reply = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n2;ext=1\r\nde\r\n0\r\n\r\n";
         assert_eq!(parse_response(reply).expect("response").body, "abcde");

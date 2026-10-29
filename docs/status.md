@@ -1,6 +1,6 @@
 # Status
 
-Last updated 2026-10-26. Update this page in the same commit as any change that affects it.
+Last updated 2026-10-29. Update this page in the same commit as any change that affects it.
 
 ## Summary
 
@@ -108,6 +108,68 @@ Apple M3 MacBook Air, release build of `feature/cube-lut` ([spec](specs/cube-lut
 | `cargo test --workspace` | 479 pass, 2 ignored (the whisper model tests): the 436 of `visual-motion` plus look 30, probe 3, `look_cmd` 2 and `look_fixture.rs` 8 |
 
 Known limits: separable, per-channel RGB only; BT.601 assumed; a graded copy of the same content is the case that works; unlike content gives poor results, which a later version might soften with a strength setting or a match on shot-level statistics; the LUT cannot restore a clipped channel; `decode_frames_at` holds every sampled frame at once (about 330 MB for 600 portrait frames at 320 px).
+
+## Smelter backend, 2026-10-29
+
+Apple M3, macOS 26.5, ffmpeg 8.1 (Homebrew), debug build of `reelctl`; Smelter v0.6.0 `smelter_darwin_aarch64.tar.gz` (sha256 `dbd0500c1709ee16ba24897a4fa39b7e620c906b59ee1318809f4e027ea933a9`, equal to the digest GitHub publishes), run from a scratch directory, never committed. Spec: [smelter-backend](specs/smelter-backend.md); decision: [ADR-023](decisions/ADR-023-drive-smelter-as-a-separate-process-over-its-http-api.md). **The machine was shared with other agents building and rendering during every measurement below: load averages (1, 5, 15 min) were 17.7/80/68 for the agreement table, 23/52/58 for the stress run and 5.7/24/43 for the resized run. No idle-machine run exists.** Timings and the early-landing rates are therefore upper bounds; they are not a benchmark.
+
+What Smelter turned out to be: a server with an HTTP API and a WebSocket event stream (not an embeddable crate), a custom licence (offline use permissive, real-time use restricted), a macOS arm64 release that runs on Metal and links Homebrew's FFmpeg 8. It was driven from `reelctl`; nothing was downloaded by `reelctl`.
+
+### Agreement with the ffmpeg render (`fixtures/smelter_agreement.sh`, 6 runs of each)
+
+Each fixture is cut at its silence (`draft12` only; `textured_cuts12` has none), punched in 1.3x over 1.0 to 3.0 s, and ends in a 1 s card. The audio is AAC (Smelter reads nothing else). "Floor" is the ffmpeg render against itself after one more x264 encode at the same quality. Differences are the per-frame mean absolute luma difference, 0 to 255, against the ffmpeg render.
+
+| Variant | Frames (ffmpeg / Smelter) | Floor mean (max) | Smelter mean | p95 | max | frames over 40 |
+|---|---|---|---|---|---|---|
+| `draft12`, untagged source | 279 / 279 in all 6 | 0.01 (0.05) | 9.06 in 4 runs, 9.69 in 2 | 15.00 | 15.00 in 4 runs, 175.8 in 2 | 0 in 4 runs, 1 in 2 |
+| `draft12`, tagged BT.709 | 279 / 279 in all 6 | 0.00 (0.05) | 2.40 in 3 runs, 3.03 to 3.66 in 3 | 4.00 | 4.00 in 3 runs, 175.8 in 3 | 0 in 3 runs, 1 or 2 in 3 |
+| `textured_cuts12`, untagged | 231 / 231 in all 6 | 0.30 (0.87) | 11.71 to 11.75 | 17.9 | 20.6 to 24.3 | 0 |
+| `textured_cuts12`, tagged BT.709 | 231 / 231 in all 6 | 0.30 (0.87) | 2.31 to 2.75 | 6.0 to 6.1 | 8.5 to 12.5 in 4 runs, 85.8 in 2 | 0 in 4 runs, 1 in 2 |
+| `textured_cuts12` tagged, resized to 1080x1920 (portrait fill and crop; 5.3x up from 640x360), 3 runs, load 5.7 | 231 / 231 | not measured | 1.84 to 1.86 | 2.7 | 77.6 in all 3 | 2 in all 3 |
+
+Audio stream lengths: 9.30 s against 9.28 s (`draft12`), 9.625 s against 9.621 s (`textured_cuts12`). Audio sync beyond the length was not measured (the fixtures' audio is a steady tone).
+
+What this shows, plainly:
+
+- **The two renders do not agree within encoding noise**, even for a tagged source: 2.3 to 2.7 mean luma against a floor of 0.3. The difference sits in the zoomed stretch and in colour (a flat red differs by 4 levels through Smelter's RGB round trip, white by 0), not in the cuts or the seek.
+- **An untagged source differs a lot in colour** (9 and 11.7): Smelter reads it as BT.709 and writes BT.709; ffmpeg keeps the source's values. The backend prints a note for an untagged file.
+- **A frame count is exact** after the trim (all 24 runs above, 12 of 12 in the card test below, 3 of 3 resized), but only because the trim hides what Smelter wrote.
+- **Cuts, zoom steps and the card land on the wrong frame in some runs**: the "over 40" column and the 175.8, 85.8 and 77.6 maxima are one or two frames where the other render shows the card or the next shot. The 1080x1920 runs missed the same two frames in all three runs (not random there; the cause was not found).
+- The seek is exact: Smelter's frame 0 of a clip that starts at source frame 37 (not a keyframe, `textured_cuts12` has B-frames) is frame 37 by the burned-in counter.
+
+### Scene-change and frame-count jitter (one project, `draft12` AAC cut in place, punch-in, 1 s card at frame 259)
+
+| Measurement | Result |
+|---|---|
+| Before the trim: frame count of 29 runs (289 wanted) | 289 in 19, 288 in 4, 287 in 5, 286 in 1 |
+| Before the trim: card start in those 29 runs | on frame 259 in 18, on 258 in 8, on 257 in 3 |
+| After the trim and the clock input: 12 runs | frame count 289 in all 12; card on 259 in 8, on 258 in 3, on 257 in 1 |
+| Real-time pacing instead of offline mode (a wrapper that turns offline mode off), 8 runs | frame count 289 in all 8, card on 258 in 2; each render took 10 s |
+| One long-lived server, ten renders of a 72-frame, 24 fps timeline (scene swaps, black gap, image) | 72 frames and exact swaps in all ten; load was not recorded, and fresh servers later were not exact (see the first row) |
+| Scheduled update lead found by experiment (24 and 30 fps) | an update at the frame's own time lands one frame late (the queue runs an event before a frame only if it is earlier than the frame's timestamp); half a frame early lands on the frame, or one or two frames early when the renderer lags behind the queue |
+
+The `schedule_time_ms` lead cannot fix this, because the lag varies. It is in Smelter's offline mode and in real-time pacing alike. Mixer updates and input unregisters are the same events, so the sound's cuts probably move the same way; not measured.
+
+### Many pieces (a stress run, not a benchmark)
+
+60 s, 1080x1920, a 400 ms pause every 1.5 s, tagged BT.709, cut by `cut-silence` into 41 pieces (45.2 s, 1357 frames), load 23: ffmpeg 10.2 s wall, 544 MB maximum resident; Smelter 62.6 s wall (94 s user, 25 s system), 1.8 GB maximum resident (as `/usr/bin/time -l` reports them). A 9.6 s, 640x360 project with a cut, a zoom and a card took 1.9 to 3.6 s through Smelter against 0.2 to 1.3 s through ffmpeg; a Smelter start is about 1.5 s of that.
+
+### Behaviour with real Smelter, checked by hand
+
+PCM audio registers with `audio_duration_ms: null` and no message (the backend refuses a project that plays that sound); HEVC is a 500 `No suitable track in the mp4 file`; a scheduled update without `audio` on an output that has it is only logged (`ERROR`, a JSON log line captured and used in a test); an existing output file is renamed rather than overwritten; the server listens on `*:port` (an `lsof` check), and exits when its parent exits. `x264` options passed through `ffmpeg_options` reach the encoder and `+faststart` works.
+
+### Tests
+
+| Check | Result |
+|---|---|
+| `crates/timeline` `smelter.rs` | 27 unit tests: one clip, a cut, update lead, request order, output body, input body, gap, card, the clock input and its margin, punch-in sampled on every ramp frame and across a cut, size, NTSC and 24/60 fps, no audio, shared and separate inputs, merged pieces, notes (fade count and longest dip, jitter), the refusals the ffmpeg plan has (same messages, including the pixel cap and no frames), zero-length items, a sound change under an unchanged picture, a zero ramp, three decimals, missing files, determinism, and an agreement test that reads the trims out of the ffmpeg filter graph text and the seeks, offsets and unregister times out of the Smelter requests for six projects made by the real edit operations (30, 24, 29.97 and 60 fps) |
+| `smelter_client.rs`, `smelter_backend.rs`, `render_backend.rs` (in the `reelctl` binary) | 33 tests against a fake server on 127.0.0.1 and shell-script children; the smelter-related tests were run six times in a row and the backend ones 6 more with no failure after the last fix (see the flake below) |
+| `crates/reelctl/tests/smelter_backend_cli.rs` | 5 tests: the default backend never reads `SMELTER_BIN`; `--backend ffmpeg` writes the same bytes as no flag; a missing Smelter exits 1 with the message; a file that is not Smelter exits 1 with its output; an unknown backend and `--help` |
+| Mutation pass (scratch copies, scripted, source restored and checked) | 71 mutants (45 in the translation, 12 in the client, 14 in the backend). First pass 59 killed, 12 survived, 0 compile errors. Eight survivors got tests (zero ramp, rounding to three digits, missing files, a sound change under an unchanged picture, a zero-length item at the end, the longest dip, the 2xx boundary, the child being killed rather than waited for) and are killed. **Four survivors remain, all equivalent or unreachable:** `clamp(0, 1)` to `clamp(0, 2)` on the up ramp (the `min` with the down ramp, at most 1, hides it); the media-must-match test in merging footage (a project has one media file); and two conditions in `Seg::holds` (offset and end bound; an item always lies inside the stretch it was merged into) |
+
+A flake found and fixed: a test that checked the killed child through its pid file failed in about one of four runs under load, because the child had not yet written it; it now looks for the child by a sleep length no other test uses.
+
+Not measured or not done: any run on an idle machine; the Smelter backend on HEVC or a 10-bit source (refused); audio sync; Smelter's Linux build; a Smelter newer than 0.6.0; option (b) (a Cargo dependency) was ruled out by reasoning in ADR-023 and no build was attempted, so there is no build-time or binary-size figure for it; the overlay track (it does not exist on this branch).
 
 ## Timeline editor, 2026-10-28
 
@@ -312,6 +374,7 @@ What this means:
 - A fixed −40 dBFS threshold misses pauses when there is room noise, so `diff` would report no dead air in a recording like this. Addressed on 2026-10-25 by a per-recording threshold.
 
 ## What works
+- `reelctl render --backend smelter` renders a project with a separately installed Smelter (v0.6.0) over its HTTP API; ffmpeg stays the default. The frame count is exact, scene changes are not (see [Smelter backend](#smelter-backend-2026-10-29)).
 
 - `reelctl decompile` writes `edit_dna.json` with cuts, silence gaps (with a threshold set from each recording's noise floor), integrated loudness, per-shot RGB histograms, and the 8–10 s payoff cue, plus one `timeline_view` PNG per cut.
 - `reelctl diff` flags dead air over 180 ms, more than 2.5 s without a cut, and a missing payoff cue when the outlier has one.
@@ -329,6 +392,8 @@ Already listed in [AGENTS.md](../AGENTS.md) as P0 gaps:
 | `.cube` LUT | `cube_lut` reported as `"status": "unimplemented"` in `edit_dna.json` | A LUT needs two videos: `reelctl look` (separate branch) |
 
 Not yet listed in AGENTS.md:
+
+- **Smelter backend limits** (2026-10-29): scene changes can land one or two frames early (about a third of runs under load); the audio dip at a join is not applied and audio sync is unmeasured; untagged sources differ in colour; the output differs from ffmpeg's by 2.3 to 2.7 mean luma even for a tagged source; many pieces are several times slower than ffmpeg; the API port is open on every interface during a render; media must be H.264 and AAC. See [ADR-023](decisions/ADR-023-drive-smelter-as-a-separate-process-over-its-http-api.md).
 
 - **`diff` compares with one to three outliers** (since the comparative-diff merge, 2026-10-26), in 5 s windows and per-reel metrics. Dead air and static windows are still properties of the draft alone, and the comparison is only as good as the cut detector: it counts a caption box as a cut and does not name events (`visual-motion`).
 - **Static windows count only cuts.** planer.md defines a static window as more than 2.5 s without B-roll, zoom, or a graphic callout. Nothing detects zooms or graphics yet, so a punch-in without a cut is still flagged.
@@ -363,3 +428,4 @@ Then, to finish P0 against its own success metric before starting P1. The [P0 ca
 3. Detect silence relative to each recording's noise floor instead of at a fixed −40 dBFS. Done ([spec](specs/relative-silence.md)), merged 2026-10-25.
 4. Make `diff` comparative: accept one to three outliers and compare cut rhythm second by second. Done, merged 2026-10-26 ([spec](specs/comparative-diff.md)); thresholds untested on a fast-cut outlier.
 5. Link TransNetV2. Done 2026-10-28 (see the TransNetV2 section).
+6. Smelter as an optional render backend. Done 2026-10-29 as an opt-in second backend (see the Smelter backend section). Next for it: measure on an idle machine, find why the resized run misses the same two frames each time, and decide whether the audio dip is worth stepped volume updates. The overlay track, manimgx and RobustVideoMatting are separate slices.

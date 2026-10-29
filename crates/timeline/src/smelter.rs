@@ -103,7 +103,7 @@ pub struct SmelterRequest {
 /// Printed when the project changes what the output shows: Smelter applies a scheduled
 /// scene update to frames it has already queued, so a change lands on its frame in
 /// most runs and one or two frames early in others (spec evidence 3 and 5).
-pub const JITTER_NOTE: &str = "render: Smelter applies a scheduled scene change out of step with the frames it has queued, so cuts, zoom steps and the card can land one or two frames early (measured in about a third of runs); use --backend ffmpeg when frame accuracy matters";
+pub const JITTER_NOTE: &str = "render: Smelter applies a scheduled scene change out of step with the frames it has queued, so cuts, zoom steps and the card can land one or two frames early (measured in about a third of runs), and the sound's cuts use the same events (audio sync was not measured); use --backend ffmpeg when frame accuracy matters";
 
 /// A stretch of one media file on the timeline: `frames` frames of `media` from
 /// source frame `source`, playing from timeline frame `start`.
@@ -658,7 +658,7 @@ mod tests {
     use crate::bridge::{attach_bridge, BridgeRequest};
     use crate::cut::{cut_silence, CutOptions};
     use crate::init::{init, InitSpec};
-    use crate::otio::{Gap, Item, TimeRange, AUDIO_KIND, VIDEO_KIND};
+    use crate::otio::{update_reelctl, Gap, Item, TimeRange, AUDIO_KIND, VIDEO_KIND};
     use crate::punch::{punch_in, PunchRequest};
     use crate::render::build_render_plan;
     use crate::testutil::{dna, project};
@@ -1232,7 +1232,126 @@ mod tests {
                 .children
                 .insert(1, Item::Gap(Gap::new(TimeRange::new(0.0, 0.0, 30.0))));
         }
+        // Nor is one at the very end, which would be a scene change after the last frame.
+        for kind in [VIDEO_KIND, AUDIO_KIND] {
+            timeline
+                .track_mut(kind)
+                .expect("track")
+                .children
+                .push(Item::Gap(Gap::new(TimeRange::new(0.0, 0.0, 30.0))));
+        }
         assert_eq!(plan(&timeline), plan(&cut_only()));
+    }
+
+    #[test]
+    fn the_sound_can_change_where_the_picture_does_not() {
+        // Two gaps in a row are one black picture; the sound under them is footage, then silence.
+        let mut timeline = project(30.0, 300);
+        let footage = timeline.track(AUDIO_KIND).expect("audio").children[0].clone();
+        {
+            let mut first = footage;
+            *first.source_range_mut() = Some(TimeRange::new(0.0, 15.0, 30.0));
+            let audio = timeline.track_mut(AUDIO_KIND).expect("audio");
+            audio.children.insert(0, first);
+            audio
+                .children
+                .insert(1, Item::Gap(Gap::new(TimeRange::new(0.0, 15.0, 30.0))));
+            let video = timeline.track_mut(VIDEO_KIND).expect("video");
+            for _ in 0..2 {
+                video
+                    .children
+                    .insert(0, Item::Gap(Gap::new(TimeRange::new(0.0, 15.0, 30.0))));
+            }
+        }
+        let plan = plan(&timeline);
+        let frames: Vec<i64> = plan.steps.iter().map(|step| step.frame).collect();
+        assert_eq!(frames, vec![0, 15, 30]);
+        assert_eq!(plan.steps[0].video, plan.steps[1].video);
+        assert_eq!(plan.steps[0].audio.len(), 1);
+        assert!(plan.steps[1].audio.is_empty());
+    }
+
+    #[test]
+    fn a_zoom_with_a_ramp_of_no_frames_is_a_step_not_a_division_by_zero() {
+        let zoom = Zoom {
+            scale: 1.2,
+            ramp_frames: 0,
+            start: 0.0,
+            end: 10.0,
+        };
+        let values: Vec<f64> = (0..10).map(|n| zoom.scale_at(n)).collect();
+        assert!(values.iter().all(|z| z.is_finite()), "{values:?}");
+        // A ramp of no frames is read as one: the first and last frames are at 1.0.
+        assert_eq!(
+            (values[0], values[1], values[8], values[9]),
+            (1.0, 1.2, 1.2, 1.0)
+        );
+    }
+
+    #[test]
+    fn sizes_keep_three_decimals() {
+        // 1.2345: the first ramp step is 1 + 0.2345 / 6 = 1.0390833..., and 640 times it is
+        // 665.01333..., 360 times it is 374.07.
+        let mut timeline = project(30.0, 300);
+        punch_in(
+            &mut timeline,
+            &PunchRequest {
+                start_ms: 1_000,
+                end_ms: 3_000,
+                scale: 1.2345,
+            },
+        )
+        .expect("punch");
+        let plan = plan(&timeline);
+        let step = step_at(&plan, 31);
+        assert_eq!(step.frame, 31);
+        assert_eq!(step.video["children"][0]["width"], json!(665.013));
+        assert_eq!(step.video["children"][0]["height"], json!(374.07));
+    }
+
+    #[test]
+    fn requests_need_every_file_the_plan_refers_to() {
+        let plan = plan(&edited());
+        let missing_media = plan.requests(&SmelterFiles {
+            media: &[],
+            cards: &["/tmp/card0.png".to_string()],
+            out: "/tmp/out.mp4",
+        });
+        assert!(missing_media.is_err());
+        let missing_card = plan.requests(&SmelterFiles {
+            media: &[MEDIA.to_string()],
+            cards: &[],
+            out: "/tmp/out.mp4",
+        });
+        assert!(missing_card.is_err());
+    }
+
+    #[test]
+    fn the_note_names_the_longest_dip_of_the_joins_it_counts() {
+        // Footage, then the card: the first join has a 20 ms dip on one side and 10 on the other,
+        // the join to the card 10 ms; the longest is 20 ms, and it is not the last one.
+        let mut timeline = edited();
+        let audio = timeline.track_mut(AUDIO_KIND).expect("audio");
+        let last = audio.children.len() - 1;
+        for (index, item) in audio.children.iter_mut().enumerate() {
+            let ms = if index == 0 {
+                20
+            } else if index == last {
+                0
+            } else {
+                10
+            };
+            update_reelctl(item.metadata_mut(), |map| {
+                map.insert("fade_ms".to_string(), json!(ms));
+            });
+        }
+        let notes = self::plan(&timeline).notes;
+        assert!(notes[0].contains("the 20 ms audio dip"), "{}", notes[0]);
+        assert!(
+            notes[0].contains("is not applied at 2 joins;"),
+            "{}",
+            notes[0]
+        );
     }
 
     #[test]

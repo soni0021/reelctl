@@ -54,6 +54,22 @@ All of them read one project and write one, atomically (a temporary file in the 
 
 **`qa inspect-boundaries`** writes one `timeline_view` PNG (the `crates/filmstrip` layout) per join between neighbouring video items into `--out-dir`: two frames before the join and two after, decoded in process with `decompile`'s frame sampler; the audio waveform for 400 ms on each side, decoded with `ffmpeg` (16 kHz mono); and, when the DNA is readable, its word ticks placed on the edited timeline. A side that is the card is a dark frame and silence. The waveform is the source audio as it is in the media, before the render's fade.
 
+## The Smelter backend
+
+`render --backend smelter` renders the same project with [Smelter](https://github.com/software-mansion/smelter) instead of one ffmpeg filter graph. The spec is [specs/smelter-backend.md](specs/smelter-backend.md) and the decision [ADR-023](decisions/ADR-023-drive-smelter-as-a-separate-process-over-its-http-api.md). The translation is `crates/timeline/src/smelter.rs` (pure: a project in, an ordered list of HTTP requests out); the process, the HTTP client and the checks are `crates/reelctl/src/smelter_backend.rs` and `smelter_client.rs`.
+
+| Project | Smelter request |
+|---|---|
+| A stretch of footage (video clips that play on from each other are one) | an `mp4` input with `seek_ms` (source), `offset_ms` (timeline), unregistered a quarter frame before its end. The audio shares the input when it plays the same stretch, else has its own |
+| A cut | a scheduled output update half a frame before the new frame, swapping the scene and the mixer's inputs |
+| `--size`, fill and crop | a `rescaler` in `fill` mode over the input |
+| Punch-in | one scheduled update per frame of each ramp: a view holding an oversized, centred rescaler, sized by the same formula as the ffmpeg `zoompan` |
+| Gap | a black view, no audio |
+| Bridge card | the PNG `reelctl` draws, registered as an image |
+| End | a looped "clock" input unregistered four frames after the end, then the file is trimmed to the exact frame count |
+
+It differs from the ffmpeg render in what is listed in [cli.md](cli.md) (scene changes within one or two frames, no audio dip, colour of untagged sources) and has no overlay track (the project format has none yet). It needs a Smelter the user installs and starts nothing else; every request is on `127.0.0.1`.
+
 ## Checking a project with the reference library
 
 `crates/timeline/tests/otio_check.py` loads a project with the python `opentimelineio` package and prints the tracks and every clip's range; it exits 1 if the library cannot read the file, the tracks differ, or the timeline duration is not the sum of the clips. It is run by hand, because the package is not a dependency of the repository:
@@ -76,3 +92,4 @@ reelctl timeline init --input take.mp4 --dna take.edit_dna.json --out edit.otio
 - Filler removal needs whisper words in the DNA. Without a model the DNA has voiced bursts, and fillers are skipped.
 - The card font is capitals and a few symbols; no emoji, no non-Latin text, no QR code.
 - The media must start at time zero (`trim` is by frame number from the start).
+- The Smelter backend reads H.264 and AAC media only, is not frame-exact at scene changes and does not apply the audio dip (see above); ffmpeg remains the default.
