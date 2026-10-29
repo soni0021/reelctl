@@ -429,6 +429,18 @@ mod tests {
     }
 
     #[test]
+    fn a_cut_on_the_first_frame_and_a_window_as_wide_as_the_picture() {
+        // A cut at the span's first frame is no extra shot.
+        let centroids = vec![Some(0.25); 60];
+        let with_cut = plan_path(&centroids, 100, &[100], 30.0, W, CROP).unwrap();
+        let without = plan_path(&centroids, 100, &[], 30.0, W, CROP).unwrap();
+        assert_eq!(with_cut, without);
+        // A window that does not fit inside the picture to move is an error.
+        assert!(plan_path(&centroids, 0, &[], 30.0, W, W).is_err());
+        assert!(plan_path(&centroids, 0, &[], 30.0, W, 0).is_err());
+    }
+
+    #[test]
     fn the_window_is_full_height_and_even() {
         let nine_sixteen = Aspect::parse("9:16").unwrap();
         assert_eq!(crop_size(1280, 720, nine_sixteen), Some((404, 720)));

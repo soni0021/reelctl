@@ -61,6 +61,7 @@ Add `--whisper-model <model.bin>` to `decompile` for real words instead of voice
 | `cargo run -p dataset --example dataset_schema` | Regenerate `crates/dataset/schema/record.schema.json` and `manifest.schema.json` |
 | `reelctl dataset build --dna <dir> [--understanding <runs>] --out <dir>` | Write `train.jsonl`, `val.jsonl` and `manifest.json` for a later fine-tune |
 | `reelctl eval --truth <understanding.json or dataset> --answers <file>` | Score a model's answers; offline |
+| `reelctl make-reels --input long.mp4 --outlier o.edit_dna.json --target-url URL --out-dir out/` | One long video in, finished vertical reels out: decompile, understand (asks before the paid call), then per clip cut silence, pace like the outliers, crop to 9:16 on the presenter, card, captions, render and check. See [docs/cli.md](docs/cli.md#reelctl-make-reels) |
 | `REELCTL_PROFILE=1 target/release/reelctl decompile ...` | Also print per-stage timings to stderr |
 
 `cargo test` needs `bash` and `ffmpeg` on `PATH`, because the end-to-end test generates its clips when it runs. Tests use no network and no real reels.

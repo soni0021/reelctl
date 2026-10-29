@@ -25,8 +25,8 @@ Plan: [plan.md](plan.md). Spec: [docs/specs/make-reels.md](../docs/specs/make-re
 - [x] Mapping, grouping, style (presets, file, flags), drawing with `ab_glyph`, font lookup; other edits refuse; `overlay remove --captions`
 
 ## Task 6: make-reels
-- [ ] Child steps with a minimal environment, cost gate and prompt, `make_reels.json`, exit codes
-- [ ] `lecture90` fixture, DNA sidecar, `--replay` reply, end-to-end test
+- [x] Child steps with a minimal environment, cost gate and prompt, `make_reels.json`, exit codes
+- [x] `lecture70` with words written by the test, `--understand-replay` reply, end-to-end test
 
 ## Mac (user)
 - [ ] Real lecture run; reframe ms per frame and the presenter-in-frame check recorded in status.md

@@ -21,6 +21,7 @@ mod card;
 mod compositor_cmd;
 mod dataset_cmd;
 mod look_cmd;
+mod make_reels_cmd;
 mod overlay_cmd;
 mod render_backend;
 mod smelter_backend;
@@ -58,6 +59,7 @@ fn run() -> Result<()> {
         Command::Funnel(command) => timeline_cmd::funnel(command),
         Command::Overlay(command) => overlay_cmd::overlay(command),
         Command::Render(args) => timeline_cmd::render(args),
+        Command::MakeReels(args) => make_reels_cmd::make_reels(args),
         Command::Qa(command) => timeline_cmd::qa(command),
         Command::Compositor(command) => compositor_cmd::compositor(command),
         Command::Dataset(command) => dataset_cmd::run_dataset(command),
@@ -99,6 +101,9 @@ enum Command {
     Overlay(overlay_cmd::OverlayCommand),
     /// Render a project to an mp4 with ffmpeg.
     Render(timeline_cmd::RenderArgs),
+    /// One long video in, finished vertical reels out: decompile, understand (paid,
+    /// after a yes), then for each clip cut, pace, reframe, card, caption and render.
+    MakeReels(make_reels_cmd::MakeReelsArgs),
     /// Check a project: `inspect-boundaries`.
     Qa(timeline_cmd::QaCommand),
     /// Cut a presenter out of a video: `isolate-presenter`.

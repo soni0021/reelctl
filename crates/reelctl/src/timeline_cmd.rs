@@ -826,6 +826,7 @@ fn reframe_cmd(args: ReframeArgs) -> Result<()> {
         );
         return Ok(());
     };
+    let mut note = String::new();
     let (keyframes, measured, ms_per_frame) = match follow {
         Follow::Centre => (centre_keyframes(first, info.width, crop_width), 0, 0.0),
         Follow::Presenter => {
@@ -844,7 +845,10 @@ fn reframe_cmd(args: ReframeArgs) -> Result<()> {
                         .map(|cut| timeline::round_frame(cut.time_ms, info.fps))
                         .collect()
                 }
-                None => Vec::new(),
+                None => {
+                    note = "no edit DNA was given or recorded, so the window pans across cuts instead of jumping at them".to_string();
+                    Vec::new()
+                }
             };
             // The media and span are checked before the weights are opened, and
             // the weights before the first frame is decoded.
@@ -882,10 +886,13 @@ fn reframe_cmd(args: ReframeArgs) -> Result<()> {
             crop_width,
             crop_height,
             keyframes,
-            note: String::new(),
+            note: note.clone(),
         },
     );
     save_project(&project, &args.out)?;
+    if !note.is_empty() {
+        eprintln!("reframe: {note}");
+    }
     println!(
         "reframe: out={} aspect={} follow={} keyframes={count} frames_measured={measured} ms_per_frame={ms_per_frame:.1} unchanged=false",
         args.out.display(),

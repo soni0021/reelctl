@@ -24,7 +24,7 @@ Each task is one commit, with its docs in the same commit, `cargo test` before t
    - Smelter refuses a reframed project.
    - `--follow centre`.
 5. **`overlay captions`.**
-   - Mapping words through the edits, grouping, `drawtext` escaping and the font lookup.
+   - Mapping words through the edits, grouping, the style, drawing with `ab_glyph` ([ADR-026](../docs/decisions/ADR-026-draw-captions-in-reelctl-with-ab-glyph.md)) and the font lookup.
    - The other edits refuse a captioned project.
    - `overlay remove --captions`.
 6. **`reelctl make-reels`.**

@@ -337,6 +337,10 @@ pub fn place_words(
     let mut placed = Vec::new();
     let mut dropped = 0;
     for word in words {
+        if word.text.trim().is_empty() {
+            dropped += 1;
+            continue;
+        }
         let (from, to) = (
             round_frame(word.start_ms, rate),
             round_frame(word.end_ms, rate).max(round_frame(word.start_ms, rate) + 1),
@@ -358,7 +362,6 @@ pub fn place_words(
             None => dropped += 1,
         }
     }
-    placed.retain(|word| !word.text.is_empty());
     placed.sort_by_key(|word| (word.start, word.end));
     Ok((placed, dropped))
 }

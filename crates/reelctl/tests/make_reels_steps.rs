@@ -683,3 +683,72 @@ fn ffmpeg_moves_the_window_along_the_keyframes() {
         );
     }
 }
+
+#[test]
+fn each_piece_after_a_cut_is_cropped_on_its_own_source_frames() {
+    let root = scratch("two-piece-crop");
+    let media = root.join("gradient.mp4");
+    gradient(&media);
+    let dna = root.join("gradient.edit_dna.json");
+    ok(&[
+        "decompile",
+        "--input",
+        &s(&media),
+        "--out",
+        &s(&dna),
+        "--filmstrip-dir",
+        &s(&root.join("views")),
+    ]);
+    // Cut out 1..2 s (source frames 30..60): the timeline is source 0..30, then 60..120.
+    let mut value = read_json(&dna);
+    value["silence_gaps"] = json!([{"start_ms": 1000, "end_ms": 2000, "duration_ms": 1000}]);
+    fs::write(&dna, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+    let project = root.join("cut.otio");
+    ok(&[
+        "timeline",
+        "init",
+        "--input",
+        &s(&media),
+        "--dna",
+        &s(&dna),
+        "--out",
+        &s(&project),
+    ]);
+    ok(&[
+        "timeline",
+        "cut-silence",
+        "--project",
+        &s(&project),
+        "--dna",
+        &s(&dna),
+        "--out",
+        &s(&project),
+    ]);
+    ok(&[
+        "transform",
+        "reframe",
+        "--project",
+        &s(&project),
+        "--follow",
+        "centre",
+        "--out",
+        &s(&project),
+    ]);
+    let mut json = read_json(&project);
+    json["metadata"]["reelctl"]["reframe"]["keyframes"] =
+        json!([{"source_frame": 0, "x": 0.0}, {"source_frame": 90, "x": 0.6}]);
+    fs::write(&project, serde_json::to_vec_pretty(&json).unwrap()).unwrap();
+    let video = root.join("cut.mp4");
+    ok(&["render", "--project", &s(&project), "--out", &s(&video)]);
+    // Output frame 15 is source 15, frame 45 is source 75, frame 60 is source 90.
+    for (frame, source) in [(15u32, 15.0f64), (45, 75.0), (60, 90.0)] {
+        let x = (source / 90.0).min(1.0) * 0.6;
+        let luma: f64 = (x * 640.0 + 2.0) * 255.0 / 640.0;
+        let want = ((luma - 16.0) * 255.0 / 219.0).clamp(0.0, 255.0);
+        let got = left_luma(&video, frame);
+        assert!(
+            (got - want).abs() <= 6.0,
+            "frame {frame}: luma {got}, expected about {want}"
+        );
+    }
+}

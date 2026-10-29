@@ -82,12 +82,12 @@ reelctl transform reframe --project <clip.otio> --aspect 9:16 --follow presenter
     - **ease**: ease-in and ease-out over 250 ms
     - **cuts**: at each cut in the DNA the position jumps to the new shot's settled centre instead of panning
     - **edges**: the window never leaves the frame
-  - **Stored.** The result is up to one keyframe every 500 ms plus one at each cut. It is stored under `metadata.reelctl.reframe` as `{aspect, follow, keyframes: [{source_ms, x}], note}`, where `x` is the window's left edge as a fraction of the source width.
+  - **Stored.** The result is up to one keyframe every 500 ms plus one at each cut. It is stored under `metadata.reelctl.reframe` as `{aspect, follow, crop_width, crop_height, keyframes: [{source_frame, x}], note}`, where `x` is the window's left edge as a fraction of the source width. (Built with source frames rather than milliseconds: the render trims by frame, so a frame key needs no rounding.) Without an edit DNA (none recorded and no `--dna`) there are no cuts to jump at, the window pans across them, and `note` says so.
 - **`--follow centre`** is one keyframe at the centre.
 - **No model.** Without `--weights` (or `REELCTL_RVM_WEIGHTS`) or a valid absolute `ORT_DYLIB_PATH`, `--follow presenter` exits 2 and names what is missing, with the same messages and order as `compositor isolate-presenter`. It never silently falls back. The fallback lives in `make-reels`, which records why in its note.
 - **ONNX.** The process loads only the RVM model and calls `compositor::release_runtime()` before it exits, as `main` already does.
 - **SDR only.** An HDR source is refused (exit 2), as the compositor already does.
-- **Render.** `render` turns the keyframes into an ffmpeg `crop` filter whose x position is a piecewise-linear expression in `t`, placed before punch-in scaling and the output-size fit. So `--size 1080x1920` gives a full-height, presenter-centred vertical frame. The Smelter backend refuses a reframed project with exit 2 and a message, for now.
+- **Render.** `render` turns the keyframes into an ffmpeg `crop` filter whose x position is a piecewise-linear expression in the piece's frame counter `n` (a flat sum of `clip` terms), placed before punch-in scaling and the output-size fit. So `--size 1080x1920` gives a full-height, presenter-centred vertical frame. The Smelter backend refuses a reframed project with exit 2 and a message, for now.
 - **Order.** Punch-ins zoom about the crop window's centre. `reframe` can run before or after `auto-punch-in`.
 - stdout: `reframe: out= aspect= follow= keyframes= frames_measured= ms_per_frame= unchanged=`
 
@@ -176,7 +176,7 @@ It runs each step as a child `reelctl` process from the same executable. Each ON
    5. `attach-bridge --append`
    6. `captions` with the run's caption style
    7. `render --size <size>`, writing `reel-<N>.mp4`
-   8. `decompile` of the render, then `diff` of the render against the outliers, writing `reel-<N>.diff.json`
+   8. `diff` of the render against the outliers (it decompiles the render itself), writing `reel-<N>.diff.json`
 
    A failed step marks that reel failed with the step and its stderr tail, and goes on to the next reel.
 6. **Summary.** It writes `<out-dir>/make_reels.json` with:
@@ -215,8 +215,8 @@ Each step's own files are kept in `reel-<N>/` (`clip.otio` after each step as `N
   - `bridge --append`, and reading an old bridge record.
 - **Compositor:** the alpha-only entry point runs with the existing fake `MattingModel`. Tests check that it reads every frame, carries the state, uses the ratio, and writes no file.
 - **End to end** in `crates/reelctl/tests/make_reels_fixture.rs`:
-  - A new `generate.sh` clip, `lecture90`: 90 s, 1280×720, a bright moving box as the "presenter" on a flat background, a planted cut, planted silences, and a tone. Its whisper words come from a checked-in DNA sidecar, because the cloud has no whisper model; `--dna` skips the decompile step.
-  - `understand` runs with `--replay` and a checked-in reply, so no model is called.
+  - The existing `lecture70` fixture (two flat shots and a tone, 640x360). The test writes 20 sentences into its DNA as whisper words, because the cloud has no whisper model, and passes `--dna`, so the decompile step is skipped. `draft12`, decompiled, is the outlier.
+  - `understand` runs with a recorded reply (the hidden `--understand-replay`) and a model listing from a file (`--understand-catalog`), both written by the test, so no model or network is called.
   - `reframe` falls back to `centre`, since there is no RVM model in the cloud, and the note says so.
   - The test checks that two reels render, each 1080×1920, with the expected lengths. The card is at the end, captions are present (white text pixels in the caption band on a caption's frame), and `diff` of each render has no dead-air flag. It also checks `make_reels.json`'s fields, and that a second run writes identical `.otio` files.
   - The environment is stripped as AGENTS.md requires.
@@ -224,7 +224,7 @@ Each step's own files are kept in `reel-<N>/` (`clip.otio` after each step as `N
 
 ## Success Criteria
 
-1. `make-reels` on `lecture90` in the cloud gives N 1080×1920 reels with captions and the card at the end, and a complete `make_reels.json`.
+1. `make-reels` on `lecture70` in the cloud gives N vertical reels (the test renders 540×960 to keep the debug build quick; 1080×1920 is the default) with captions and the card at the end, and a complete `make_reels.json`.
 2. Each existing edit operation gives the same result on a clip that starts after 0 as on one that starts at 0, apart from the offset.
 3. The `reframe` plan keeps a synthetic moving box inside the middle 40% of the crop on every frame, never exceeds the speed limit, and jumps at cuts.
 4. `auto-punch-in` leaves the rendered reel with no static-window flag from `diff`.

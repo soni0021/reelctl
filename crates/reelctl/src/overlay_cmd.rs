@@ -250,10 +250,20 @@ fn captions(args: CaptionsArgs) -> Result<()> {
     else {
         return Err(usage("--project, --dna and --out are required"));
     };
-    let style = args.style.resolve()?;
-    // The font is found now, so a captioned project always renders.
+    let mut style = args.style.resolve()?;
+    // The font is found now, and a given one is kept as an absolute path, so the
+    // project renders from any directory.
     let font = crate::captions_draw::find_font(&style)?;
     crate::captions_draw::load_font(&font)?;
+    if style.font.is_some() {
+        let absolute = fs::canonicalize(&font).map_err(|error| {
+            usage(format!(
+                "cannot find the caption font {}: {error}",
+                font.display()
+            ))
+        })?;
+        style.font = Some(utf8(&absolute)?);
+    }
     let mut project = load_project(project_path)?;
     let dna = load_dna(dna_path)?;
     check_project_dna(&project, dna.duration_ms)
