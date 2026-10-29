@@ -1,6 +1,6 @@
 # Plan: make-reels
 
-Spec: [docs/specs/make-reels.md](../docs/specs/make-reels.md) (draft, waiting for approval). ADR: [ADR-025](../docs/decisions/ADR-025-reframe-on-the-presenter-from-the-rvm-alpha-centroid.md). Branch: `claude/keen-clarke-1a8w5h`. Built in a cloud session (Linux). The checks that need the Mac are named at the end.
+Spec: [docs/specs/make-reels.md](../docs/specs/make-reels.md) (approved 2026-10-29). ADR: [ADR-025](../docs/decisions/ADR-025-reframe-on-the-presenter-from-the-rvm-alpha-centroid.md). Branch: `claude/keen-clarke-1a8w5h`. Built in a cloud session (Linux). The checks that need the Mac are named at the end.
 
 This is milestone M0 of the ReelStudio plan. The service (`reelctl serve`, a job queue, SQLite and checkpoints) and the SwiftUI app follow in their own specs.
 

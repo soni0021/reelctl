@@ -3,7 +3,7 @@
 Plan: [plan.md](plan.md). Spec: [docs/specs/make-reels.md](../docs/specs/make-reels.md). Tick each box in the commit that completes it. Stage explicit paths; never `git add -A` (`.env` holds a key).
 
 ## Task 0: Spec
-- [ ] User approves `docs/specs/make-reels.md` and ADR-025 (and the open questions)
+- [x] User approves `docs/specs/make-reels.md` and ADR-025 (2026-10-29; captions customizable, reels "custom + picked")
 
 ## Task 1: Edits on a trimmed clip
 - [ ] `timeline from-clip` (refusals, metadata, frame snapping)

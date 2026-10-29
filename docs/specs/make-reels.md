@@ -1,6 +1,6 @@
 # Spec: One long video in, finished reels out (`make-reels`)
 
-Status: **draft, waiting for the user's approval** (2026-10-29). Asked for on 2026-10-29: "if I give one input video, will it cut reels in a famous reel's pattern and give a final output?", with the answers "build it first" (before the studio service and the Mac app) and "follow the presenter" for the 9:16 crop. Branch: `claude/keen-clarke-1a8w5h`. Implements planer.md's P2 success metric (line 272: "a raw talking-head take or 30-min YouTube video + a competitor outlier … a finished 9:16 informational Reel … with a long-form upsell bridge"), apart from manimgx visuals, which stay a manual `overlay add-chart` step.
+Status: **approved 2026-10-29** by the user ("Approve, start coding"), with two answers that changed the draft: captions get "many options to customize" (see 5), and the reel count is "custom + picked" (see 6). Asked for on 2026-10-29: "if I give one input video, will it cut reels in a famous reel's pattern and give a final output?", with the answers "build it first" (before the studio service and the Mac app) and "follow the presenter" for the 9:16 crop. Branch: `claude/keen-clarke-1a8w5h`. Implements planer.md's P2 success metric (line 272: "a raw talking-head take or 30-min YouTube video + a competitor outlier … a finished 9:16 informational Reel … with a long-form upsell bridge"), apart from manimgx visuals, which stay a manual `overlay add-chart` step.
 
 ## Objective
 
@@ -99,15 +99,45 @@ reelctl transform reframe --project <clip.otio> --aspect 9:16 --follow presenter
 ### 5. `overlay captions`
 
 ```
-reelctl overlay captions --project <clip.otio> --dna <edit_dna.json> [--style bold|clean] [--font <path.ttf>] [--words-per-group 2|3] --out <clip.otio>
+reelctl overlay captions --project <clip.otio> --dna <edit_dna.json> [--style <preset>|<style.json>] [style flags] --out <clip.otio>
 ```
+
+**Style.** A caption style is a set of fields. It starts from a preset and is then overridden by an optional JSON file (`--style my.json`), then by individual flags, in that order. The resolved style is stored in the caption track, so a render always looks the same as the run that made it.
+
+| Field / flag | Values | Default (`bold` preset) |
+|---|---|---|
+| `--preset` | `bold`, `clean`, `boxed`, `karaoke`, `minimal` | `bold` |
+| `--font` | path to a .ttf or .otf file | system bold sans (below) |
+| `--font-size` | percent of output height, 2–12 | 5.5 |
+| `--color` | `#rrggbb` | `#ffffff` |
+| `--highlight-color` | `#rrggbb`, or `none` to turn the highlight off | `#ffd60a` |
+| `--outline-color`, `--outline-width` | `#rrggbb`; 0–12 px at 1080 wide | `#000000`, 6 |
+| `--shadow` | 0–12 px offset | 0 |
+| `--box-color`, `--box-opacity` | `#rrggbb`; 0–1 (0 is no box) | `#000000`, 0 |
+| `--position` | `top`, `middle`, `bottom` | `bottom` |
+| `--margin` | percent of output height from that edge, 0–40 | 22 (clear of the app's caption and button area) |
+| `--words-per-group` | 1–5 | 3 |
+| `--max-chars` | 8–40 per line; a longer group wraps to two lines | 18 |
+| `--case` | `as-is`, `upper`, `lower` | `upper` |
+| `--min-gap-ms` | a pause that always starts a new group, 100–2000 | 400 |
+
+The presets differ only in these fields:
+
+| Preset | What it changes |
+|---|---|
+| `clean` | white, no highlight, thin outline, as-is case |
+| `boxed` | white on a 60% black box, no outline |
+| `karaoke` | one word at a time, large, highlight on |
+| `minimal` | small, white, `--position bottom --margin 10` |
+
+An unknown field in the JSON file, or a value out of range, exits 2 with the field's name. `reelctl overlay captions --list-presets` prints each preset's resolved fields as JSON, so the Mac app can show them.
 
 - **Words** come from the DNA's whisper `words`. The DNA must have `asr_backend` `whisper_cpp`, otherwise exit 2, because `burst-N` placeholders are not captions.
 - **Mapping.** Each word is mapped from source time to timeline time through the project's edits:
   - a word inside a removed span is dropped
   - a word cut in two by an edit is kept on the side with most of its length
   - words after the bridge cut, or on the card, are dropped
-- **Groups.** Groups of 2 or 3 words are shown from the first word's start to the last word's end. A group never crosses a cut in the timeline or a pause of 400 ms or more. The current word is highlighted.
+- **Groups.** Groups of `--words-per-group` words are shown from the first word's start to the last word's end. A group never crosses a cut in the timeline or a pause of `--min-gap-ms` or more. Unless the highlight is `none`, the current word is drawn in the highlight colour.
 - **Stored.** The groups are a caption track (`kind: reelctl.captions`) with one item per group.
 - **Edits after captions.** `cut-silence`, `punch-in`, `auto-punch-in`, `attach-bridge` and `reframe` refuse a project with captions, as they refuse overlays (exit 2, "add captions last"). `overlay remove --captions` takes them out.
 - **Render.** `render` draws them with `drawtext`, one filter per group, with `enable='between(t,a,b)'`. They are placed in the lower third of the output frame, which is the reframed vertical frame. Text is escaped for the filter.
@@ -120,7 +150,8 @@ reelctl overlay captions --project <clip.otio> --dna <edit_dna.json> [--style bo
 ```
 reelctl make-reels --input <long.mp4> --outlier <edit_dna.json>... --target-url <url> --out-dir <dir>
   [--whisper-model <ggml.bin>] [--weights <rvm.onnx>] [--follow presenter|centre]
-  [--max-cost-usd 0.50] [--yes] [--reels 3] [--size 1080x1920] [--allow-flagged] [--dna <edit_dna.json>]
+  [--max-cost-usd 0.50] [--yes] [--reels N] [--clips 1,3,...] [--pick] [--size 1080x1920] [--allow-flagged] [--dna <edit_dna.json>]
+  [caption style flags, as for overlay captions]
 ```
 
 It runs each step as a child `reelctl` process from the same executable. Each ONNX model then gets its own process, and a step's failure is contained to that step. The environment passed to each child holds only what that step needs: `OPENROUTER_API_KEY` reaches `understand` only, and `REELCTL_RVM_WEIGHTS` and `ORT_DYLIB_PATH` reach `reframe` only.
@@ -129,13 +160,20 @@ It runs each step as a child `reelctl` process from the same executable. Each ON
 2. **Plan the cost.** `understand --dry-run` prints the plan line. If its `cost_upper_bound_usd` is over `--max-cost-usd`, `make-reels` exits 4 with the bound.
 3. **Ask.** Unless `--yes` is given, it asks on the terminal: `understand will send N frames and the transcript to <model> and cost at most $X. Continue? [y/N]`. Anything but `y` exits 4. With no terminal and no `--yes`, it exits 4. This keeps AGENTS.md's rule that every live call needs the user's yes.
 4. **Understand.** It runs `understand`, which writes `<out-dir>/understanding.json`.
-5. **Each clip.** For each of the first `--reels` clips (default 3; flagged clips are skipped unless `--allow-flagged`), working in `<out-dir>/reel-<N>/`, it runs:
+5. **Each clip.** Which clips become reels ("custom + picked"):
+   - By default, every clip the model picked that passes the clip rules, in the model's order.
+   - `--reels N` keeps the first N of those.
+   - `--clips 1,3` names the clips by their index in `understanding.json` instead. A flagged clip named here still needs `--allow-flagged`.
+   - `make-reels` prints the chosen list (index, hook text, tight length, flags) before rendering.
+   - `--pick` stops after `understand`. It writes the clip list to `make_reels.json` with `status: "picked"` and exits 0, so you can choose and then re-run with `--clips` and `--dna`. The understanding is reused and the model is not called again.
+
+   For each chosen clip, working in `<out-dir>/reel-<N>/`, it runs:
    1. `from-clip`
    2. `cut-silence`
    3. `auto-punch-in` against the outliers
    4. `reframe --follow presenter`, falling back to `centre` with the reason in the note when the model is missing
    5. `attach-bridge --append`
-   6. `captions`
+   6. `captions` with the run's caption style
    7. `render --size <size>`, writing `reel-<N>.mp4`
    8. `decompile` of the render, then `diff` of the render against the outliers, writing `reel-<N>.diff.json`
 
@@ -192,8 +230,8 @@ Each step's own files are kept in `reel-<N>/` (`clip.otio` after each step as `N
 5. No step runs `understand` live without a yes. Tests prove that exit 4 happens before any request.
 6. Manual: on one real lecture the presenter stays in frame and the user approves the look.
 
-## Open Questions (recommended answer first)
+## Resolved Questions
 
-1. Captions' look: a bold white word with a black outline and the current word in yellow (**recommended**), or plain white.
-2. Default number of reels: 3 (**recommended**), or every clip that passes the rules.
-3. Should `make-reels` also accept a `.otio` draft instead of a long video? Not now (**recommended**). It is a later slice.
+1. Captions' look: "many options to customize". Presets plus a style file plus flags, as in section 5.
+2. Number of reels: "custom + picked". By default every passing pick; `--reels`, `--clips` and `--pick` choose, as in section 6. `understand` is only re-called if `understanding.json` is missing.
+3. A `.otio` draft as input instead of a long video: not in this slice.

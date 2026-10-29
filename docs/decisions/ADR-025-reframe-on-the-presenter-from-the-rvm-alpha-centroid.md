@@ -1,7 +1,7 @@
 # ADR-025: Reframe to 9:16 on the presenter from the RobustVideoMatting alpha centroid
 
 ## Status
-Proposed (waiting for the user's approval of [make-reels](../specs/make-reels.md))
+Accepted (with [make-reels](../specs/make-reels.md), 2026-10-29)
 
 ## Date
 2026-10-29
