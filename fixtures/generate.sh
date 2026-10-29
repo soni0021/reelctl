@@ -127,7 +127,7 @@ resize12_hevc() {
   local out="$1" dir
   local sizes=(320x180 640x360)
   [ "${2:-}" = shrink ] && sizes=(640x360 320x180)
-  dir="$(mktemp -d -t reelctl-resize)"
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/reelctl-resize.XXXXXX")"
   for size in "${sizes[@]}"; do
     ffmpeg -y -hide_banner -loglevel error \
       -f lavfi -i "testsrc2=s=${size}:r=24:d=3" \
@@ -144,7 +144,7 @@ resize12_hevc() {
 # Annex B, at one frame size. Video only.
 depth12_hevc() {
   local out="$1" dir format
-  dir="$(mktemp -d -t reelctl-depth)"
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/reelctl-depth.XXXXXX")"
   for format in yuv420p yuv420p10le; do
     ffmpeg -y -hide_banner -loglevel error \
       -f lavfi -i "testsrc2=s=640x360:r=24:d=3" \
@@ -220,7 +220,7 @@ lecture70() {
 speech12() {
   local out="$1"
   local base speech
-  base="$(mktemp -t reelctl-speech)"
+  base="$(mktemp "${TMPDIR:-/tmp}/reelctl-speech.XXXXXX")"
   speech="${base}.aiff"
   say -v Samantha -o "$speech" "Cut the dead air. [[slnc 1000]] Show the proof before the viewer scrolls away."
   encode "$out" \
@@ -236,7 +236,7 @@ speech12() {
 tonespeech() {
   local out="$1"
   local base speech
-  base="$(mktemp -t reelctl-speech)"
+  base="$(mktemp "${TMPDIR:-/tmp}/reelctl-speech.XXXXXX")"
   speech="${base}.aiff"
   say -v Samantha -o "$speech" "Cut the dead air. Show the proof before the viewer scrolls away."
   encode "$out" \
@@ -353,7 +353,7 @@ motion_clip() (
   local w="${size%x*}" h="${size#*x}" frames=$(( seconds * motion_fps ))
   local zoom_t="1" zoom_n="1" boxes="" events="" ev kind a b row tone x y bw bh colour
   local dir sidecar="${out%.*}.events.json"
-  dir="$(mktemp -d -t reelctl-motion)"
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/reelctl-motion.XXXXXX")"
   texture_png "${dir}/texture.png" "$w" "$h"
 
   # event_json KIND START_FRAME END_FRAME SCALE CENTER_X CENTER_Y AREA CHANGE [Y1 Y2]

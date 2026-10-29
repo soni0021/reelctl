@@ -29,6 +29,8 @@ pub use media::{
 };
 pub use model::{MattingModel, ModelOutput};
 pub use ort_model::{release_runtime, RvmModel, LIBRARY_ENV};
-pub use pipeline::{isolate, Options, Stats};
+pub use pipeline::{
+    alpha_centroid, isolate, measure_centroids, Options, Stats, ALPHA_THRESHOLD, MIN_MASS,
+};
 pub use ratio::{auto_downsample_ratio, validate_ratio};
 pub use tensor::{FrameRgb, RecurrentState, Tensor4};

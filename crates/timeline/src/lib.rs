@@ -5,6 +5,7 @@
 
 #![warn(clippy::all)]
 
+mod auto_punch;
 mod bridge;
 mod cut;
 mod error;
@@ -20,9 +21,13 @@ mod tracks;
 #[cfg(test)]
 mod testutil;
 
+pub use auto_punch::{
+    auto_punch_in, auto_punch_in_like, outlier_scale, AutoPunchReport,
+    DEFAULT_SCALE as DEFAULT_PUNCH_SCALE, STATIC_WINDOW_MS,
+};
 pub use bridge::{
-    attach_bridge, bridge_of, BridgeReport, BridgeRequest, BridgeSpec, CARD_BACKGROUND,
-    CARD_FOREGROUND, CARD_KIND, MAX_CARD_MS, PAUSE_SEARCH_MS, SILENCE_KIND,
+    append_bridge, attach_bridge, bridge_of, BridgeReport, BridgeRequest, BridgeSpec,
+    CARD_BACKGROUND, CARD_FOREGROUND, CARD_KIND, MAX_CARD_MS, PAUSE_SEARCH_MS, SILENCE_KIND,
 };
 pub use cut::{check_dna_length, cut_silence, CutOptions, CutReport, RemovedSpan, CUTS_KEY};
 pub use error::{Result, TimelineError};

@@ -60,11 +60,12 @@ reelctl timeline from-clip --input <long.mp4> --dna <edit_dna.json> --understand
 reelctl transform auto-punch-in --project <clip.otio> --dna <edit_dna.json> --outlier <edit_dna.json>... --out <clip.otio>
 ```
 
-- **Where**: it finds each static window in the edited timeline. It uses `diff`'s rule from `crates/diff`: more than 2.5 s with no cut and no `visual_events` entry, with cuts and events mapped into timeline time through the project's edits. Each punch-in starts 1.0 s into its window, or at the next word start after that, and lasts until the window ends or 2.0 s, whichever is first. It always leaves at least 12 frames, `punch-in`'s minimum.
+- **Where**: it finds each static window in the edited timeline, using `diff`'s limit: more than 2.5 s with no cut and no visual event. The DNA's cuts and `visual_events` are placed on the timeline through the project's edits. Punch-ins already in the project, and the edges of a card, also end a window. A join made by `cut-silence` does not, because a jump cut in a talking head often scores too low for `diff`'s detector to call it a cut.
+- **Placement**: a punch-in starts 1.0 s into the window, or after the previous one, moved to a word that starts within 300 ms of that point. It lasts 1.5 s, or until the window ends, and repeats until no piece is longer than the limit. Every piece is then at most 1.5 s, so a detector that places the move's event a few frames late still finds no static window. A piece too short for `punch-in`'s 12 frames is left as it is.
 - **How much**: the scale is the median `scale` of the outliers' punch-in `visual_events`, clamped to 1.08–1.35. With none, it is 1.15.
-- **Easing**: the curve is the median of the outliers' `zoom_curves` y1/y2. With none, it is today's `punch-in` curve.
-- It is deterministic, and a second run on its own output finds no windows and writes the same bytes. Overlays are refused, as for `punch-in`.
-- stdout: `auto-punch-in: out= windows= punches= scale= curve=measured|default`
+- **Easing**: the zoom uses `punch-in`'s linear 6-frame ramp. The outliers' `zoom_curves` are not used yet: an eased ramp needs a change to the render, and that is a later slice.
+- It is deterministic. A second run on its own output finds no windows and writes the same bytes. Overlays are refused, as for `punch-in`.
+- stdout: `auto-punch-in: out= windows= punches= scale= scale_from=outliers|default`
 
 ### 3. `transform reframe` (follows the presenter)
 

@@ -6,17 +6,17 @@ Plan: [plan.md](plan.md). Spec: [docs/specs/make-reels.md](../docs/specs/make-re
 - [x] User approves `docs/specs/make-reels.md` and ADR-025 (2026-10-29; captions customizable, reels "custom + picked")
 
 ## Task 1: Edits on a trimmed clip
-- [ ] `timeline from-clip` (refusals, metadata, frame snapping)
-- [ ] Every edit and the render tested on a clip that starts after 0
+- [x] `timeline from-clip` (refusals, metadata, frame snapping)
+- [x] Every edit and the render tested on a clip that starts after 0
 
 ## Task 2: Bridge
-- [ ] `attach-bridge --append`; old records still read
+- [x] `attach-bridge --append`; old records still read
 
 ## Task 3: Auto punch-in
-- [ ] Windows through the edits, scale and curve from the outliers, idempotent
+- [x] Windows through the edits, scale from the outliers, idempotent (the curve is not used yet: see the spec)
 
 ## Task 4: Reframe
-- [ ] Compositor alpha-only entry (fake model test)
+- [x] Compositor alpha-only entry (fake model test)
 - [ ] Pure plan: centroid, dead zone, speed, ease, cuts, edges, thinning
 - [ ] Render crop expression checked against ffmpeg; Smelter refuses
 - [ ] `--follow centre`; fail-closed messages

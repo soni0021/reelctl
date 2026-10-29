@@ -21,10 +21,11 @@ use decompile::{decode_frames_at, DecoderSetting};
 use edit_dna::{BoundaryView, EditDna};
 use serde_json::Value;
 use timeline::{
-    attach_bridge, bridge_of, build_render_plan, check_dna_length as check_project_dna,
-    cut_silence, dna_ref, from_clip, init, joins, media_info, punch_in, set_dna_ref, single_media,
-    words_on_timeline, BridgeRequest, ClipPick, CutOptions, DnaRef, InitSpec, PunchRequest,
-    RenderPlan, RenderSize, Timeline, TimelineError, MAX_PIXELS, MAX_SIDE,
+    append_bridge, attach_bridge, auto_punch_in_like, bridge_of, build_render_plan,
+    check_dna_length as check_project_dna, cut_silence, dna_ref, from_clip, init, joins,
+    media_info, punch_in, set_dna_ref, single_media, words_on_timeline, BridgeRequest, ClipPick,
+    CutOptions, DnaRef, InitSpec, PunchRequest, RenderPlan, RenderSize, Timeline, TimelineError,
+    MAX_PIXELS, MAX_SIDE,
 };
 
 use crate::card::{draw_card, parse_color};
@@ -71,6 +72,9 @@ pub struct TransformCommand {
 enum TransformSub {
     /// Zoom into the centre of the picture over a span.
     PunchIn(PunchInArgs),
+    /// Add punch-ins wherever the picture would stay still longer than `diff` allows,
+    /// at the outliers' zoom scale.
+    AutoPunchIn(AutoPunchInArgs),
 }
 
 #[derive(Args)]
@@ -168,6 +172,20 @@ struct PunchInArgs {
 }
 
 #[derive(Args)]
+struct AutoPunchInArgs {
+    #[arg(long)]
+    project: PathBuf,
+    /// The edit_dna.json of the project's video (its cuts, visual events and words).
+    #[arg(long)]
+    dna: PathBuf,
+    /// An outlier's edit_dna.json, for the zoom scale; repeat for up to three.
+    #[arg(long)]
+    outlier: Vec<PathBuf>,
+    #[arg(long)]
+    out: PathBuf,
+}
+
+#[derive(Args)]
 struct AttachBridgeArgs {
     #[arg(long)]
     project: PathBuf,
@@ -177,6 +195,10 @@ struct AttachBridgeArgs {
     /// Cut at this fraction of the timeline (0 to 1, exclusive).
     #[arg(long, default_value_t = 0.72, allow_negative_numbers = true)]
     cutoff_pct: f64,
+    /// Add the card after the last frame instead of cutting (for a clip that
+    /// already ends on its cliffhanger). Cannot be used with --cutoff-pct.
+    #[arg(long, conflicts_with = "cutoff_pct")]
+    append: bool,
     /// Length of the card.
     #[arg(long, default_value_t = 2500)]
     card_ms: u64,
@@ -252,6 +274,7 @@ pub fn timeline(command: TimelineCommand) -> Result<()> {
 pub fn transform(command: TransformCommand) -> Result<()> {
     match command.command {
         TransformSub::PunchIn(args) => punch_in_cmd(args),
+        TransformSub::AutoPunchIn(args) => auto_punch_in_cmd(args),
     }
 }
 
@@ -708,6 +731,40 @@ fn punch_in_cmd(args: PunchInArgs) -> Result<()> {
     Ok(())
 }
 
+fn auto_punch_in_cmd(args: AutoPunchInArgs) -> Result<()> {
+    if args.outlier.len() > 3 {
+        return Err(usage(format!(
+            "--outlier was given {} times; at most 3",
+            args.outlier.len()
+        )));
+    }
+    let mut project = load_project(&args.project)?;
+    let dna = load_dna(&args.dna)?;
+    check_project_dna(&project, dna.duration_ms)
+        .map_err(|error| usage(format!("{}: {error}", args.dna.display())))?;
+    let outliers = args
+        .outlier
+        .iter()
+        .map(|path| load_dna(path))
+        .collect::<Result<Vec<_>>>()?;
+    let refs: Vec<&EditDna> = outliers.iter().collect();
+    let report = auto_punch_in_like(&mut project, &dna, &refs).map_err(invalid)?;
+    save_project(&project, &args.out)?;
+    println!(
+        "auto-punch-in: out={} windows={} punches={} scale={} scale_from={}",
+        args.out.display(),
+        report.windows.len(),
+        report.punches.len(),
+        report.scale,
+        if report.measured {
+            "outliers"
+        } else {
+            "default"
+        }
+    );
+    Ok(())
+}
+
 fn attach_bridge_cmd(args: AttachBridgeArgs) -> Result<()> {
     let mut project = load_project(&args.project)?;
     // The project's media must be a local file even though this command only reads
@@ -738,25 +795,30 @@ fn attach_bridge_cmd(args: AttachBridgeArgs) -> Result<()> {
             None => Vec::new(),
         }
     };
-    let report = attach_bridge(
-        &mut project,
-        &BridgeRequest {
-            target_url: args.target_url,
-            cutoff_pct: args.cutoff_pct,
-            card_ms: args.card_ms,
-        },
-        &pauses,
-    )
+    let report = if args.append {
+        append_bridge(&mut project, &args.target_url, args.card_ms)
+    } else {
+        attach_bridge(
+            &mut project,
+            &BridgeRequest {
+                target_url: args.target_url,
+                cutoff_pct: args.cutoff_pct,
+                card_ms: args.card_ms,
+            },
+            &pauses,
+        )
+    }
     .map_err(invalid)?;
     save_project(&project, &args.out)?;
     let rate = timeline::project_rate(&project).map_err(invalid)?;
     println!(
-        "attach-bridge: out={} cut_ms={} in_pause={} card_ms={} unchanged={}",
+        "attach-bridge: out={} cut_ms={} in_pause={} card_ms={} unchanged={} appended={}",
         args.out.display(),
         timeline::frame_ms(report.spec.cut_frame, rate),
         report.in_pause,
         report.spec.card_ms,
-        report.unchanged
+        report.unchanged,
+        report.spec.cutoff_pct.is_none()
     );
     Ok(())
 }

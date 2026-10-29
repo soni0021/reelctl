@@ -24,7 +24,7 @@ This repository is P0 of the plan in [planer.md](planer.md). P1 has a first slic
 Tested on macOS with Apple Silicon. You need:
 
 - Rust (tested with rustc 1.98.1)
-- FFmpeg with its development libraries, and `pkg-config`: `brew install ffmpeg pkg-config` (tested with FFmpeg 8.1). The `ffmpeg` command, with libx264, also generates the test clips.
+- FFmpeg with its development libraries, and `pkg-config`: `brew install ffmpeg pkg-config` (tested with FFmpeg 8.1; the libraries must be 7.1 or newer, so a Linux distribution's FFmpeg 6 does not build: build FFmpeg 8 from source and point `PKG_CONFIG_PATH` and `LD_LIBRARY_PATH` at it). The `ffmpeg` command, with libx264, also generates the test clips.
 - CMake: `brew install cmake` (tested with 4.4.4). The build compiles whisper.cpp from source, which took under a minute on an Apple M3 the first time.
 - Xcode Command Line Tools, for clang, which compiles whisper.cpp and generates the FFmpeg and whisper.cpp bindings
 - Optional, for real words: a ggml whisper model, kept outside the repo. For English, `curl -L -o ~/models/whisper/ggml-base.en.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin` (148 MB). For Hinglish, this project uses [Oriserve Whisper-Hindi2Hinglish-Apex](https://huggingface.co/Oriserve/Whisper-Hindi2Hinglish-Apex) in a community ggml conversion at Q8_0: `curl -L -o ~/models/whisper/ggml-apex-hinglish-q8_0.bin https://huggingface.co/gouravg8/gtm-hi2hing-ggml/resolve/main/ggml-apex-hinglish-q8_0.bin` (874 MB; SHA-256 `bef6d9d5…0d4c`, full value in the [spec](docs/specs/whisper-asr.md)). Pass it with `--whisper-model` or `REELCTL_WHISPER_MODEL`

@@ -234,7 +234,12 @@ mod tests {
         let gaps = dna(
             10_000,
             100.0,
-            &[(1_000, 1_500), (4_000, 4_500), (7_800, 8_400), (9_000, 9_500)],
+            &[
+                (1_000, 1_500),
+                (4_000, 4_500),
+                (7_800, 8_400),
+                (9_000, 9_500),
+            ],
         );
         let report = cut_silence(&mut timeline, &gaps, &CutOptions::default()).unwrap();
         let spans: Vec<(i64, i64)> = report
@@ -257,7 +262,12 @@ mod tests {
         let mut timeline = trimmed();
         let words = with_words(
             dna(10_000, 100.0, &[]),
-            &[("um", 1_000, 1_200), ("so", 3_500, 3_700), ("uh", 5_000, 5_200), ("ok", 5_300, 5_600)],
+            &[
+                ("um", 1_000, 1_200),
+                ("so", 3_500, 3_700),
+                ("uh", 5_000, 5_200),
+                ("ok", 5_300, 5_600),
+            ],
         );
         let report = cut_silence(&mut timeline, &words, &CutOptions::default()).unwrap();
         let reasons: Vec<(&str, i64)> = report

@@ -480,6 +480,17 @@ What this means:
 - `reelctl diff` flags dead air over 180 ms, more than 2.5 s without a cut, and a missing payoff cue when the outlier has one.
 - The JSON Schema is generated from the Rust types and matches them.
 
+## make-reels steps (2026-10-29, in progress)
+
+Spec: [make-reels](specs/make-reels.md). Built in a Claude Code cloud session (Linux x86_64, Ubuntu 24.04, FFmpeg 8.0 libraries built from source, because the distribution's 6.1 lacks `av_frame_side_data_free`, which `decompile` calls; the `ffmpeg` and `ffprobe` command line tools were the distribution's 6.1). Done so far:
+
+- `timeline from-clip`, `funnel attach-bridge --append` and `transform auto-punch-in`, with unit tests and `crates/reelctl/tests/make_reels_steps.rs`. On `lecture70` with synthetic words and a clip built by the clip rules, the chain from-clip, cut-silence, auto-punch-in, attach-bridge `--append` and render gives a 360x640 file whose frame count equals the project's.
+- The existing edits (cut-silence, filler removal, punch-in, the bridge, the render's trims) give the same result on a clip that starts after 0 as on a whole file; no code change was needed.
+- The compositor's alpha-only pass (`measure_centroids`) runs with a fake model.
+- `cargo test --workspace --no-fail-fast` in that container: every test passes except five that also fail on the commit before these changes (1d2e97e), so they come from the environment, not this work. Three `overlay_fixture.rs` tests check chart pixels that come out differently with the distribution's ffmpeg 6.1 (`top row 100: [31, 63, 32]`). Two `scenes::worker` tests use a fake worker script and failed under load; one of them passes when run alone. On the Mac (ffmpeg 8.1) they passed at the last merge.
+- `fixtures/generate.sh` used BSD `mktemp -t name`, which GNU `mktemp` refuses ("too few X's"), so `motion12` and the other temp-dir fixtures could not be made on Linux. It now uses `mktemp "${TMPDIR:-/tmp}/name.XXXXXX"`, which works on both.
+- Not yet: `transform reframe`, `overlay captions`, `reelctl make-reels`. `diff` on a rendered reel was not checked for static windows: the punch-ins zoom into flat colour, which the visual-event detector cannot see.
+
 ## Gaps
 
 Already listed in [AGENTS.md](../AGENTS.md) as P0 gaps:
