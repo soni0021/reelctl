@@ -562,7 +562,7 @@ pub enum TruthKind {
 pub struct EvalReport {
     pub eval_schema_version: u32,
     pub truth_kind: TruthKind,
-    /// The split scored (`train`, `val` or `all`); `null` for an `understanding.json`.
+    /// The split scored (`train`, `val` or `all`), or `file` for one .jsonl; `null` for an `understanding.json`.
     pub split: Option<String>,
     /// Truth items: records, or 1 for an `understanding.json`.
     pub records: u64,

@@ -1,6 +1,6 @@
 # Plan: P3 dataset collector and eval harness
 
-Spec: [p3-dataset-eval.md](p3-dataset-eval.md). Branch `feature/p3-dataset-eval`. This is the feature's plan; `tasks/plan.md` belongs to another feature. Vertical slices, each with a red test first, `cargo check` on edit, `cargo test` once at the end.
+Spec: [p3-dataset-eval.md](p3-dataset-eval.md). Branch `feature/p3-dataset-eval`. This is the feature's plan; `tasks/plan.md` is not used so that a parallel feature's plan is not overwritten. Vertical slices, each with a red test first, `cargo check` on edit, `cargo test` once at the end.
 
 ## Order and dependencies
 
@@ -30,7 +30,9 @@ sha256 -> ids/split -> metrics -> records (types, schema) -> builder -> jsonl/ma
 
 1. `docs: spec and plan for the P3 dataset collector and eval harness`
 2. `feat: reelctl dataset build and reelctl eval, with the dataset crate` (tasks 2 to 12, in one commit because the workspace member, `Cargo.lock` and the `reelctl` dependency have to land together to build from a clean checkout)
-3. `test: mutation survivors in the dataset metrics and split` (task 13)
+3. `fix: warn when clip_picks is on one side of the split, score a single jsonl whole, drop dead SHA-256 code`
+4. `test: pin the mutation survivors in the dataset metrics, builder and eval`
+5. `docs: record the mutation pass, the real-data run and the workspace test counts for the dataset work`
 
 ## Risks
 

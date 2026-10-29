@@ -296,6 +296,13 @@ pub fn run_eval(args: EvalArgs) -> Result<()> {
         };
         eval_dataset(&records, &read_text(&args.answers)?, label, &tolerances).map_err(library)?
     } else {
+        // A mistyped dataset directory is reported as a missing file, not as a missing --dna.
+        if !args.truth.exists() {
+            return Err(anyhow::anyhow!(
+                "read {}: no such file or directory",
+                args.truth.display()
+            ));
+        }
         let Some(dna_path) = &args.dna else {
             return Err(usage(
                 "an understanding.json needs --dna: the clip rules need the measured pauses of the same video",

@@ -395,7 +395,7 @@ pub fn build(
                 &file.file_name,
                 Some(Task::ClipPicks),
                 SkipReason::NoMatchingEditDna,
-                format!("no usable edit_dna.json with reel id {reel_id:?} was given"),
+                format!("no usable edit_dna.json with reel id {reel_id:?} was given (none, or its duration is 0)"),
             );
             continue;
         };

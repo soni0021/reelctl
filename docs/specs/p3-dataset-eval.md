@@ -111,12 +111,12 @@ Agreement with the teacher run(s) in the truth (`teacher` lists the model ids), 
 Tolerances are parameters: `--cut-tolerance-ms` (default 100) and `--event-tolerance-ms` (default 250; a zoom move takes up to 12 frames).
 
 - `cuts`: precision, recall, F1 by one-to-one matching of times within the cut tolerance, plus `mean_abs_error_ms` and `median_abs_error_ms` over matched pairs.
-- `visual_events`: the same, matching only events of the same `kind` within the event tolerance; plus `scale_mean_abs_error` over matched pairs where both have a scale. A record whose truth `visual_events` is `null` is not scored for them (`visual_events_unscored` counts such records); a truth `[]` against an answer with events scores them all as false positives.
-- `zoom_curves`: `bezier_mean_abs_error`, the mean absolute difference of `y1` and `y2` over matched events where both sides have a curve with a `bezier` (an answer curve is found by its `event_index` into the answer's `visual_events`); `pairs` is the count.
+- `visual_events`: the same, matching only events of the same `kind` within the event tolerance; plus `scale.mean_abs_error` over matched pairs where both have a scale. A record whose truth `visual_events` is `null` is not scored for them (`visual_events_unscored` counts such records); a truth `[]` against an answer with events scores them all as false positives.
+- `zoom_curves`: `zoom_curves.mean_abs_error`, the mean absolute difference of `y1` and `y2` over matched events where both sides have a curve with a `bezier` (an answer curve is found by its `event_index` into the answer's `visual_events`); `pairs` is the count.
 
 ### Scoring `pacing` (dataset truth)
 
-Per field, over records where the truth and the answer both have a value: `mean_abs_error` for `mean_shot_ms`, `longest_shot_ms`, `words_per_minute`, `integrated_lufs`, `cut_count` and `dead_air_count`, and `exact_rate` for the two counts; `payoff_has_cue_accuracy`; each with the count of pairs. Fields the truth has as `null` are not scored; fields the answer leaves out are counted as `missing`.
+Per field, over records where the truth and the answer both have a value: `mean_abs_error` and `exact_rate` for `cut_count`, `mean_shot_ms`, `longest_shot_ms`, `dead_air_count`, `words_per_minute`, `integrated_lufs` and `payoff_cue_ms`; `payoff_has_cue.accuracy`; each with the count of pairs. Fields the truth has as `null` are not scored; fields the answer leaves out are counted as `missing`.
 
 ### Matching, ties, degenerate cases
 
