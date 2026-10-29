@@ -61,6 +61,7 @@ Add `--whisper-model <model.bin>` to `decompile` for real words instead of voice
 | `cargo run -p dataset --example dataset_schema` | Regenerate `crates/dataset/schema/record.schema.json` and `manifest.schema.json` |
 | `reelctl dataset build --dna <dir> [--understanding <runs>] --out <dir>` | Write `train.jsonl`, `val.jsonl` and `manifest.json` for a later fine-tune |
 | `reelctl eval --truth <understanding.json or dataset> --answers <file>` | Score a model's answers; offline |
+| `make -C macos dmg` | Build ReelStudio, the Mac app for every feature, as `macos/dist/ReelStudio-<version>.dmg` (on a Mac; see [macos/README.md](macos/README.md)) |
 | `reelctl serve [--workspace dir]` | The studio service for the Mac app and scripts: JSON-RPC on a Unix socket in the workspace, a job queue, a content-addressed store and revertible checkpoints. See [docs/cli.md](docs/cli.md#reelctl-serve) |
 | `reelctl make-reels --input long.mp4 --outlier o.edit_dna.json --target-url URL --out-dir out/` | One long video in, finished vertical reels out: decompile, understand (asks before the paid call), then per clip cut silence, pace like the outliers, crop to 9:16 on the presenter, card, captions, render and check. See [docs/cli.md](docs/cli.md#reelctl-make-reels) |
 | `REELCTL_PROFILE=1 target/release/reelctl decompile ...` | Also print per-stage timings to stderr |
@@ -105,6 +106,9 @@ The reasons behind these choices are in [docs/decisions/](docs/decisions/).
 
 - [docs/status.md](docs/status.md): what works, measured numbers, gaps, next steps
 - [docs/cli.md](docs/cli.md): `reelctl` flags, output, exit codes, input requirements
+- [docs/studio.md](docs/studio.md): the `reelctl serve` API, for scripts
+- [macos/README.md](macos/README.md): the Mac app, ReelStudio: build, install, layout
+- [tasks/mac-todo.md](tasks/mac-todo.md): the checks to run on a Mac
 - [docs/edit-dna.md](docs/edit-dna.md): every field in `edit_dna.json`
 - [docs/finetune.md](docs/finetune.md): the deferred P3 fine-tuning plan, and the dataset format and cautions
 - [docs/decisions/](docs/decisions/): architecture decision records (ADRs)

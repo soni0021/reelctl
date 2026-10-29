@@ -51,15 +51,32 @@ pub fn write_boundary_views(
 ) -> Result<Vec<PathBuf>, FilmstripError> {
     fs::create_dir_all(dir)?;
     let mut paths = Vec::with_capacity(views.len());
+    // Registered while the loop runs, so a forced exit removes them too.
+    let mut registered = Vec::with_capacity(views.len());
+    progress::stage("filmstrip");
+    progress::set_total("filmstrip", views.len() as u64);
     for (index, view) in views.iter().enumerate() {
+        // A cancelled run keeps none of the pictures it drew.
+        if progress::cancel_requested() {
+            for path in &paths {
+                let _ = fs::remove_file(path);
+            }
+            return Err(FilmstripError::Message(
+                progress::CANCELLED_MESSAGE.to_string(),
+            ));
+        }
         let path = dir.join(format!(
             "timeline_view_cut_{index:02}_f{}.png",
             view.frame_index
         ));
         let image = render(view, words)?;
+        registered.push(progress::temporary(&path));
         image.save(&path)?;
         paths.push(path);
+        progress::tick("filmstrip", paths.len() as u64);
     }
+    progress::finish("filmstrip", paths.len() as u64);
+    drop(registered);
     Ok(paths)
 }
 

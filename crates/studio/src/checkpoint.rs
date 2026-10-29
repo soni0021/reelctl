@@ -186,7 +186,7 @@ impl Catalogue {
         cached: bool,
         note: &str,
     ) -> Result<Checkpoint> {
-        let head = self.require_subject(subject)?.head_checkpoint;
+        self.require_subject(subject)?;
         for hash in outputs.values() {
             if self.object(hash)?.is_none() {
                 return Err(StudioError::invalid(format!(
@@ -194,7 +194,17 @@ impl Catalogue {
                 )));
             }
         }
-        let tx = self.db.unchecked_transaction()?;
+        // The head is read inside the write transaction, so two jobs finishing
+        // together on one subject still make one chain with the head at the last.
+        let tx = rusqlite::Transaction::new_unchecked(
+            &self.db,
+            rusqlite::TransactionBehavior::Immediate,
+        )?;
+        let head: Option<i64> = tx.query_row(
+            "SELECT head_checkpoint FROM subjects WHERE id = ?1",
+            [subject],
+            |row| row.get(0),
+        )?;
         tx.execute(
             "INSERT INTO checkpoints (subject, parent, job, label, outputs, cached, note, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",

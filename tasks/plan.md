@@ -1,22 +1,23 @@
-# Plan: studio-service (M1)
+# Plan: ReelStudio, the Mac app (M2–M8)
 
-Spec: [docs/specs/studio-service.md](../docs/specs/studio-service.md) (approved 2026-10-29). ADRs: [ADR-028](../docs/decisions/ADR-028-a-local-daemon-over-a-unix-socket-runs-jobs-as-child-reelctl-processes.md) and [ADR-029](../docs/decisions/ADR-029-a-sqlite-catalogue-a-content-addressed-store-and-append-only-checkpoints.md). Branch: `claude/keen-clarke-1a8w5h`. Built in a cloud session, where every part of this milestone can be built and tested.
+Spec: [docs/specs/mac-app.md](../docs/specs/mac-app.md) (approved 2026-10-29). ADR: [ADR-032](../docs/decisions/ADR-032-the-mac-app-is-a-thin-client-of-reelctl-serve.md). The service it drives (M1) is archived in `tasks/archive/studio-service/`. Branch: `claude/keen-clarke-1a8w5h`, merged to `main` per milestone.
 
-The previous plan is archived in `tasks/archive/make-reels/`. Its one open item is a real-lecture run on the Mac.
+The cloud session writes the Swift but cannot compile it (there is no toolchain, and swift.org is blocked). Compiling happens on the user's Mac: over Remote Control when that folder is attached, or by the user from [mac-todo.md](mac-todo.md).
 
 ## Order
 
-Each task is one commit with its docs: `cargo test` before the commit, the `audit` subagent after it.
+1. **M2, the foundation.**
+   - `ReelCore`: the client, models, daemon launcher, Keychain, `.cube` reader, and the `Playable` links.
+   - `ReelCoreTests`.
+   - The app shell: the sidebar, the banner and the connection badge.
+   - Jobs, History, Storage, Settings and Doctor, onboarding, and the ⌘K palette.
+   - `make -C macos test app dmg`, and the Release workflow.
+2. **M3, analyse:** Library (decompile lanes, frame-exact seek, filmstrip) and Compare (diff).
+3. **M4, edit:** Projects, the track view and every edit operation as a checkpointed job, with undo and branch.
+4. **M5:** Look (a live `.cube` wipe) and Presenter.
+5. **M6:** Understand (plan, then the paid-call sheet, then clips) and Datasets/Eval.
+6. **M7:** Overlays (the chart spec form).
+7. **M8:** Make reels (`pipelines.make_reels` in three stages).
+8. **Build on the Mac:** `swift build` until clean, then `swift test`, then `make dmg`, then the app checks in `mac-todo.md`.
 
-1. **`--progress json` and clean cancel** in `reelctl`. This is the event schema, the hooks in the long loops, a SIGTERM handler that stops children and removes temporary files, and a test that output without the flag is unchanged.
-2. **`crates/studio`: store and catalogue.** BLAKE3 objects, tree objects, the SQLite schema version 1 and its migrations, and assets.
-3. **Checkpoints and the cache.** Append, head, revert, branch, diff by role, the cache key, and `force`.
-4. **The queue.** Classes and limits, priority, `after` chains, cancel, interrupted jobs on restart, and consumers that run a child and ingest its outputs. Tests use a fake runner.
-5. **The command catalogue.** Typed arguments to argv and environment for every command. `make-reels` moves onto it, with no change to its behaviour (its tests must pass unchanged).
-6. **`reelctl serve` and the socket API.** The lock, the peer uid check, JSON-RPC and notifications, the `understand.plan`/`understand.run` gate, `store.gc`, and `doctor.check`.
-7. **`pipelines.make_reels`.** The M0 chain as jobs with `after` links on reel subjects.
-8. **End to end over the socket.** `serve_fixture.rs`, covering the spec's success criteria.
-
-## Docs touched
-
-`docs/cli.md` (`serve`, `--progress`), a new `docs/studio.md` (the API reference), `README.md`, `docs/status.md`, `CHANGELOG.md`, `AGENTS.md` (add `crates/studio`; `serve` opens a Unix socket and no network port), the spec, and `.gitignore` (`.reelstudio/`).
+M2 to M8 were written together on 2026-10-29: ReelCore and the shell by the main session, and the screens by six parallel agents, one folder each. That was followed by a cross-file review for compile errors.

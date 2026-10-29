@@ -334,18 +334,39 @@ fn stamp_json(
     Ok(json_total)
 }
 
+/// Write `edit_dna.json` through a temporary file in the same folder, renamed
+/// into place only when no cancel was asked for: a cancelled run leaves no DNA,
+/// not even a partial one.
 fn write_dna(path: &std::path::Path, dna: &EditDna) -> Result<(), DecompileError> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent)?;
         }
     }
-    let file = File::create(path)?;
-    let mut writer = BufWriter::new(file);
-    serde_json::to_writer_pretty(&mut writer, dna)?;
-    writer.write_all(b"\n")?;
-    writer.flush()?;
-    Ok(())
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let temporary = path.with_file_name(format!(".{name}.tmp"));
+    let _registered = progress::temporary(&temporary);
+    let written = (|| -> Result<(), DecompileError> {
+        let file = File::create(&temporary)?;
+        let mut writer = BufWriter::new(file);
+        serde_json::to_writer_pretty(&mut writer, dna)?;
+        writer.write_all(b"\n")?;
+        writer.flush()?;
+        if progress::cancel_requested() {
+            return Err(DecompileError::Message(
+                progress::CANCELLED_MESSAGE.to_string(),
+            ));
+        }
+        std::fs::rename(&temporary, path)?;
+        Ok(())
+    })();
+    if written.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    written
 }
 
 fn round2(value: f64) -> f64 {

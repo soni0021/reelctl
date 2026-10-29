@@ -542,3 +542,242 @@ fn a_client_of_another_uid_is_refused() {
     );
     assert_eq!(serve.stop(), Some(0));
 }
+
+/// `lecture70` decompiled with 20 sentences written in as whisper words, the
+/// `draft12` DNA as the outlier, a model listing and a recorded reply with two
+/// picks (as `make_reels_fixture.rs` builds them).
+struct Lecture {
+    video: PathBuf,
+    dna: PathBuf,
+    outlier: PathBuf,
+    catalog: PathBuf,
+    replay: PathBuf,
+}
+
+fn lecture(root: &Path) -> Lecture {
+    let decompile = |video: &Path, dna: &Path| {
+        let output = reelctl()
+            .arg("decompile")
+            .arg("--input")
+            .arg(video)
+            .arg("--out")
+            .arg(dna)
+            .arg("--filmstrip-dir")
+            .arg(dna.with_extension("views"))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    let video = root.join("lecture.mp4");
+    generate("lecture70", &video);
+    let dna = root.join("lecture.edit_dna.json");
+    decompile(&video, &dna);
+    let mut value: Value = serde_json::from_slice(&fs::read(&dna).unwrap()).unwrap();
+    let mut words = Vec::new();
+    let mut gaps = Vec::new();
+    for n in 0..20u64 {
+        let start = 1_000 + 3_500 * n;
+        let end = start + 3_200;
+        let step = (end - start) / 5;
+        for (index, text) in ["Sentence", &n.to_string(), "is", "about", "topic."]
+            .iter()
+            .enumerate()
+        {
+            let from = start + step * index as u64;
+            words.push(json!({"text": text, "start_ms": from, "end_ms": from + step}));
+        }
+        if n < 19 {
+            gaps.push(json!({"start_ms": end, "end_ms": end + 300, "duration_ms": 300}));
+        }
+    }
+    value["words"] = json!(words);
+    value["silence_gaps"] = json!(gaps);
+    value["asr_backend"] = json!("whisper_cpp");
+    fs::write(&dna, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+    let outlier_video = root.join("outlier.mp4");
+    generate("draft12", &outlier_video);
+    let outlier = root.join("outlier.edit_dna.json");
+    decompile(&outlier_video, &outlier);
+    let catalog = root.join("catalog.json");
+    fs::write(
+        &catalog,
+        json!({"models": {"qwen/qwen3.5-9b": [
+            {"provider": "DeepInfra", "quantization": "bf16", "context_length": 262144,
+             "prompt_usd_per_token": 0.0000001, "completion_usd_per_token": 0.00000015}
+        ]}})
+        .to_string(),
+    )
+    .unwrap();
+    let pick = |rank: u32, hook: u32, payoff: u32, cutoff: u32| {
+        json!({"rank": rank, "start_segment": hook, "end_segment": cutoff, "hook_segment": hook,
+               "payoff_segment": payoff, "cutoff_segment": cutoff, "title": format!("Clip {rank}"),
+               "open_loop": "next", "visual_suggestion": "punch in", "why": "because"})
+    };
+    let replay = root.join("reply.json");
+    fs::write(
+        &replay,
+        json!({
+            "reply": {
+                "video_summary": {"topic": "test", "language": "English", "speaker_count": 1, "visual_formats": []},
+                "beats": [],
+                "edit_events": [],
+                "reel_candidates": [pick(1, 1, 3, 10), pick(2, 11, 13, 19)]
+            },
+            "provider": "DeepInfra", "quantization": null,
+            "input_tokens": 1000, "output_tokens": 50, "cost_usd": 0.0042, "elapsed_ms": 900
+        })
+        .to_string(),
+    )
+    .unwrap();
+    Lecture {
+        video,
+        dna,
+        outlier,
+        catalog,
+        replay,
+    }
+}
+
+#[test]
+fn pipelines_make_reels_runs_the_chain_as_checkpointed_jobs_in_three_stages() {
+    let root = scratch("pipeline");
+    let lecture = lecture(&root);
+    let workspace = root.join("ws");
+    let serve = Serve::start(
+        &workspace,
+        &[
+            "--understand-catalog",
+            lecture.catalog.to_str().unwrap(),
+            "--understand-replay",
+            lecture.replay.to_str().unwrap(),
+        ],
+    );
+    let mut client = serve.client();
+    let import = |client: &mut Client, path: &Path, kind: &str| -> i64 {
+        client.ok("assets.import", json!({"path": path, "kind": kind}))["id"]
+            .as_i64()
+            .unwrap()
+    };
+    let video = import(&mut client, &lecture.video, "video");
+    let outlier = import(&mut client, &lecture.outlier, "edit_dna");
+    let base = json!({
+        "input": {"asset": video},
+        "outliers": [{"asset": outlier}],
+        "target_url": "https://example.com/full",
+        "size": "540x960",
+        "allow_flagged": true,
+        "clips": [1, 2],
+    });
+    let with = |extra: Value| -> Value {
+        let mut params = base.clone();
+        for (key, value) in extra.as_object().unwrap() {
+            params[key] = value.clone();
+        }
+        params
+    };
+
+    // Stage 1: no DNA, so the decompile is queued.
+    let first = client.ok("pipelines.make_reels", base.clone());
+    assert_eq!(first["stage"], "decompile", "{first}");
+    let subject = first["subject"].clone();
+    let decompile = first["jobs"][0].as_i64().unwrap();
+    assert_eq!(client.wait_job(decompile)["status"], "succeeded");
+
+    // Stage 2: with a DNA with whisper words, the plan (no key, no spend).
+    let dna = import(&mut client, &lecture.dna, "edit_dna");
+    let planned = client.ok(
+        "pipelines.make_reels",
+        with(json!({"subject": subject, "dna": {"asset": dna}})),
+    );
+    assert_eq!(planned["stage"], "plan", "{planned}");
+    let plan = &planned["plan"];
+    let run = client.ok(
+        "understand.run",
+        json!({"plan": plan["plan"], "approved_max_usd": plan["cost_upper_bound_usd"], "api_key": "sk-or-recorded-reply"}),
+    );
+    let understood = client.wait_job(run["job"].as_i64().unwrap());
+    assert_eq!(understood["status"], "succeeded", "{understood}");
+
+    // A request refused at a late step (an unknown caption style key) queues
+    // nothing at all.
+    let before = client.ok("jobs.list", json!({})).as_array().unwrap().len();
+    let refused = client
+        .call(
+            "pipelines.make_reels",
+            with(
+                json!({"subject": subject, "dna": {"asset": dna}, "style": {"colour": "red"},
+                        "understanding": {"from": understood["id"], "role": "out"}}),
+            ),
+        )
+        .unwrap_err();
+    assert!(
+        refused["message"].as_str().unwrap().contains("colour"),
+        "{refused}"
+    );
+    assert_eq!(
+        client.ok("jobs.list", json!({})).as_array().unwrap().len(),
+        before
+    );
+
+    // Stage 3: every step of both reels, chained, each on its reel's subject.
+    let reels = client.ok(
+        "pipelines.make_reels",
+        with(json!({"subject": subject, "dna": {"asset": dna},
+                    "understanding": {"from": understood["id"], "role": "out"}})),
+    );
+    assert_eq!(reels["stage"], "reels", "{reels}");
+    assert_eq!(reels["follow"], "centre", "{reels}");
+    assert!(reels["notes"][0].as_str().unwrap().contains("centre"));
+    let made = reels["reels"].as_array().unwrap();
+    assert_eq!(made.len(), 2);
+    for reel in made {
+        let jobs = reel["jobs"].as_array().unwrap();
+        let steps: Vec<&str> = jobs
+            .iter()
+            .map(|job| job["step"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            steps,
+            [
+                "from-clip",
+                "cut-silence",
+                "auto-punch-in",
+                "reframe",
+                "bridge",
+                "captions",
+                "render",
+                "diff"
+            ]
+        );
+        for job in jobs {
+            let done = client.wait_job(job["job"].as_i64().unwrap());
+            assert_eq!(done["status"], "succeeded", "{done}");
+        }
+        let history = client.ok("checkpoints.list", json!({"subject": reel["subject"]}));
+        assert_eq!(history.as_array().unwrap().len(), 8, "{history}");
+        let render = client.ok("jobs.get", json!({"job": jobs[6]["job"]}));
+        let files = client.ok(
+            "checkpoints.get",
+            json!({"checkpoint": render["checkpoint"]["id"]}),
+        )["files"]
+            .clone();
+        assert!(Path::new(files["out"]["path"].as_str().unwrap()).is_file());
+        // "Copy as CLI command": the job as reelctl arguments, no key.
+        let argv = client.ok("jobs.argv", json!({"job": jobs[6]["job"]}))["argv"].clone();
+        assert_eq!(argv[0], "render");
+    }
+    // The Smelter backend would listen on the network: refused.
+    let refused = client
+        .call(
+            "jobs.submit",
+            json!({"subject": made[0]["subject"], "command": "render", "args": {"backend": "smelter"},
+                   "inputs": {"project": {"from": made[0]["jobs"][5]["job"], "role": "out"}}}),
+        )
+        .unwrap_err();
+    assert!(refused["message"].as_str().unwrap().contains("ffmpeg only"));
+    assert_eq!(serve.stop(), Some(0));
+}

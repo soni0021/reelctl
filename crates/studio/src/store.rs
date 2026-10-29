@@ -77,6 +77,13 @@ pub fn hash_file(path: &Path) -> Result<(String, u64)> {
     Ok((hasher.finalize().to_hex().to_string(), size))
 }
 
+/// A temporary name no other thread or process of this store uses at once.
+fn temporary_name(hash: &str) -> String {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!(".{hash}.{}.{n}.tmp", std::process::id())
+}
+
 fn valid_hash(hash: &str) -> bool {
     hash.len() == 64
         && hash
@@ -173,7 +180,8 @@ impl Store {
                 .parent()
                 .ok_or_else(|| StudioError::invalid("an object path has no folder"))?;
             fs::create_dir_all(dir).map_err(|error| StudioError::io(dir, error))?;
-            let temporary = dir.join(format!(".{hash}.{}.tmp", std::process::id()));
+            let temporary = dir.join(temporary_name(&hash));
+            let _registered = progress::temporary(&temporary);
             let mut file =
                 fs::File::create(&temporary).map_err(|error| StudioError::io(&temporary, error))?;
             file.write_all(bytes)
@@ -200,7 +208,8 @@ impl Store {
                 .parent()
                 .ok_or_else(|| StudioError::invalid("an object path has no folder"))?;
             fs::create_dir_all(dir).map_err(|error| StudioError::io(dir, error))?;
-            let temporary = dir.join(format!(".{hash}.{}.tmp", std::process::id()));
+            let temporary = dir.join(temporary_name(&hash));
+            let _registered = progress::temporary(&temporary);
             fs::copy(source, &temporary).map_err(|error| StudioError::io(source, error))?;
             set_mode(&temporary, 0o400)?;
             // A file that changed while it was copied does not get a wrong name.

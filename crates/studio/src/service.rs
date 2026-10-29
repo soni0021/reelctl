@@ -15,6 +15,7 @@ use crate::checkpoint::cache_key;
 use crate::commands::{self, CommandSpec};
 use crate::error::{Result, StudioError};
 use crate::jobs::{Class, InputRef, Job, JobRequest, JobStatus};
+use crate::pipeline::{self, ReelOptions, Source};
 use crate::protocol::{code, RpcError};
 use crate::queue::{Limits, Queue, Runner};
 use crate::store::Store;
@@ -246,10 +247,14 @@ impl Service {
                 )
             }
             "jobs.cancel" => {
-                let status = self.queue.cancel(int(params, "job")?)?;
+                let job = int(params, "job")?;
+                // A live call cancelled before it started never takes its key.
+                drop(self.secrets.take(job));
+                let status = self.queue.cancel(job)?;
                 Ok(json!({ "status": status }))
             }
             "jobs.retry" => self.retry(params),
+            "jobs.argv" => self.argv(params),
             "checkpoints.list" => {
                 to_value(&self.catalogue()?.checkpoints(int(params, "subject")?)?)
             }
@@ -275,6 +280,7 @@ impl Service {
             "store.gc" => self.gc(params),
             "understand.plan" => self.plan(params),
             "understand.run" => self.run_plan(params),
+            "pipelines.make_reels" => self.make_reels(params),
             _ => Err(RpcError::new(
                 code::METHOD_NOT_FOUND,
                 format!("there is no method \"{method}\""),
@@ -382,6 +388,16 @@ impl Service {
             None | Some(Value::Null) => json!({}),
             Some(args) => args.clone(),
         };
+        // The Smelter backend starts a server that listens on every interface;
+        // the service opens no network port, so its jobs render with ffmpeg.
+        if command == "render"
+            && (args.get("backend").and_then(Value::as_str) == Some("smelter")
+                || args.get("smelter").is_some_and(|value| !value.is_null()))
+        {
+            return Err(RpcError::refused(
+                "the service renders with ffmpeg only: the Smelter backend listens on the network (run `reelctl render --backend smelter` yourself)",
+            ));
+        }
         let inputs = inputs_of(params.get("inputs"))?;
         validate(spec, &args, &inputs)?;
         let after: Vec<i64> = match params.get("after") {
@@ -414,6 +430,39 @@ impl Service {
         value["events"] = to_value(&events[skip..])?;
         value["checkpoint"] = to_value(&checkpoint)?;
         Ok(value)
+    }
+
+    /// `jobs.argv {job}`: the job as `reelctl` arguments, for "Copy as CLI
+    /// command": inputs as the files they are (a stored object, an imported
+    /// file, an earlier job's output), outputs as their names in the current
+    /// folder. It holds no key: keys are never arguments.
+    fn argv(&self, params: &Value) -> std::result::Result<Value, RpcError> {
+        let catalogue = self.catalogue()?;
+        let job = catalogue.require_job(int(params, "job")?)?;
+        let mut inputs = BTreeMap::new();
+        for (role, input) in &job.inputs {
+            let path = match input {
+                InputRef::Hash(hash) => self.store.path(hash)?,
+                InputRef::Asset { asset } => match catalogue.asset(*asset)? {
+                    Some(asset) => PathBuf::from(asset.source_path),
+                    None => PathBuf::from(format!("<asset {asset}>")),
+                },
+                InputRef::FromJob { from, role: output } => {
+                    match catalogue
+                        .checkpoint_of_job(*from)?
+                        .and_then(|checkpoint| checkpoint.outputs.get(output).cloned())
+                    {
+                        Some(hash) => self.store.path(&hash)?,
+                        None => PathBuf::from(format!("<job {from} {output}>")),
+                    }
+                }
+            };
+            inputs.insert(role.clone(), path);
+        }
+        let spec = commands::command(&job.command)?;
+        let outputs = commands::outputs_for(spec, &job.args, Path::new("."));
+        let built = commands::build(&job.command, &job.args, &inputs, &outputs)?;
+        Ok(json!({ "argv": built.argv }))
     }
 
     fn retry(&self, params: &Value) -> std::result::Result<Value, RpcError> {
@@ -620,6 +669,12 @@ impl Service {
         // The line rounds to 0.0001; round up past it so the bound shown is never
         // under the one `understand` computes.
         let printed = field("cost_upper_bound_usd")?;
+        if !printed.is_finite() || printed < 0.0 {
+            return Err(RpcError::new(
+                code::INTERNAL,
+                format!("the dry run gave an unusable bound: {printed}"),
+            ));
+        }
         let bound_usd = ((printed * 10_000.0).round() + 1.0) / 10_000.0;
         let expires_at = now_ms() + PLAN_LIFETIME_MS;
         self.plans
@@ -641,6 +696,264 @@ impl Service {
             "frames": field("frames")? as i64,
             "images": field("images")? as i64,
             "expires_at": expires_at,
+        }))
+    }
+
+    /// The file an input names, for the service to read itself (the
+    /// understanding of `pipelines.make_reels`). An earlier job's output must
+    /// already exist.
+    fn input_path(
+        &self,
+        catalogue: &Catalogue,
+        input: &InputRef,
+    ) -> std::result::Result<PathBuf, RpcError> {
+        match input {
+            InputRef::Hash(hash) => Ok(self.store.path(hash)?),
+            InputRef::Asset { asset } => catalogue
+                .asset(*asset)?
+                .map(|asset| PathBuf::from(asset.source_path))
+                .ok_or_else(|| RpcError::refused(format!("there is no asset {asset}"))),
+            InputRef::FromJob { from, role } => {
+                let job = catalogue.require_job(*from)?;
+                if job.status != JobStatus::Succeeded {
+                    return Err(RpcError::refused(format!(
+                        "job {from} is {}; wait until it has succeeded",
+                        job.status.as_str()
+                    )));
+                }
+                let hash = catalogue
+                    .checkpoint_of_job(*from)?
+                    .and_then(|checkpoint| checkpoint.outputs.get(role).cloned())
+                    .ok_or_else(|| {
+                        RpcError::refused(format!("job {from} has no output \"{role}\""))
+                    })?;
+                Ok(self.store.path(&hash)?)
+            }
+        }
+    }
+
+    /// `pipelines.make_reels`: the make-reels chain in three calls. Without
+    /// `dna` it queues the decompile; with a `dna` and no `understanding` it
+    /// makes the understand plan (the client then approves and runs it); with
+    /// both it queues every chosen clip's steps on its own `reel` subject,
+    /// chained by their outputs, so every step is a checkpoint.
+    fn make_reels(&self, params: &Value) -> std::result::Result<Value, RpcError> {
+        let input_of = |key: &str| -> std::result::Result<Option<InputRef>, RpcError> {
+            match params.get(key) {
+                None | Some(Value::Null) => Ok(None),
+                Some(value) => serde_json::from_value(value.clone()).map(Some).map_err(|_| {
+                    RpcError::params(format!(
+                        "\"{key}\" is a hash, {{\"from\": job, \"role\": name}} or {{\"asset\": id}}"
+                    ))
+                }),
+            }
+        };
+        let input = input_of("input")?.ok_or_else(|| RpcError::params("\"input\" is needed"))?;
+        let outliers: Vec<InputRef> = match params.get("outliers") {
+            Some(Value::Array(list)) => list
+                .iter()
+                .map(|value| serde_json::from_value(value.clone()))
+                .collect::<std::result::Result<_, _>>()
+                .map_err(|_| RpcError::params("\"outliers\" is a list of inputs"))?,
+            _ => Vec::new(),
+        };
+        if outliers.is_empty() || outliers.len() > 3 {
+            return Err(RpcError::params("one to three \"outliers\" are needed"));
+        }
+        let target_url = text(params, "target_url")?.to_string();
+        let catalogue = self.catalogue()?;
+        let subject = match opt_int(params, "subject")? {
+            Some(subject) => subject,
+            None => {
+                let name = opt_text(params, "name")?.unwrap_or("make reels");
+                catalogue.create_subject("make_reels", name)?.id
+            }
+        };
+
+        let Some(dna) = input_of("dna")? else {
+            let mut args = serde_json::Map::new();
+            if let Some(model) = opt_text(params, "whisper_model")? {
+                args.insert("whisper_model".to_string(), json!(model));
+            }
+            let args = Value::Object(args);
+            let spec = commands::command("decompile")?;
+            let inputs = BTreeMap::from([("input".to_string(), input.clone())]);
+            validate(spec, &args, &inputs)?;
+            let job = self.queue.submit(JobRequest {
+                subject,
+                command: "decompile".to_string(),
+                class: commands::class_of(spec, &args),
+                args,
+                inputs,
+                priority: 0,
+                after: Vec::new(),
+                env_names: self.env_names(spec),
+                force: false,
+            })?;
+            return Ok(json!({ "stage": "decompile", "subject": subject, "jobs": [job.id] }));
+        };
+
+        let Some(understanding) = input_of("understanding")? else {
+            if let InputRef::FromJob { .. } = &dna {
+                // The plan's dry run reads the DNA now.
+                self.input_path(&catalogue, &dna)?;
+            }
+            let mut plan_params = serde_json::Map::new();
+            plan_params.insert("subject".to_string(), json!(subject));
+            plan_params.insert("input".to_string(), to_value(&input)?);
+            plan_params.insert("dna".to_string(), to_value(&dna)?);
+            for key in [
+                "model",
+                "every_s",
+                "max_cost_usd",
+                "quant",
+                "sheet",
+                "effort",
+                "decoder",
+            ] {
+                if let Some(value) = params.get(key).filter(|value| !value.is_null()) {
+                    plan_params.insert(key.to_string(), value.clone());
+                }
+            }
+            let plan = self.plan(&Value::Object(plan_params))?;
+            return Ok(json!({ "stage": "plan", "subject": subject, "plan": plan }));
+        };
+
+        let path = self.input_path(&catalogue, &understanding)?;
+        let bytes = std::fs::read(&path).map_err(|error| StudioError::io(&path, error))?;
+        let parsed: Value = serde_json::from_slice(&bytes).map_err(|error| {
+            RpcError::refused(format!("the understanding is not JSON: {error}"))
+        })?;
+        let clips: Vec<usize> = match params.get("clips") {
+            None | Some(Value::Null) => Vec::new(),
+            Some(value) => serde_json::from_value(value.clone())
+                .map_err(|_| RpcError::params("\"clips\" is a list of clip numbers"))?,
+        };
+        let reels = opt_int(params, "reels")?.map(|n| n.max(0) as usize);
+        let allow_flagged = flag(params, "allow_flagged", false)?;
+        let chosen = pipeline::choose(&parsed, &clips, reels, allow_flagged)?;
+        if chosen.is_empty() {
+            return Err(RpcError::refused(
+                "no clip to make (none passes the clip rules, or reels is 0); see allow_flagged and clips",
+            ));
+        }
+
+        let mut notes = Vec::new();
+        let weights = opt_text(params, "weights")?.map(str::to_string);
+        if weights
+            .as_deref()
+            .is_some_and(|path| !Path::new(path).is_absolute())
+        {
+            return Err(RpcError::params("\"weights\" must be an absolute path"));
+        }
+        let mut follow_presenter = match opt_text(params, "follow")?.unwrap_or("presenter") {
+            "presenter" => true,
+            "centre" => false,
+            other => {
+                return Err(RpcError::params(format!(
+                    "\"follow\" is presenter or centre, not \"{other}\""
+                )))
+            }
+        };
+        if follow_presenter {
+            let weights_found = weights
+                .as_deref()
+                .is_some_and(|path| Path::new(path).is_file());
+            let runtime_found = self
+                .env_available
+                .iter()
+                .any(|name| name == "ORT_DYLIB_PATH");
+            if !(weights_found && runtime_found) {
+                follow_presenter = false;
+                notes.push(format!(
+                    "reframe followed the centre, not the presenter: {}",
+                    match (weights_found, runtime_found) {
+                        (false, false) => "no RobustVideoMatting weights and no ORT_DYLIB_PATH",
+                        (false, true) => "no RobustVideoMatting weights (weights)",
+                        _ => "no ONNX Runtime library (ORT_DYLIB_PATH)",
+                    }
+                ));
+            }
+        }
+        let style = match params.get("style") {
+            None | Some(Value::Null) => json!({}),
+            Some(style @ Value::Object(_)) => style.clone(),
+            Some(_) => {
+                return Err(RpcError::params(
+                    "\"style\" is an object of overlay captions arguments",
+                ))
+            }
+        };
+        let options = ReelOptions {
+            allow_flagged,
+            outliers: outliers.len(),
+            follow_presenter,
+            weights: if follow_presenter { weights } else { None },
+            target_url,
+            card_ms: opt_int(params, "card_ms")?.map_or(2500, |ms| ms.max(0) as u64),
+            style,
+            size: opt_text(params, "size")?.unwrap_or("1080x1920").to_string(),
+        };
+
+        // Every step of every reel is checked before the first is queued, so a
+        // refused request runs nothing (as `make-reels` builds every argv first).
+        for &clip in &chosen {
+            for step in pipeline::reel_steps(clip, &options) {
+                let placeholders: BTreeMap<String, InputRef> = step
+                    .inputs
+                    .iter()
+                    .map(|(role, _)| (role.clone(), InputRef::Hash(String::new())))
+                    .collect();
+                validate(commands::command(step.command)?, &step.args, &placeholders).map_err(
+                    |error| RpcError::params(format!("{}: {}", step.name, error.message)),
+                )?;
+            }
+        }
+        let mut made = Vec::new();
+        for clip in chosen {
+            let reel = catalogue.create_subject("reel", &format!("clip {clip}"))?;
+            let steps = pipeline::reel_steps(clip, &options);
+            let mut jobs: Vec<i64> = Vec::new();
+            let mut listed = Vec::new();
+            for step in &steps {
+                let mut inputs = BTreeMap::new();
+                for (role, source) in &step.inputs {
+                    let input = match source {
+                        Source::Input => input.clone(),
+                        Source::Dna => dna.clone(),
+                        Source::Understanding => understanding.clone(),
+                        Source::Outlier(n) => outliers[n - 1].clone(),
+                        Source::Step(index) => InputRef::FromJob {
+                            from: jobs[*index],
+                            role: steps[*index].output.to_string(),
+                        },
+                    };
+                    inputs.insert(role.clone(), input);
+                }
+                let spec = commands::command(step.command)?;
+                validate(spec, &step.args, &inputs)?;
+                let job = self.queue.submit(JobRequest {
+                    subject: reel.id,
+                    command: step.command.to_string(),
+                    class: commands::class_of(spec, &step.args),
+                    args: step.args.clone(),
+                    inputs,
+                    priority: 0,
+                    after: Vec::new(),
+                    env_names: self.env_names(spec),
+                    force: false,
+                })?;
+                jobs.push(job.id);
+                listed.push(json!({ "step": step.name, "job": job.id }));
+            }
+            made.push(json!({ "clip": clip, "subject": reel.id, "jobs": listed }));
+        }
+        Ok(json!({
+            "stage": "reels",
+            "subject": subject,
+            "follow": if follow_presenter { "presenter" } else { "centre" },
+            "notes": notes,
+            "reels": made,
         }))
     }
 

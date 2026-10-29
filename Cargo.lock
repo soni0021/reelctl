@@ -526,6 +526,7 @@ version = "0.1.0"
 dependencies = [
  "edit-dna",
  "image",
+ "progress",
  "thiserror",
 ]
 
@@ -1447,6 +1448,7 @@ name = "studio"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "progress",
  "rusqlite",
  "serde",
  "serde_json",

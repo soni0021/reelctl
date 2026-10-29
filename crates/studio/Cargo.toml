@@ -8,6 +8,7 @@ description = "The reelctl studio service core: content-addressed store, SQLite 
 
 [dependencies]
 blake3.workspace = true
+progress = { path = "../progress" }
 rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true

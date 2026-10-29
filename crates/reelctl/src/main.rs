@@ -51,6 +51,9 @@ fn force_exit() -> ! {
     progress::terminate_tracked();
     progress::remove_temporaries();
     progress::error(progress::CANCELLED_EXIT, "cancelled");
+    if !progress::json_enabled() {
+        eprintln!("error: cancelled");
+    }
     // As in main: drop the ONNX Runtime environments this thread can reach.
     decompile::release_onnx_runtime();
     compositor::release_runtime();
@@ -83,6 +86,11 @@ fn main() {
     compositor::release_runtime();
     if progress::cancel_requested() {
         let message = match &result {
+            // A stop the run noticed reads as just "cancelled"; another error
+            // that came first keeps its words.
+            Err(err) if format!("{err:#}").ends_with(progress::CANCELLED_MESSAGE) => {
+                "cancelled".to_string()
+            }
             Err(err) => format!("cancelled: {err:#}"),
             Ok(()) => "cancelled".to_string(),
         };
@@ -348,9 +356,24 @@ fn decompile(args: DecompileArgs) -> Result<()> {
     };
     let output = decompile_file(&request).context("decompile")?;
     let dir = filmstrip_dir(&args.out, args.filmstrip_dir);
-    timeline_cmd::cancelled()?;
-    let paths = filmstrip::write_boundary_views(&dir, &output.boundaries, &output.dna.words)
-        .context("write timeline views")?;
+    // The DNA is written by now; a cancel from here on takes it back, so a
+    // cancelled run leaves neither the DNA nor its pictures. Until the pictures
+    // are done it is registered too, so a forced exit removes it as well.
+    let dna_registered = progress::temporary(&args.out);
+    let written = timeline_cmd::cancelled().and_then(|()| {
+        filmstrip::write_boundary_views(&dir, &output.boundaries, &output.dna.words)
+            .context("write timeline views")
+    });
+    let paths = match written {
+        Ok(paths) => paths,
+        Err(error) => {
+            if progress::cancel_requested() {
+                let _ = std::fs::remove_file(&args.out);
+            }
+            return Err(error);
+        }
+    };
+    drop(dna_registered);
     print_timing(&output);
     if std::env::var_os("REELCTL_PROFILE").is_some() {
         eprintln!(

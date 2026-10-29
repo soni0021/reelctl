@@ -9,4 +9,5 @@ description = "timeline_view PNGs at cut boundaries"
 [dependencies]
 edit-dna = { path = "../edit-dna" }
 image.workspace = true
+progress = { path = "../progress" }
 thiserror.workspace = true

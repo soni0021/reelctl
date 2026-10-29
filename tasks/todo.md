@@ -1,32 +1,34 @@
-# Todo: studio-service (M1)
+# Todo: ReelStudio, the Mac app (M2–M8)
 
-Plan: [plan.md](plan.md). Spec: [docs/specs/studio-service.md](../docs/specs/studio-service.md). Tick each box in the commit that completes it. Stage explicit paths; never `git add -A` (`.env` holds a key).
+Plan: [plan.md](plan.md). Spec: [docs/specs/mac-app.md](../docs/specs/mac-app.md). Mac checks: [mac-todo.md](mac-todo.md). Tick each box in the commit that completes it. Stage explicit paths; never `git add -A` (`.env` holds a key).
 
-## Task 0: Spec
-- [x] User approves the spec, ADR-028 and ADR-029 (2026-10-29; workspace ~/Movies/ReelStudio, stops when the app says)
+"Written" means the code exists but no Swift compiler has seen it yet.
 
-## Task 1: Progress and cancel
-- [x] `--progress json` events from the decode, sample, TransNet, whisper, render, matte and measure loops and the make-reels steps; the result event equals the stdout line (manimgx stages: not yet, the worker reports as its stage)
-- [x] SIGTERM stops children, writes no further output and leaves no temporary file; without the flag, stdout and outputs are unchanged (audit fixes: ADR-030)
+## M2: Foundation
+- [x] ReelCore, ReelCoreTests, the app shell, Jobs, History, Storage, Settings, onboarding and the palette: written
+- [x] `make -C macos test app dmg`, the scripts, `Info.plist`, and the Release workflow: written
+- [ ] Compiles, `swift test` passes, and the `.dmg` installs (on the Mac)
 
-## Task 2: Store and catalogue
-- [x] Objects, trees, read-only files; schema version 1 and migrations; assets by reference
+## M3: Analyse
+- [x] Library and Compare: written
+- [ ] Checked on the Mac
 
-## Task 3: Checkpoints
-- [x] Append, head, revert, branch, diff; the cache key and the cached-outputs lookup (`force` is the queue's, task 4)
+## M4: Edit
+- [x] Projects: written
+- [ ] Checked on the Mac
 
-## Task 4: Queue
-- [x] Classes, priority, `after`, cancel, interrupted on restart; consumers ingest outputs (with a fake runner; the real one is task 5/6)
+## M5: Look and Presenter
+- [x] Written (RGBA output is a `.mov`, named by the service)
+- [ ] Checked on the Mac
 
-## Task 5: Command catalogue
-- [x] Typed args to argv and env for every command a job runs (not `dataset build`, whose inputs are folders: later); `make-reels` moved onto it, its tests unchanged
+## M6: Understand and Datasets
+- [x] Written (`dataset build` is not a service job yet: the screen shows the command)
+- [ ] Checked on the Mac
 
-## Task 6: `reelctl serve`
-- [x] Socket, lock, peer uid; JSON-RPC and events; understand plan/run gate; gc; doctor (checkpoint diff by hash only; the DNA metrics and `.otio` differences are later)
+## M7: Overlays
+- [x] Written
+- [ ] Checked on the Mac, with the real manimgx
 
-## Task 7: `pipelines.make_reels`
-- [ ] The M0 chain as jobs and checkpoints
-  - [x] The step list and clip choice as pure code in `crates/studio/src/pipeline.rs` (2 tests); `make-reels` and `pipelines.make_reels` not yet moved onto it
-
-## Task 8: End to end
-- [ ] `serve_fixture.rs` covers the success criteria
+## M8: Make reels
+- [x] Written, on `pipelines.make_reels`
+- [ ] Checked on the Mac

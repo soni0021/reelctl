@@ -17,6 +17,6 @@ Status: Accepted (2026-10-29)
 
 - New dependency `nix` (default features off, `signal` only), in `crates/progress`.
 - SIGHUP also cancels, which the `termination` feature brings; closing the terminal stops a run, as before (the default action ended it too, without clean-up).
-- A pid is signalled only while its `Tracked` guard is alive, which ends before `wait` returns; a reused pid could be signalled only in the instant between the child's exit and its reaping, which `wait` holds off (the pid is not reused until reaped).
+- A pid is signalled only while its `Tracked` guard is alive. The guard is dropped just after `wait` returns, so for that instant the registry holds a pid that is already reaped and could in principle be reused by an unrelated process; a forced exit landing in that window could signal it. The window is microseconds; dropping the guard before reaping would need the child's exit seen without reaping it.
 - The forced exit releases the ONNX Runtime environments, as `main` does, before `std::process::exit`. A model session still running on another thread keeps its environment alive, and then ONNX Runtime's static destructors can abort the process at exit: the exit code is then 134 (SIGABRT) instead of 130, after the children were signalled and the temporary paths removed. `nix` 0.31 has no safe `_exit`, so this stays a known gap; a loop that holds a model and ignores the flag for 10 s is a bug in that loop.
 - Short probes (`ffprobe -show_streams`, the `ps` in a test) are not tracked; they end by themselves within a second.

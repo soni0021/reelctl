@@ -1,0 +1,28 @@
+# Builds ReelStudio-<version>.dmg on a macOS arm64 runner when a v* tag is
+# pushed, and attaches it to a GitHub Release (docs/specs/mac-app.md, "Release").
+# It runs only on a tag: macOS minutes on a private repo count ten times.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  dmg:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: brew install ffmpeg pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Rust tests
+        run: cargo test --workspace
+      - name: App tests and dmg
+        run: make -C macos test dmg
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" macos/dist/ReelStudio-*.dmg --title "ReelStudio $GITHUB_REF_NAME" --generate-notes

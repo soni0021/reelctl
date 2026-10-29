@@ -526,3 +526,55 @@ fn without_whisper_words_it_refuses_before_anything_runs() {
     assert_eq!(output.status.code(), Some(2));
     assert!(text(&output).1.contains("--whisper-model"));
 }
+
+#[test]
+fn a_sigterm_mid_reel_stops_the_run_and_records_it_as_cancelled() {
+    use std::io::{BufRead, BufReader};
+    let lecture = lecture();
+    let out = scratch("cancelled");
+    let mut child = reelctl()
+        .args(["--progress", "json", "make-reels", "--input"])
+        .arg(&lecture.video)
+        .arg("--dna")
+        .arg(&lecture.dna)
+        .arg("--outlier")
+        .arg(&lecture.outlier)
+        .args(["--target-url", "https://example.com/full", "--out-dir"])
+        .arg(&out)
+        .arg("--understand-catalog")
+        .arg(&lecture.catalog)
+        .arg("--understand-replay")
+        .arg(&lecture.replay)
+        .args(["--yes", "--size", "540x960"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn make-reels");
+    let mut lines = BufReader::new(child.stderr.take().unwrap()).lines();
+    // Wait until the first reel's steps have started.
+    loop {
+        let line = lines
+            .next()
+            .expect("stderr ended before a reel step")
+            .unwrap();
+        let event: Value = serde_json::from_str(&line).unwrap_or(Value::Null);
+        if event["event"] == "stage" && event["name"] == "cut-silence" {
+            break;
+        }
+    }
+    let killed = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(killed.success());
+    let rest: Vec<String> = lines.map_while(Result::ok).collect();
+    let status = child.wait().unwrap();
+    assert_eq!(status.code(), Some(130), "{rest:?}");
+    let summary = read_json(&out.join("make_reels.json"));
+    assert_eq!(summary["status"], "cancelled", "{summary}");
+    let reels = summary["reels"].as_array().unwrap();
+    // The reel that was running is recorded as cancelled; the next never started.
+    assert_eq!(reels.len(), 1, "{summary}");
+    assert_eq!(reels[0]["status"], "cancelled", "{summary}");
+    assert!(!out.join("reel-1").join("reel-1.mp4").exists());
+}

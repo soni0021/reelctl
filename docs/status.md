@@ -517,16 +517,60 @@ Task 5 (`commands.rs`, 6 more tests, 37 in all): the command catalogue.
 - Unknown arguments, missing ones, wrong types, a relative tool path, text that starts with `-`, and too many repeated inputs are refused.
 - `make-reels` now builds every step from it, and its 13 tests pass unchanged.
 
+## ReelStudio, the Mac app (2026-10-29, written, not compiled)
+
+M2–M8 of [mac-app](specs/mac-app.md) are written in `macos/`: `ReelCore` (client, models, daemon launcher, Keychain, `.cube` reader), `ReelCoreTests`, the app shell, and every screen (Library, Compare, Projects, Look, Presenter, Understand, Datasets/Eval, Overlays, Make reels, Jobs, History, Storage, Settings and Doctor, onboarding, the ⌘K palette), plus `make -C macos test app dmg` and the Release workflow. The screens were written by six parallel agents, one folder each, then read through for compile errors by a seventh.
+
+**None of it has been compiled.** This container has no Swift toolchain (swift.org downloads are blocked by its proxy). The first `swift build` on the M3 is the first check; [tasks/mac-todo.md](../tasks/mac-todo.md) lists it with the app checks. Known gaps:
+- `dataset build` is not a service job (its inputs are folders), so Datasets shows the command.
+- The cached badge in Jobs shows only for jobs reloaded through `jobs.get`.
+- A Make reels run on screen does not survive a relaunch (its jobs do).
+- The default caption preset in Settings is stored but not yet read by the caption forms.
+- Each screen's own notes are in `macos/docs/screens/`.
+
 ## Studio service, `reelctl serve` (2026-10-29)
 
+**Update, tasks 7 and 8 and the audit fixes.** `cargo test --workspace` in the cloud container: 1248 passed, 3 failed (the known `overlay_fixture` pixel tests against the distribution's ffmpeg 6.1), 2 ignored (the whisper model tests).
+- `pipelines.make_reels` runs the chain in three calls. `serve_fixture.rs` (now 5 tests) drives it on `lecture70` with a recorded reply: decompile, then the plan, then `understand.run`, then two reels whose 8 steps all succeed and leave 8 checkpoints each, with the centre crop and its note. `jobs.argv` gives the render's arguments, and a Smelter render is refused.
+- `make-reels` builds its steps from the same `crates/studio/src/pipeline.rs`; its 7 earlier tests pass unchanged, plus one new: a SIGTERM mid-reel exits 130 and records the run and that reel as `cancelled`.
+- Cancel (task 1 audit): decompile writes `edit_dna.json` through a temporary file renamed only when no cancel came, and a cancel during the filmstrip removes the pictures and the DNA. The caption frames, the compositor's rename and dataset files check the flag, and the messages say "cancelled" once. New tests: a decompile cancelled while it decodes leaves an empty folder; two SIGTERMs during a render exit 130 and leave nothing.
+- Service (task 6 audit):
+  - jobs run in their own process group and are tracked, and an exit 130 while serve stops counts as a cancel;
+  - a stopped live model call gets a "may already have been billed" warning;
+  - the head is read in the same immediate transaction that appends a checkpoint;
+  - `jobs.retry` keeps `after`;
+  - a copied asset is read from the store;
+  - a cancelled live call's key is dropped;
+  - a non-finite bound is refused;
+  - the `events.subscribe` reply comes before its notifications;
+  - store temporary names are unique per call and registered for a forced exit;
+  - an RGBA presenter output is a `.mov`.
+- Still open:
+  - a SIGKILLed serve's children run on, and an interrupted model call is not marked as possibly billed;
+  - subscriber threads end only at the next notification after their client left;
+  - `store.gc` and job submission are not atomic with each other (gc refuses while any job is queued or running);
+  - an asset's file can change between the job's hash check and the child's read;
+  - the checkpoint diff is by hash only;
+  - `jobs.argv` shows `<asset N>` or `<job N out>` for an input that is gone or not made yet;
+  - `jobs.retry` of a step in a failed chain fails again, because its input still names the failed upstream job (retry the upstream first, then submit again);
+  - `dataset build` cancelled between its three files can leave `train.jsonl` alone;
+  - a cancel that arrives after a command finished its work still exits 130, with its outputs kept.
+- Audit of this commit (2026-10-29), fixed:
+  - `pipelines.make_reels` checks every step of every reel before queueing the first, so a bad style key, a relative `weights` or an unknown `follow` runs nothing (tested);
+  - a cancel during make-reels' `diff` records the reel as cancelled, keeping its rendered file in the summary;
+  - a forced exit during decompile's pictures removes the DNA and the pictures (both registered while they are written);
+  - the spend warning is only for a model call that did not finish;
+  - process groups and the Smelter refusal have their own ADR ([ADR-033](decisions/ADR-033-serve-jobs-run-in-their-own-process-group-and-never-open-a-network-port.md)).
+
+
 Task 6 of [studio-service](specs/studio-service.md), in the cloud container (Linux x86_64, FFmpeg 8.0 libraries, the distribution's ffmpeg 6.1 command line tools):
-- `crates/studio`: `protocol.rs` (2 tests: request parsing and its error codes, responses) and `service.rs` (3 tests with a fake runner): the plan and run gate (no plan, over and under the bound, no key, a used plan, no retry, and the key in no file of the workspace), assets by reference (a changed file fails its job), argument errors, the cache prediction, revert, branch, `store.gc` (a dry run lists, a real one removes only what nothing refers to) and `store.stats`. 42 studio tests in all.
+- `crates/studio`: `protocol.rs` (2 tests: request parsing and its error codes, responses) and `service.rs` (3 tests with a fake runner): the plan and run gate (no plan, over and under the bound, no key, a used plan, no retry, and the key in no file of the workspace), assets by reference (a changed file fails its job), argument errors, the cache prediction, revert, branch, `store.gc` (a dry run lists, a real one removes only what nothing refers to) and `store.stats`. 42 studio tests then (44 with `pipeline.rs`).
 - `crates/reelctl/tests/serve_fixture.rs`, 4 tests, about 16 s:
   - On `draft12`: 0700 and 0600 modes, a second `serve` exits 2, `doctor.check`, decompile, init and a cut-silence chained by `{"from": job}` (blocked, then run), a subscriber gets the decode's `job.progress` and the cut's `checkpoint.created`, outputs are 0400 in the store and the filmstrip is a tree, `jobs/` is empty after, the same init again is a cache hit with no child, revert appends, `understand.plan` with a recorded catalog gives a bound and an approval above it is refused with exit code 4, `shutdown` exits 0 and removes the socket, and the key is not in `studio.db`.
   - A render of `bench60` cancelled mid-way ends `cancelled` with exit code 130, no checkpoint, and nothing in `jobs/`.
   - A `serve` killed mid-render: after a restart the job is `interrupted`, and `jobs.retry` queues it again.
   - A client of another uid (uid 65534 through `setpriv`, the test running as root with the folder and socket opened up) gets no answer, while the owner does. Skipped with a note when not root.
-- Not built yet: `pipelines.make_reels` (task 7), the checkpoint diff's DNA metrics and `.otio` differences, and `doctor.check` comparing the FFmpeg library version with Homebrew's (it reports both). A killed `serve` does not stop its children; they run to their end. Plans live in memory only.
+- Not built then: `pipelines.make_reels` (task 7, since built, above), the checkpoint diff's DNA metrics and `.otio` differences, and `doctor.check` comparing the FFmpeg library version with Homebrew's (it reports both). A killed `serve` does not stop its children; they run to their end. Plans live in memory only.
 
 ## Progress and cancel (2026-10-29)
 
