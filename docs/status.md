@@ -550,7 +550,17 @@ M2–M8 of [mac-app](specs/mac-app.md) are written in `macos/`: `ReelCore` (clie
   - subscriber threads end only at the next notification after their client left;
   - `store.gc` and job submission are not atomic with each other (gc refuses while any job is queued or running);
   - an asset's file can change between the job's hash check and the child's read;
-  - the checkpoint diff is by hash only.
+  - the checkpoint diff is by hash only;
+  - `jobs.argv` shows `<asset N>` or `<job N out>` for an input that is gone or not made yet;
+  - `jobs.retry` of a step in a failed chain fails again, because its input still names the failed upstream job (retry the upstream first, then submit again);
+  - `dataset build` cancelled between its three files can leave `train.jsonl` alone;
+  - a cancel that arrives after a command finished its work still exits 130, with its outputs kept.
+- Audit of this commit (2026-10-29), fixed:
+  - `pipelines.make_reels` checks every step of every reel before queueing the first, so a bad style key, a relative `weights` or an unknown `follow` runs nothing (tested);
+  - a cancel during make-reels' `diff` records the reel as cancelled, keeping its rendered file in the summary;
+  - a forced exit during decompile's pictures removes the DNA and the pictures (both registered while they are written);
+  - the spend warning is only for a model call that did not finish;
+  - process groups and the Smelter refusal have their own ADR ([ADR-033](decisions/ADR-033-serve-jobs-run-in-their-own-process-group-and-never-open-a-network-port.md)).
 
 
 Task 6 of [studio-service](specs/studio-service.md), in the cloud container (Linux x86_64, FFmpeg 8.0 libraries, the distribution's ffmpeg 6.1 command line tools):

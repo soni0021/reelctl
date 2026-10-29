@@ -840,8 +840,21 @@ impl Service {
 
         let mut notes = Vec::new();
         let weights = opt_text(params, "weights")?.map(str::to_string);
-        let mut follow_presenter =
-            opt_text(params, "follow")?.unwrap_or("presenter") == "presenter";
+        if weights
+            .as_deref()
+            .is_some_and(|path| !Path::new(path).is_absolute())
+        {
+            return Err(RpcError::params("\"weights\" must be an absolute path"));
+        }
+        let mut follow_presenter = match opt_text(params, "follow")?.unwrap_or("presenter") {
+            "presenter" => true,
+            "centre" => false,
+            other => {
+                return Err(RpcError::params(format!(
+                    "\"follow\" is presenter or centre, not \"{other}\""
+                )))
+            }
+        };
         if follow_presenter {
             let weights_found = weights
                 .as_deref()
@@ -882,6 +895,20 @@ impl Service {
             size: opt_text(params, "size")?.unwrap_or("1080x1920").to_string(),
         };
 
+        // Every step of every reel is checked before the first is queued, so a
+        // refused request runs nothing (as `make-reels` builds every argv first).
+        for &clip in &chosen {
+            for step in pipeline::reel_steps(clip, &options) {
+                let placeholders: BTreeMap<String, InputRef> = step
+                    .inputs
+                    .iter()
+                    .map(|(role, _)| (role.clone(), InputRef::Hash(String::new())))
+                    .collect();
+                validate(commands::command(step.command)?, &step.args, &placeholders).map_err(
+                    |error| RpcError::params(format!("{}: {}", step.name, error.message)),
+                )?;
+            }
+        }
         let mut made = Vec::new();
         for clip in chosen {
             let reel = catalogue.create_subject("reel", &format!("clip {clip}"))?;

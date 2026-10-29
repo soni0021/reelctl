@@ -571,7 +571,11 @@ impl Runner for ProcessRunner {
         if exit_code == Some(progress::CANCELLED_EXIT) && progress::cancel_requested() {
             context.cancel.store(true, Ordering::SeqCst);
         }
-        if job.command == "understand" && !dry_run && context.cancel.load(Ordering::SeqCst) {
+        if job.command == "understand"
+            && !dry_run
+            && exit_code != Some(0)
+            && context.cancel.load(Ordering::SeqCst)
+        {
             (context.emit)(json!({
                 "v": 1,
                 "event": "warning",

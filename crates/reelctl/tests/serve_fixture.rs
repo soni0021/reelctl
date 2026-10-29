@@ -702,6 +702,27 @@ fn pipelines_make_reels_runs_the_chain_as_checkpointed_jobs_in_three_stages() {
     let understood = client.wait_job(run["job"].as_i64().unwrap());
     assert_eq!(understood["status"], "succeeded", "{understood}");
 
+    // A request refused at a late step (an unknown caption style key) queues
+    // nothing at all.
+    let before = client.ok("jobs.list", json!({})).as_array().unwrap().len();
+    let refused = client
+        .call(
+            "pipelines.make_reels",
+            with(
+                json!({"subject": subject, "dna": {"asset": dna}, "style": {"colour": "red"},
+                        "understanding": {"from": understood["id"], "role": "out"}}),
+            ),
+        )
+        .unwrap_err();
+    assert!(
+        refused["message"].as_str().unwrap().contains("colour"),
+        "{refused}"
+    );
+    assert_eq!(
+        client.ok("jobs.list", json!({})).as_array().unwrap().len(),
+        before
+    );
+
     // Stage 3: every step of both reels, chained, each on its reel's subject.
     let reels = client.ok(
         "pipelines.make_reels",

@@ -470,14 +470,28 @@ fn make_reel(
     reel.path = Some(video.clone());
     reel.status = "ok";
 
-    let diff = run(
+    // A cancel from here on keeps the rendered reel (it is whole, and listed)
+    // but marks the reel cancelled: its check never ran.
+    let diff = match run(
         "diff",
         argv_of(
             &steps[studio::pipeline::at::DIFF],
             studio::pipeline::at::DIFF,
         )?,
         &[],
-    )?;
+    ) {
+        Ok(diff) => diff,
+        Err(_) if progress::cancel_requested() => {
+            reel.status = "cancelled";
+            return Ok(reel);
+        }
+        Err(error) => return Err(error),
+    };
+    if !diff.ok() && progress::cancel_requested() {
+        reel.status = "cancelled";
+        reel.steps.push(diff);
+        return Ok(reel);
+    }
     if diff.ok() {
         let report: Value = serde_json::from_str(&diff.stdout).unwrap_or(Value::Null);
         fs::write(

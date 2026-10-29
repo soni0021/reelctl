@@ -357,7 +357,9 @@ fn decompile(args: DecompileArgs) -> Result<()> {
     let output = decompile_file(&request).context("decompile")?;
     let dir = filmstrip_dir(&args.out, args.filmstrip_dir);
     // The DNA is written by now; a cancel from here on takes it back, so a
-    // cancelled run leaves neither the DNA nor its pictures.
+    // cancelled run leaves neither the DNA nor its pictures. Until the pictures
+    // are done it is registered too, so a forced exit removes it as well.
+    let dna_registered = progress::temporary(&args.out);
     let written = timeline_cmd::cancelled().and_then(|()| {
         filmstrip::write_boundary_views(&dir, &output.boundaries, &output.dna.words)
             .context("write timeline views")
@@ -371,6 +373,7 @@ fn decompile(args: DecompileArgs) -> Result<()> {
             return Err(error);
         }
     };
+    drop(dna_registered);
     print_timing(&output);
     if std::env::var_os("REELCTL_PROFILE").is_some() {
         eprintln!(
