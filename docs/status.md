@@ -128,6 +128,39 @@ Audit of the editor (2026-10-28) found: `qa inspect-boundaries` fetched a URL if
 
 Known limits: one media file per project, one video and at most one audio track, media starting at 0; a punch-in is a centred zoom; the fade is a dip, not a crossfade; the bridge card uses a built-in bitmap font because this ffmpeg has no `drawtext`; filler removal is unit-tested only (no whisper model here); success criterion 3 (`decompile` detecting the punch-in) is checked by frame comparison, since `visual_events` is on another branch; Smelter, manimgx, RobustVideoMatting, reframe, captions and voice are later slices.
 
+## manimgx chart overlays, 2026-10-29
+
+Apple M3 MacBook Air, ffmpeg 8.1 (Homebrew), debug build, `crates/scenes`, `crates/timeline/src/overlay.rs`, `crates/reelctl/src/overlay_cmd.rs` ([spec](specs/manimgx-scenes.md), [plan](specs/manimgx-scenes-plan.md), [ADR-022](decisions/ADR-022-draw-chart-overlays-with-a-separately-installed-manimgx-and-key-them-over-the-video.md), [guide](timeline.md#chart-overlays-overlay-add-chart)).
+
+**The real manimgx was not installed or run.** It exists (github.com/academa-labs/manimgx; MIT, GPL wheels; Python 3.13/3.14; `render` writes an x264 MP4 only, `inspect` exits 1 on layout problems), but `pip install` was refused by the permission system and was not worked around. Everything about the tool is from its documentation. What is verified is the `reelctl` side against a fake `manimgx` script.
+
+| Check | Result |
+|---|---|
+| Frame exactness (fake worker, `ffmpeg` 8.1) | A 10 s, 640x360 video with a chart on frames 60 to 119 (2000 to 4000 ms at 30 fps): the centre pixel is the chart on frames 60, 90 and 119 and the video on frames 0, 59, 120 and 299. The same at 30000/1001 fps (299 frames): chart on 60, 61, 90, 119; video on 59, 120, 121. Two charts that touch (frames 119 and 120) both show; the position `top`, `center` or `bottom` puts the chart's white box on the expected rows of the column 320 |
+| Key colour | The chart's `#ff00ff` background is keyed out: a pixel of the chart outside its drawn box shows the video's green |
+| Worker contract | The fake logs exactly `--version`; `inspect <scene.py> ReelctlChart -t end -o <png>`; `render <scene.py> ReelctlChart -o <mp4> -r 320x240 --fps 30` (50 % of 640 wide, 4:3). A 29.97 fps project renders the chart at `--fps 30` |
+| Idempotence | A second `add-chart` with the same spec: `unchanged=true`, project bytes equal, no further worker call. With the video deleted it draws again |
+| Text safety | A title with `"""`, `'`, `\`, `$(...)`, backticks and `__import__` stays in one `json.loads("...")` literal (a unit test decodes the literal back to the payload); none of it reaches the worker's argument log; the generated scene loads under real Python 3.14 with a stub `manimgx` module (`py_compile -W error` clean) and gives back the same title |
+| Failure paths | Missing worker exit 1 with the install command; `://` in `--spec`, `--manimgx` or `--assets-dir` exit 2; unknown field, control character, span outside the timeline, 499 ms span, over-64 KiB spec exit 2 with the worker never started; inspect exit 1 gives exit 2 and keeps `<id>.inspect.png`; inspect exit 2, render exit 3, a black background, a 5 s video for a 2 s span and a hung worker (`--timeout-s 2`) all exit 1; the project is untouched each time |
+| `OPENROUTER_API_KEY` | Set in `reelctl`'s environment on purpose in one test; the worker sees `unset` |
+| `cargo test --workspace` | 819 passed, 0 failed, 2 ignored (the two whisper-model tests that were already `#[ignore]`d): `scenes` 35, `timeline` 122 (21 new in `overlay` and `render`, the existing exact-graph test unchanged), `reelctl` unit 33, `overlay_fixture.rs` 15, `timeline_fixture.rs` 16, `p0_fixture.rs` 26 |
+| Render time | `render` of the 10 s project with one overlay: `ffmpeg_ms=147` |
+
+**Mutation pass** (`cargo-mutants` 27.1.0, installed to a scratch directory; pure logic only):
+
+| Scope | Mutants | Caught | Unviable | Survivors |
+|---|---|---|---|---|
+| `timeline/src/overlay.rs` | 70 | 66 | 4 | 0 (7 survived the first run; each got a test: two overlay tracks, a span judged by length not position, the same id with the same start, the clip's `available_range` in project frames) |
+| `timeline/src/render.rs` (`overlay_chains`, `time_base_expr`) | 17 | 16 | 1 | 0 |
+| `scenes` (all) | 194 | 171 | 16 | 6 on the first run, one more a time-out (counted caught: the loop never ends). After tests: `spec.rs` (`validate`, `axis_range`) 61 mutants, 60 caught, 1 survivor; `worker.rs` (`tail`, `failure`, `inspect`, `clean_version`) 23, 20 caught, 2 unviable, 1 survivor |
+| `reelctl/src/overlay_cmd.rs` pure functions | 41, then 19 after tests | 18 of 19 | 0 | 1 |
+
+Survivors, all judged equivalent or untested on purpose: `spec.rs` `axis_range` `high - top < step * 1e-6` to `<=` (a tolerance that is equal only at the exact boundary, which no float sum reaches); `worker.rs` `tail`, the 8 MiB read cap `8 * 1024 * 1024` mutated to a sum (no test writes a log that large); `overlay_cmd.rs` `default_assets_dir`, the guard `!parent.as_os_str().is_empty()` set to `true` (`Path::new("").join(x)` is `x`, the same result). The mutation run found one real defect before it: the first full run's baseline failed because `a_video_lasts_as_long...` was written wrong (119 frames is 1.1 frames short); the test was fixed, not the rule. Another baseline failure came from 5 s worker time-outs in tests under load; they are 30 s now.
+
+Not verified: the real tool (all seven assumptions A1 to A7 in the spec); how the keyed text edges look; `crates/timeline/tests/otio_check.py` on a project with the overlay track (the script is updated to list overlay tracks apart, but `opentimelineio` was not installed here, so the reference library has not read a two-video-track file from this tool); a render of a chart much wider than the source; a project with audio-less media and overlays (the code does not touch audio, the fixture has audio).
+
+Known limits: three chart kinds, non-negative values for bars and lines, one non-overlapping track, no animation options, the key colour is lost to the picture and leaves a fringe, and overlays go last (`cut-silence`, `punch-in` and `attach-bridge` refuse a project that has them).
+
 ## Watchtower, 2026-10-28
 
 Go module `watchtower/` ([spec](specs/watchtower.md), [guide](watchtower.md)), built against recorded data. Apple M3 MacBook Air.
@@ -329,6 +362,8 @@ Already listed in [AGENTS.md](../AGENTS.md) as P0 gaps:
 | `.cube` LUT | `cube_lut` reported as `"status": "unimplemented"` in `edit_dna.json` | A LUT needs two videos: `reelctl look` (separate branch) |
 
 Not yet listed in AGENTS.md:
+
+- **manimgx has a first slice, unrun against the real tool** (2026-10-29): chart overlays through a separately installed worker, tested with a fake; see [manimgx chart overlays](#manimgx-chart-overlays-2026-10-29). Open: run it for real by the recipe in [timeline.md](timeline.md#checking-an-overlay-with-the-real-manimgx), 3D scenes and other overlay kinds.
 
 - **`diff` compares with one to three outliers** (since the comparative-diff merge, 2026-10-26), in 5 s windows and per-reel metrics. Dead air and static windows are still properties of the draft alone, and the comparison is only as good as the cut detector: it counts a caption box as a cut and does not name events (`visual-motion`).
 - **Static windows count only cuts.** planer.md defines a static window as more than 2.5 s without B-roll, zoom, or a graphic callout. Nothing detects zooms or graphics yet, so a punch-in without a cut is still flagged.

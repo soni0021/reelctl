@@ -273,6 +273,39 @@ reelctl qa inspect-boundaries --project edit.otio --out-dir views/
 - Media paths must be plain local files (no `://`, `concat:` or `pipe:`; a directory or device is refused); `ffmpeg` and `ffprobe` run with only the `file` protocol allowed.
 - Exit 2: a bad argument, an unreadable or invalid project or DNA, a media file that is missing, not a regular file or not a local path, a file `ffprobe` cannot read, a span outside the timeline, a project with no frames or with values out of range, an oversize `--size` or `--card-ms`, or a DNA that is not the media's. Exit 1: `ffmpeg` or `ffprobe` missing, `ffmpeg` failing, or an `--out` that cannot be written.
 
+## Chart overlays: overlay
+
+Draws a chart with `manimgx`, a separately installed program ([ADR-022](decisions/ADR-022-draw-chart-overlays-with-a-separately-installed-manimgx-and-key-them-over-the-video.md)), and lays it over the video for a span. `render` composites it. It needs `ffmpeg`, `ffprobe` and manimgx (`uv tool install --python 3.14 manimgx`); no network and no model of ours, and the worker's environment has `OPENROUTER_API_KEY` removed. How it works, the track and the filters are in [timeline.md](timeline.md#chart-overlays-overlay-add-chart).
+
+```
+reelctl overlay add-chart --project edit.otio --spec chart.json --out edit.otio [--assets-dir DIR] [--manimgx PATH] [--skip-inspect] [--timeout-s 300]
+reelctl overlay remove --project edit.otio --id ID --out edit.otio
+```
+
+| Command | Stdout line |
+|---|---|
+| `overlay add-chart` | `overlay add-chart: out= id= frames=a..b asset= unchanged= renderer="..."` (`renderer` is missing when `unchanged=true`) |
+| `overlay remove` | `overlay remove: out= id= removed=true` |
+
+The spec is a JSON object, at most 64 KiB, and unknown fields are refused:
+
+| Field | |
+|---|---|
+| `kind` | `bar` (1 to 8 points), `line` (2 to 24) or `number-callout` (exactly 1) |
+| `title` | 1 to 60 characters |
+| `series` | `[{"label": 1 to 24 characters, "value": number}]`; 0 to 1e12 for bars and lines, magnitude at most 1e12 for the callout |
+| `unit` | optional, 1 to 8 characters, shown after every value |
+| `start_ms`, `end_ms` | the span on the edited timeline, 500 to 30000 ms, inside the timeline, rounded to the nearest frame |
+| `position` | `top`, `center` (default) or `bottom` |
+| `width_pct` | 20 to 100 (default 90): the overlay's width as a share of the output width |
+
+Text may hold any characters except control and text-direction ones. It reaches the scene as data, never as code, and never the worker's command line or an ffmpeg filter ([ADR-022](decisions/ADR-022-draw-chart-overlays-with-a-separately-installed-manimgx-and-key-them-over-the-video.md)).
+
+- The worker is `--manimgx`, else `$MANIMGX_BIN`, else `manimgx` on `PATH`; it is started without a shell, in a scratch directory, and stopped after `--timeout-s` (1 to 3600). It must answer `--version`. `manimgx inspect` runs first unless `--skip-inspect`.
+- The rendered video is kept at `<assets-dir>/<id>.mp4` (default `<project name>.overlays/` beside the project) and is not removed by `overlay remove`. The id is 16 hex digits made from the spec, so the same spec is the same overlay: a second `add-chart` changes nothing and does not start the worker. A different overlay on frames another one holds is refused.
+- `cut-silence`, `punch-in` and `attach-bridge` refuse a project with overlays (exit 2). Add overlays last.
+- Exit 2: a bad spec or argument, a `://` in a path, a span outside the timeline or on another overlay, `manimgx inspect` reporting layout problems (the annotated PNG is kept as `<id>.inspect.png`), a project with overlays given to an edit that moves the tracks. Exit 1: the worker is missing (the message gives the install command), does not answer `--version`, fails, times out, or writes a video that is not as asked (wrong size, wrong length, no key-colour background); `ffmpeg` fails. The project is written last and only on success.
+
 ## Exit codes
 
 | Code | Meaning |

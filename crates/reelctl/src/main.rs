@@ -18,6 +18,7 @@ use edit_dna::EditDna;
 
 mod card;
 mod look_cmd;
+mod overlay_cmd;
 mod timeline_cmd;
 mod understand_cmd;
 
@@ -46,6 +47,7 @@ fn run() -> Result<()> {
         Command::Timeline(command) => timeline_cmd::timeline(command),
         Command::Transform(command) => timeline_cmd::transform(command),
         Command::Funnel(command) => timeline_cmd::funnel(command),
+        Command::Overlay(command) => overlay_cmd::overlay(command),
         Command::Render(args) => timeline_cmd::render(args),
         Command::Qa(command) => timeline_cmd::qa(command),
         Command::WhisperWorker(args) => whisper_worker(args),
@@ -81,6 +83,8 @@ enum Command {
     Transform(timeline_cmd::TransformCommand),
     /// Add a funnel step to a project: `attach-bridge`.
     Funnel(timeline_cmd::FunnelCommand),
+    /// Lay a chart drawn by manimgx over a project: `add-chart`, `remove`.
+    Overlay(overlay_cmd::OverlayCommand),
     /// Render a project to an mp4 with ffmpeg.
     Render(timeline_cmd::RenderArgs),
     /// Check a project: `inspect-boundaries`.

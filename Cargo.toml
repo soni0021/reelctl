@@ -8,6 +8,7 @@ members = [
     "crates/look",
     "crates/understand",
     "crates/timeline",
+    "crates/scenes",
     "crates/reelctl",
 ]
 
