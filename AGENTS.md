@@ -60,6 +60,7 @@ Update the docs in the same commit as every change, without waiting to be asked;
 
 - Strictly follow the project skills in `.agents/skills/`, including the `addyosmani/agent-skills` pack from `npx skills add addyosmani/agent-skills`.
 - Always write or update docs as part of every change (see Docs above).
+- Do future work in a Claude Code cloud session (Linux container), not on the local Mac. There, `cargo`, `ffmpeg`, `ffprobe` and `go` are installed, but there is no VideoToolbox (hardware decode falls back to software), no `say` (the whisper model test cannot run), no `~/models`, no `Reels/`, and no user-supplied ONNX Runtime or weights; say which checks were skipped for that reason, and leave the macOS-only checks to the user.
 
 ## Learned Workspace Facts
 
