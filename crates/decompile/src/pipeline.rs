@@ -19,9 +19,7 @@ use crate::loudness::integrated_lufs;
 use crate::payoff::from_cuts;
 use crate::scene::{CutDetector, DetectorInput, SceneScoreDetector, SCENE_NOTE};
 use crate::silence;
-use crate::transnet::{
-    select_detector, transnet_note, CutDetectorChoice, SelectedDetector, TRANSNET_NOTE,
-};
+use crate::transnet::{select_detector, transnet_note, CutDetectorChoice, SelectedDetector};
 use crate::worker::WhisperRunner;
 
 const PCM_HALF_WINDOW_MS: u64 = 1_500;
