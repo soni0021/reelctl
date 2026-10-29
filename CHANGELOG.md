@@ -6,6 +6,7 @@ Notable changes to `reelctl`. Add an entry under Unreleased in the same commit a
 
 ### Added
 
+- The Mac app fills in the whisper model setting from `~/models/whisper/ggml-apex-hinglish-q8_0.bin` the first time, when that file exists and the setting was never touched, so decompile and make-reels no longer start with "No whisper model in Settings". Clear in Settings still leaves it empty.
 - `reelctl serve` gains `pipelines.make_reels` (make-reels as checkpointed jobs, in three calls: decompile, the paid-call plan, the reels) and `jobs.argv` (a job as `reelctl` arguments). Jobs run in their own process group, so a cancel reaches their ffmpeg and whisper children; a stopped model call is marked as possibly billed; `render` with the Smelter backend is refused, since it would listen on the network.
 - The Mac app, ReelStudio (`macos/`): a SwiftUI client of `reelctl serve` with every feature, packaged by `make -C macos dmg`. Not yet compiled (see `tasks/mac-todo.md`).
 - `reelctl serve [--workspace <dir>]` runs the studio service: JSON-RPC 2.0 on a Unix socket (0600, the same user only, no network port) in `<dir>/.reelstudio/`, a job queue that runs each catalogue command as a child `reelctl` with `--progress json`, a content-addressed store and a SQLite catalogue, a checkpoint per finished job with revert and branch, a cache of identical jobs, events, cancel, garbage collection, `doctor.check`, and a two-step paid `understand` call that needs the plan's bound approved. See [docs/cli.md](docs/cli.md#reelctl-serve).

@@ -28,7 +28,7 @@ On first launch the app:
 2. runs Doctor;
 3. starts `reelctl serve` for that workspace.
 
-ffmpeg comes from Homebrew. Models, weights, manimgx and Smelter are yours to install; set their paths in Settings.
+ffmpeg comes from Homebrew. Models, weights, manimgx and Smelter are yours to install; set their paths in Settings. The whisper model is filled in for you the first time if `~/models/whisper/ggml-apex-hinglish-q8_0.bin` exists (Clear in Settings keeps it empty); the other paths stay explicit.
 
 ## Layout
 

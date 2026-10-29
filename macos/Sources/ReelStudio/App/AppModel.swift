@@ -84,8 +84,30 @@ enum ToolSetting: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Where the model is usually kept, filled in once when the setting has never
+    /// been touched and the file is there. Only the whisper model: the others
+    /// change what `reelctl` does or need a runtime library, so they stay explicit.
+    private var usualPath: String? {
+        switch self {
+        case .whisperModel:
+            return NSString(string: "~/models/whisper/ggml-apex-hinglish-q8_0.bin").expandingTildeInPath
+        default:
+            return nil
+        }
+    }
+
+    /// An empty string means "set to nothing" (Clear keeps it so); a setting that
+    /// was never touched takes its usual path when that file exists.
     var value: String {
-        get { UserDefaults.standard.string(forKey: "tool." + rawValue) ?? "" }
+        get {
+            let key = "tool." + rawValue
+            if let stored = UserDefaults.standard.string(forKey: key) { return stored }
+            if let path = usualPath, FileManager.default.fileExists(atPath: path) {
+                UserDefaults.standard.set(path, forKey: key)
+                return path
+            }
+            return ""
+        }
         nonmutating set { UserDefaults.standard.set(newValue, forKey: "tool." + rawValue) }
     }
 
