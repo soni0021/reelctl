@@ -408,6 +408,38 @@ Stdout ends with `make-reels: out_dir= reels= ok= failed= cost_usd= follow=prese
 
 `diff` of a rendered reel always flags the silent card at the end as dead air and a static window ([ADR-027](decisions/ADR-027-make-reels-runs-each-step-as-a-child-reelctl-with-a-minimal-environment.md)).
 
+## Progress and cancel (all commands)
+
+`--progress json`, before or after the subcommand, makes `reelctl` write one JSON object per line on **stderr**. stdout is unchanged. Schema version 1:
+
+```
+{"v":1,"event":"stage","name":"decode"}
+{"v":1,"event":"progress","stage":"decode","done":120,"total":1800}
+{"v":1,"event":"warning","message":"..."}
+{"v":1,"event":"result","command":"init","fields":{"frames":"300","fps":"30.000"}}
+{"v":1,"event":"error","code":2,"message":"..."}
+```
+
+- **Stages:**
+  - `decode` (decompile, diff, and the decode inside other commands)
+  - `whisper`
+  - `render` (from ffmpeg's frame counter)
+  - `matte` (`compositor isolate-presenter`)
+  - `measure` (`transform reframe --follow presenter`)
+  - one per `make-reels` step
+- **Rate:** progress is written at most 10 times a second per stage, and always when `done` reaches `total`.
+- **`result`:** its `fields` are the `key=value` pairs of the stdout line. `diff` and `eval`, which print JSON, give `"stdout": "json"` and no fields.
+- **Errors:** an error is an `error` event with the exit code and message, and no plain `error:` line. Notes such as `dataset build`'s skipped lines become `warning` events.
+- **Clap usage errors:** an unknown flag or a missing argument is printed by clap as plain text, exit 2, before the flag is read.
+
+**Cancel.** SIGTERM, SIGINT or SIGHUP:
+- stops the decode and matting loops;
+- sends SIGTERM to `reelctl`'s child processes (ffmpeg, the whisper worker, manimgx, Smelter, `make-reels` steps);
+- removes the temporary outputs (`render`'s `.tmp` file, the compositor's, and the caption pictures);
+- exits **130**, with an `error` event of code 130.
+
+A run that has not stopped 10 s after the signal is ended with 130.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -416,6 +448,7 @@ Stdout ends with `make-reels: out_dir= reels= ok= failed= cost_usd= follow=prese
 | 1 | Runtime error. stderr gets `error: ` and the cause chain, for example `error: decompile: open input: No such file or directory` or `error: decompile: whisper: model not found at /missing.bin` |
 | 2 | Invalid arguments, including more than three `--outlier` files or none, or a `--dna` for `understand` without whisper words, or an `eval` of an `understanding.json` without `--dna`, or `--val-percent` over 50; clap prints the usage |
 | 3 | `reelctl understand` (and `make-reels`, before asking) without `OPENROUTER_API_KEY` |
+| 130 | Cancelled by SIGTERM, SIGINT or SIGHUP (see Progress and cancel) |
 | 4 | `reelctl understand` with a cost upper bound over `--max-cost-usd`; `reelctl make-reels` when the bound is over the cap or the model call was not confirmed |
 
 ## Input requirements

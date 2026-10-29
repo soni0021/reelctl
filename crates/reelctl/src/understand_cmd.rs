@@ -356,7 +356,7 @@ pub fn understand(args: UnderstandArgs) -> Result<()> {
     // `segment_words` gives at least one segment for any word, so the plan has segments.
     let plan = plan(&args, &dna, catalog.as_ref())?;
 
-    println!(
+    out!(
         "frames={} images={} sheet={} segments={} context_tokens={} input_tokens_estimate={} cost_upper_bound_usd={:.4} max_cost_usd={:.2}",
         plan.times_ms.len(),
         plan.images,
@@ -369,7 +369,7 @@ pub fn understand(args: UnderstandArgs) -> Result<()> {
     );
     if args.dry_run {
         if plan.bound_usd > args.max_cost_usd {
-            println!("a real run would be refused: the bound is over --max-cost-usd");
+            out!("a real run would be refused: the bound is over --max-cost-usd");
         }
         return Ok(());
     }
@@ -434,7 +434,7 @@ pub fn understand(args: UnderstandArgs) -> Result<()> {
     let json = serde_json::to_string_pretty(&understanding).context("format understanding.json")?;
     std::fs::write(&args.out, format!("{json}\n"))
         .with_context(|| format!("write {}", args.out.display()))?;
-    println!(
+    out!(
         "clips={} rejected={} model={} provider={} cost_usd={} out={}",
         understanding.clips.len(),
         understanding.rejected.len(),

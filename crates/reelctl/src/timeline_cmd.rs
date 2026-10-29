@@ -593,7 +593,7 @@ fn init_cmd(args: InitArgs) -> Result<()> {
     })
     .map_err(invalid)?;
     save_project(&project, &args.out)?;
-    println!(
+    out!(
         "init: out={} frames={} fps={:.3} size={}x{} audio={}",
         args.out.display(),
         probe.frames,
@@ -689,7 +689,7 @@ fn from_clip_cmd(args: FromClipArgs) -> Result<()> {
     let project = from_clip(&spec, &pick).map_err(invalid)?;
     save_project(&project, &args.out)?;
     let frames = timeline::timeline_frames(&project).map_err(invalid)?;
-    println!(
+    out!(
         "from-clip: out={} clip={} start_ms={} end_ms={} frames={} flags={}",
         args.out.display(),
         args.clip,
@@ -724,7 +724,7 @@ fn cut_silence_cmd(args: CutSilenceArgs) -> Result<()> {
         },
     );
     save_project(&project, &args.out)?;
-    println!(
+    out!(
         "cut-silence: out={} removed_spans={} removed_ms={} timeline_ms={}",
         args.out.display(),
         report.removed.len(),
@@ -756,7 +756,7 @@ fn punch_in_cmd(args: PunchInArgs) -> Result<()> {
     )
     .map_err(invalid)?;
     save_project(&project, &args.out)?;
-    println!(
+    out!(
         "punch-in: out={} frames={}..{} clips={} scale={}",
         args.out.display(),
         report.start_frame,
@@ -786,7 +786,7 @@ fn auto_punch_in_cmd(args: AutoPunchInArgs) -> Result<()> {
     let refs: Vec<&EditDna> = outliers.iter().collect();
     let report = auto_punch_in_like(&mut project, &dna, &refs).map_err(invalid)?;
     save_project(&project, &args.out)?;
-    println!(
+    out!(
         "auto-punch-in: out={} windows={} punches={} scale={} scale_from={}",
         args.out.display(),
         report.windows.len(),
@@ -818,7 +818,7 @@ fn reframe_cmd(args: ReframeArgs) -> Result<()> {
     };
     let Some((crop_width, crop_height)) = crop_size(info.width, info.height, aspect) else {
         save_project(&project, &args.out)?;
-        println!(
+        out!(
             "reframe: out={} aspect={} follow={} keyframes=0 frames_measured=0 ms_per_frame=0 unchanged=true",
             args.out.display(),
             aspect.label(),
@@ -891,9 +891,9 @@ fn reframe_cmd(args: ReframeArgs) -> Result<()> {
     );
     save_project(&project, &args.out)?;
     if !note.is_empty() {
-        eprintln!("reframe: {note}");
+        progress::note(&format!("reframe: {note}"));
     }
-    println!(
+    out!(
         "reframe: out={} aspect={} follow={} keyframes={count} frames_measured={measured} ms_per_frame={ms_per_frame:.1} unchanged=false",
         args.out.display(),
         aspect.label(),
@@ -948,7 +948,7 @@ fn attach_bridge_cmd(args: AttachBridgeArgs) -> Result<()> {
     .map_err(invalid)?;
     save_project(&project, &args.out)?;
     let rate = timeline::project_rate(&project).map_err(invalid)?;
-    println!(
+    out!(
         "attach-bridge: out={} cut_ms={} in_pause={} card_ms={} unchanged={} appended={}",
         args.out.display(),
         timeline::frame_ms(report.spec.cut_frame, rate),
@@ -1099,9 +1099,9 @@ pub fn render(args: RenderArgs) -> Result<()> {
         BackendChoice::Smelter => Box::new(SmelterBackend::new(args.smelter.clone())),
     };
     let outcome = backend.render(&job)?;
-    println!("{}", result_line(backend.name(), &args.out, &outcome));
+    out!("{}", result_line(backend.name(), &args.out, &outcome));
     for note in &outcome.notes {
-        println!("{note}");
+        out!("{note}");
     }
     Ok(())
 }
@@ -1182,7 +1182,10 @@ pub(crate) fn render_ffmpeg(job: &RenderJob<'_>) -> Result<RenderOutcome> {
     let temporary = TempFile::new(dir.join(temporary_name));
 
     let started = Instant::now();
-    let output = Command::new("ffmpeg")
+    // ffmpeg's `-progress pipe:1` gives `frame=N` lines on stdout: the render's
+    // progress events, and nothing else uses its stdout.
+    let mut child = Command::new("ffmpeg")
+        .args(["-progress", "pipe:1", "-nostats"])
         .args(ffmpeg_args(
             &plan,
             &media,
@@ -1192,8 +1195,38 @@ pub(crate) fn render_ffmpeg(job: &RenderJob<'_>) -> Result<RenderOutcome> {
             &temporary.path,
         ))
         .stdin(Stdio::null())
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|error| spawn_error("ffmpeg", error))?;
+    let _tracked = progress::track(child.id());
+    progress::stage("render");
+    progress::set_total("render", plan.frames.max(0) as u64);
+    let stderr = child.stderr.take().map(|mut pipe| {
+        std::thread::spawn(move || {
+            let mut text = Vec::new();
+            let _ = std::io::Read::read_to_end(&mut pipe, &mut text);
+            text
+        })
+    });
+    if let Some(stdout) = child.stdout.take() {
+        for line in std::io::BufRead::lines(std::io::BufReader::new(stdout)).map_while(Result::ok) {
+            if let Some(frame) = line
+                .strip_prefix("frame=")
+                .and_then(|n| n.trim().parse::<u64>().ok())
+            {
+                progress::tick("render", frame);
+            }
+        }
+    }
+    let status = child.wait().map_err(|error| spawn_error("ffmpeg", error))?;
+    let output = std::process::Output {
+        status,
+        stdout: Vec::new(),
+        stderr: stderr
+            .and_then(|handle| handle.join().ok())
+            .unwrap_or_default(),
+    };
     if !output.status.success() {
         let log = String::from_utf8_lossy(&output.stderr);
         let tail: Vec<&str> = log.lines().rev().take(12).collect();
@@ -1352,7 +1385,7 @@ fn inspect_cmd(args: InspectArgs) -> Result<()> {
     }
     let paths = filmstrip::write_boundary_views(&args.out_dir, &views, &words)
         .with_context(|| format!("write filmstrips to {}", args.out_dir.display()))?;
-    println!(
+    out!(
         "inspect-boundaries: out_dir={} joins={}",
         args.out_dir.display(),
         paths.len()

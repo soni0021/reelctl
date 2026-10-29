@@ -243,7 +243,7 @@ fn captions(args: CaptionsArgs) -> Result<()> {
                 serde_json::to_value(caption_preset(name).map_err(invalid)?)?,
             );
         }
-        println!("{}", serde_json::to_string_pretty(&all)?);
+        out!("{}", serde_json::to_string_pretty(&all)?);
         return Ok(());
     }
     let (Some(project_path), Some(dna_path), Some(out)) = (&args.project, &args.dna, &args.out)
@@ -276,7 +276,7 @@ fn captions(args: CaptionsArgs) -> Result<()> {
     }
     let report = add_captions(&mut project, &dna.words, &style).map_err(invalid)?;
     save_project(&project, out)?;
-    println!(
+    out!(
         "captions: out={} groups={} words={} dropped={} preset={} font={} unchanged={}",
         out.display(),
         report.groups,
@@ -468,7 +468,7 @@ fn add_chart(args: AddChartArgs) -> Result<()> {
         if let Some(overlay) = recorded {
             if fs::metadata(&overlay.asset.path).is_ok_and(|meta| meta.is_file()) {
                 save_project(&project, &args.out)?;
-                println!(
+                out!(
                     "overlay add-chart: out={} id={id} frames={}..{} asset={} unchanged=true",
                     args.out.display(),
                     slot.start_frame,
@@ -568,7 +568,7 @@ fn add_chart(args: AddChartArgs) -> Result<()> {
     )
     .map_err(invalid)?;
     save_project(&project, &args.out)?;
-    println!(
+    out!(
         "overlay add-chart: out={} id={id} frames={}..{} asset={} unchanged={} renderer=\"{version}\"",
         args.out.display(),
         report.start_frame,
@@ -598,7 +598,7 @@ fn remove(args: RemoveArgs) -> Result<()> {
             return Err(usage(format!("{} has no captions", args.project.display())));
         }
         save_project(&project, &args.out)?;
-        println!(
+        out!(
             "overlay remove: out={} captions=true removed=true",
             args.out.display()
         );
@@ -612,7 +612,7 @@ fn remove(args: RemoveArgs) -> Result<()> {
         )));
     }
     save_project(&project, &args.out)?;
-    println!(
+    out!(
         "overlay remove: out={} id={id} removed=true",
         args.out.display()
     );

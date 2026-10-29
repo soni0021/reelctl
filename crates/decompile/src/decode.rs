@@ -365,6 +365,8 @@ fn decode_with(
     };
 
     let expected_frames = expected_frame_count(container_ms, fps_rational);
+    progress::stage("decode");
+    progress::set_total("decode", expected_frames as u64);
     let mut scores = Vec::with_capacity(expected_frames);
     let mut colors = Vec::with_capacity(expected_frames);
     let mut pcm = Pcm::with_capacity(expected_pcm(container_ms));
@@ -435,6 +437,7 @@ fn decode_with(
     if scores.is_empty() {
         return Err(DecompileError::NoFrames(path.display().to_string()));
     }
+    progress::finish("decode", scores.len() as u64);
 
     let frame_ms = frame_duration_ms(fps_rational);
     let from_frames = last_time_ms.saturating_add(frame_ms);
@@ -693,10 +696,16 @@ fn observe_frame(
     start_time: i64,
     fps: Rational,
 ) -> Result<(), DecompileError> {
+    if progress::cancel_requested() {
+        return Err(DecompileError::Message(
+            progress::CANCELLED_MESSAGE.to_string(),
+        ));
+    }
     let view = yuv_view(frame)?;
     picture.width = view.width;
     picture.height = view.height;
     let index = scores.len() as u64;
+    progress::tick("decode", index + 1);
     if index == 0 {
         picture.format = VideoFormat::of(frame);
     }

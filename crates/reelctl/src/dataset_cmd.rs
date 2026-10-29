@@ -228,20 +228,20 @@ fn build_cmd(args: BuildArgs) -> Result<()> {
     write_output(&args.out, &output)?;
 
     for skip in &output.manifest.skipped {
-        eprintln!(
+        progress::note(&format!(
             "skipped {}{}: {}: {}",
             skip.input,
             skip.task
                 .map_or_else(String::new, |task| format!(" [{}]", task.as_str())),
             skip.reason.as_str(),
             skip.detail
-        );
+        ));
     }
     for warning in &output.manifest.warnings {
-        eprintln!("warning: {warning}");
+        progress::note(&format!("warning: {warning}"));
     }
     let files = &output.manifest.files;
-    println!(
+    out!(
         "wrote {} records ({} train, {} val) from {} reels, {} skipped, to {}",
         files.train.records + files.val.records,
         files.train.records,
@@ -317,7 +317,7 @@ pub fn run_eval(args: EvalArgs) -> Result<()> {
         eval_understanding(&truth, &dna, &answers.file_name, &answers.bytes).map_err(library)?
     };
     match args.format {
-        FormatArg::Json => println!(
+        FormatArg::Json => out!(
             "{}",
             serde_json::to_string_pretty(&report).context("format report")?
         ),

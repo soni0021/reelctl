@@ -85,7 +85,11 @@ pub fn isolate<R: Read, W: Write>(
     let mut frames = 0;
     let mut model_time = Duration::ZERO;
 
+    progress::stage("matte");
     while read_frame(&mut input, &mut source, frames)? {
+        if progress::cancel_requested() {
+            return Err(CompositorError::run(progress::CANCELLED_MESSAGE));
+        }
         frame.load_rgb8(&source)?;
         let started = Instant::now();
         let mut matte = model
@@ -120,10 +124,12 @@ expected {} and {pixels}",
         })?;
         state = matte.state;
         frames += 1;
+        progress::tick("matte", frames as u64);
     }
     if frames == 0 {
         return Err(CompositorError::run("the video has no frames"));
     }
+    progress::finish("matte", frames as u64);
     output
         .flush()
         .map_err(|error| CompositorError::run(format!("cannot flush the encoder: {error}")))?;
@@ -173,7 +179,11 @@ pub fn measure_centroids<R: Read>(
     let mut state = RecurrentState::initial();
     let mut centroids = Vec::new();
     let mut model_time = Duration::ZERO;
+    progress::stage("measure");
     while read_frame(&mut input, &mut source, centroids.len())? {
+        if progress::cancel_requested() {
+            return Err(CompositorError::run(progress::CANCELLED_MESSAGE));
+        }
         let index = centroids.len();
         frame.load_rgb8(&source)?;
         let started = Instant::now();
@@ -189,11 +199,13 @@ pub fn measure_centroids<R: Read>(
         }
         clamp_unit(&mut matte.pha, "alpha", index)?;
         centroids.push(alpha_centroid(&matte.pha, width, height));
+        progress::tick("measure", centroids.len() as u64);
         state = matte.state;
     }
     if centroids.is_empty() {
         return Err(CompositorError::run("the video has no frames"));
     }
+    progress::finish("measure", centroids.len() as u64);
     let frames = centroids.len();
     Ok((centroids, Stats { frames, model_time }))
 }

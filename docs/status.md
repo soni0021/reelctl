@@ -480,6 +480,16 @@ What this means:
 - `reelctl diff` flags dead air over 180 ms, more than 2.5 s without a cut, and a missing payoff cue when the outlier has one.
 - The JSON Schema is generated from the Rust types and matches them.
 
+## Progress and cancel (2026-10-29)
+
+`--progress json` and clean cancel (task 1 of [studio-service](specs/studio-service.md)), tested in `crates/reelctl/tests/progress_fixture.rs` in the cloud container:
+- On `draft12`, decompile writes a `decode` stage and progress that reaches its 360 frames, and a `result` whose fields equal the stdout line. Without the flag, stderr is empty, as before.
+- A render of the same clip reports `render` progress up to `total` 360.
+- A missing input gives an `error` event with code 2 and nothing else on stderr.
+- A SIGTERM sent while `bench60` (1080p, 60 s) renders exits 130 with an error event of code 130, and leaves nothing in the output folder (no `.tmp` file).
+
+Not yet reported: TransNetV2's windows and manimgx's stages, which run inside their stage. Clap usage errors are still plain text.
+
 ## make-reels steps (2026-10-29, in progress)
 
 Spec: [make-reels](specs/make-reels.md). Built in a Claude Code cloud session (Linux x86_64, Ubuntu 24.04, FFmpeg 8.0 libraries built from source, because the distribution's 6.1 lacks `av_frame_side_data_free`, which `decompile` calls; the `ffmpeg` and `ffprobe` command line tools were the distribution's 6.1). Done so far:

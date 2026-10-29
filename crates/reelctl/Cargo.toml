@@ -14,6 +14,7 @@ path = "src/main.rs"
 ab_glyph.workspace = true
 anyhow.workspace = true
 clap.workspace = true
+ctrlc.workspace = true
 compositor = { path = "../compositor" }
 dataset = { path = "../dataset" }
 decompile = { path = "../decompile" }
@@ -22,6 +23,7 @@ edit-dna = { path = "../edit-dna" }
 filmstrip = { path = "../filmstrip" }
 image.workspace = true
 look = { path = "../look" }
+progress = { path = "../progress" }
 scenes = { path = "../scenes" }
 serde.workspace = true
 serde_json.workspace = true

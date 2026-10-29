@@ -7,6 +7,7 @@ publish.workspace = true
 description = "Decode a reel into cuts, silence, loudness, and per-shot color"
 
 [dependencies]
+progress = { path = "../progress" }
 edit-dna = { path = "../edit-dna" }
 ffmpeg-next.workspace = true
 ort.workspace = true

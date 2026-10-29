@@ -93,6 +93,8 @@ fn free_port() -> Result<u16> {
 /// Kills and reaps the child when dropped, on every way out.
 struct Server {
     child: Child,
+    /// A cancel (SIGTERM to `reelctl`) reaches the server too.
+    _tracked: progress::Tracked,
 }
 
 impl Server {
@@ -287,7 +289,11 @@ impl SmelterBackend {
                 ),
                 _ => anyhow!("cannot run Smelter at {}: {error}", binary.display()),
             })?;
-        let mut server = Server { child };
+        let tracked = progress::track(child.id());
+        let mut server = Server {
+            child,
+            _tracked: tracked,
+        };
         let client = Client::new(port);
         let deadline = Instant::now() + self.startup_timeout;
         loop {

@@ -165,9 +165,16 @@ fn run(name: &str, args: Vec<OsString>, env: &[(&str, OsString)]) -> Result<Step
     for (key, value) in env {
         command.env(key, value);
     }
+    progress::stage(name);
     let started = Instant::now();
-    let output = command
-        .output()
+    let child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("run the {name} step"))?;
+    let _tracked = progress::track(child.id());
+    let output = child
+        .wait_with_output()
         .with_context(|| format!("run the {name} step"))?;
     Ok(Step {
         name: name.to_string(),
@@ -644,7 +651,7 @@ pub fn make_reels(args: MakeReelsArgs) -> Result<()> {
             .field("cost_upper_bound_usd")
             .unwrap_or_else(|| "unknown".to_string());
         let frames = plan.field("frames").unwrap_or_else(|| "?".to_string());
-        println!(
+        out!(
             "make-reels: plan model={} frames={frames} cost_upper_bound_usd={bound}",
             args.model
         );
@@ -710,17 +717,17 @@ pub fn make_reels(args: MakeReelsArgs) -> Result<()> {
     }
     let used_model = understanding["model"]["id"].as_str().unwrap_or("");
     if used_model != args.model {
-        eprintln!(
+        progress::note(&format!(
             "make-reels: {} was made with {used_model}, not {}; delete it to ask {} again",
             understanding_path.display(),
             args.model,
             args.model
-        );
+        ));
     }
     let chosen = choose(&understanding, &args)?;
     for &index in &chosen {
         let clip = &understanding["clips"][index - 1];
-        println!(
+        out!(
             "make-reels: clip={index} tight_length_ms={} flags={} hook=\"{}\"",
             clip["tight_length_ms"],
             clip["flags"].as_array().map_or(0, Vec::len),
@@ -762,7 +769,7 @@ pub fn make_reels(args: MakeReelsArgs) -> Result<()> {
             })
             .collect();
         write_summary(&base_summary(Value::Array(picked), "picked"))?;
-        println!(
+        out!(
             "make-reels: out_dir={} reels={} ok=0 failed=0 cost_usd={} picked=true",
             args.out_dir.display(),
             chosen.len(),
@@ -800,7 +807,7 @@ pub fn make_reels(args: MakeReelsArgs) -> Result<()> {
         {
             notes.push(format!("made with --allow-flagged: {}", clip["flags"]));
         }
-        println!(
+        out!(
             "make-reels: reel={index} status={} path={}",
             reel.status,
             reel.path
@@ -846,7 +853,7 @@ pub fn make_reels(args: MakeReelsArgs) -> Result<()> {
         Value::Array(reels),
         if ok > 0 { "ok" } else { "failed" },
     ))?;
-    println!(
+    out!(
         "make-reels: out_dir={} reels={} ok={ok} failed={failed} cost_usd={} follow={follow_used}",
         args.out_dir.display(),
         chosen.len(),

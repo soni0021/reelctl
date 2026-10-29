@@ -526,6 +526,8 @@ impl Drain {
 struct Process {
     child: Child,
     stderr: Drain,
+    /// A cancel (SIGTERM to `reelctl`) reaches ffmpeg too.
+    _tracked: progress::Tracked,
 }
 
 impl Process {
@@ -538,7 +540,12 @@ impl Process {
             .spawn()
             .map_err(|error| tool_error("ffmpeg", error))?;
         let stderr = Drain::start(&mut child);
-        Ok(Self { child, stderr })
+        let tracked = progress::track(child.id());
+        Ok(Self {
+            child,
+            stderr,
+            _tracked: tracked,
+        })
     }
 
     /// Stop it and collect what it said.

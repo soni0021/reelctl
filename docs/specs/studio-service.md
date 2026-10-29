@@ -147,10 +147,11 @@ With `--progress json`, `reelctl` writes NDJSON to **stderr**, one object per li
 - **Rate:** at most 10 progress events per second per stage.
 - **`result`:** its `fields` are the same `key=value` pairs as the stdout line.
 - **Without the flag,** stderr is exactly as today.
+- **What is not an event:** clap usage errors (an unknown flag, a missing argument) are printed by clap before the flag is read. A child that writes to an inherited stderr, such as the whisper worker, could add a plain line; whisper.cpp prints nothing. The service treats a line that is not JSON as a `log` event.
 
 ### 8. Clean cancel
 
-On SIGTERM or SIGINT, `reelctl` stops its own children (ffmpeg, the whisper worker, manimgx and Smelter), removes its temporary outputs (render's and the compositor's `.tmp` files, and the caption sequence), and exits 130. Today a kill can leave the temporary file behind.
+On SIGTERM, SIGINT or SIGHUP (through the `ctrlc` crate, whose API is safe; it is the one new dependency of this task), `reelctl` stops its own children (registered with `progress::track`) (ffmpeg, the whisper worker, manimgx and Smelter), removes its temporary outputs (render's and the compositor's `.tmp` files, and the caption sequence), and exits 130. Today a kill can leave the temporary file behind.
 
 ### 9. Security
 
