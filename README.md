@@ -13,7 +13,9 @@
 
 - `reelctl understand` takes a 20–60 minute video and its whisper-timed `edit_dna.json`, sends sampled frames and numbered transcript segments to a hosted vision-language model (OpenRouter; needs `OPENROUTER_API_KEY`), and writes `understanding.json`: Reel-sized clips picked by segment ID and checked by code (hook, cliffhanger, length; a clip that breaks a rule is kept with a flag naming it), and a label for what each cut really was. Every quote is whisper's text and every time is measured. See [docs/understanding.md](docs/understanding.md).
 
-This repository is P0 of the plan in [planer.md](planer.md). P1 has a first slice (the Go watchtower, reading recorded data) and P2 has a first slice (OpenTimelineIO edits and an ffmpeg render) and RobustVideoMatting presenter cut-out (`reelctl compositor isolate-presenter`); the rest of P2 (Smelter, manimgx, reframe, captions, voice) and P3 (a fine-tuned vision-language model, deferred by the user) are specified there and not built. Current state, measurements, and known gaps are in [docs/status.md](docs/status.md).
+- `reelctl dataset build` turns `edit_dna.json` files and `understanding.json` runs into JSONL instruction-tuning records whose targets are measured facts or rule-checked segment IDs (never model prose), split by reel; `reelctl eval` scores a model's answers against them, or against one `understanding.json`, so a base model and a later fine-tune can be compared. Both are offline and deterministic. Training itself is not built. See [docs/finetune.md](docs/finetune.md).
+
+This repository is P0 of the plan in [planer.md](planer.md). P1 has a first slice (the Go watchtower, reading recorded data) and P2 has a first slice (OpenTimelineIO edits and an ffmpeg render) and RobustVideoMatting presenter cut-out (`reelctl compositor isolate-presenter`); the rest of P2 (Smelter, manimgx, reframe, captions, voice) and P3 (a fine-tuned vision-language model, deferred by the user) are specified there and not built. Current state, measurements, and known gaps are in [docs/status.md](docs/status.md). Its offline half is built: `reelctl dataset build` and `reelctl eval` (training is not).
 
 ## Quick start
 
@@ -54,6 +56,9 @@ Add `--whisper-model <model.bin>` to `decompile` for real words instead of voice
 | `bash fixtures/generate.sh all` | Generate `draft12`, `draft12_10bit`, `draft12_44k`, `textured_cuts12`, the HEVC variants (`textured_cuts12_hevc`, `_hevc8`, `_hevc_full`), `resize12_hevc`, `shrink12_hevc`, `depth12_hevc`, `outlier12`, `noisy12`, `quiet12`, `lecture70`, and `bench60` into `fixtures/generated/` |
 | `cargo run -p edit-dna --example schema` | Regenerate `crates/edit-dna/schema/edit_dna.schema.json` after changing the types |
 | `cargo run -p understand --example understanding_schema` | Regenerate `crates/understand/schema/understanding.schema.json` |
+| `cargo run -p dataset --example dataset_schema` | Regenerate `crates/dataset/schema/record.schema.json` and `manifest.schema.json` |
+| `reelctl dataset build --dna <dir> [--understanding <runs>] --out <dir>` | Write `train.jsonl`, `val.jsonl` and `manifest.json` for a later fine-tune |
+| `reelctl eval --truth <understanding.json or dataset> --answers <file>` | Score a model's answers; offline |
 | `REELCTL_PROFILE=1 target/release/reelctl decompile ...` | Also print per-stage timings to stderr |
 
 `cargo test` needs `bash` and `ffmpeg` on `PATH`, because the end-to-end test generates its clips when it runs. Tests use no network and no real reels.
@@ -72,6 +77,7 @@ The Cargo workspace has these crates (the Go watchtower is a separate module in 
 | `understand` | Long-video understanding: transcript segments, frame plan, the model request and cost bound, clip rules, and `understanding.json` (no ffmpeg or whisper dependency) |
 | `timeline` | The OpenTimelineIO subset, edit operations and the ffmpeg filter-graph builder (pure) |
 | `compositor` | `reelctl compositor isolate-presenter`: RobustVideoMatting presenter cut-out. A pure core (downsample ratio, recurrent state, alpha, compositing, frame pipeline) behind a `MattingModel` trait, the `ort` session, and the `ffprobe`/`ffmpeg` edges; no `unsafe` |
+| `dataset` | `reelctl dataset` and `reelctl eval`: record builder, JSONL and manifest, split by reel, and the scoring metrics (pure; takes bytes, returns bytes) |
 | `reelctl` | The command-line tool |
 
 ```
@@ -93,6 +99,7 @@ The reasons behind these choices are in [docs/decisions/](docs/decisions/).
 - [docs/status.md](docs/status.md): what works, measured numbers, gaps, next steps
 - [docs/cli.md](docs/cli.md): `reelctl` flags, output, exit codes, input requirements
 - [docs/edit-dna.md](docs/edit-dna.md): every field in `edit_dna.json`
+- [docs/finetune.md](docs/finetune.md): the deferred P3 fine-tuning plan, and the dataset format and cautions
 - [docs/decisions/](docs/decisions/): architecture decision records (ADRs)
 - [docs/specs/](docs/specs/): feature specs, written and approved before the code
 - [CHANGELOG.md](CHANGELOG.md): notable changes

@@ -1,0 +1,538 @@
+{
+  "$defs": {
+    "ClipPicksTarget": {
+      "properties": {
+        "picks": {
+          "items": {
+            "$ref": "#/$defs/PickIds"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "picks"
+      ],
+      "type": "object"
+    },
+    "Context": {
+      "anyOf": [
+        {
+          "description": "The reel's measured pauses, which the clip rules need.",
+          "properties": {
+            "silence_gaps": {
+              "items": {
+                "$ref": "#/$defs/SilenceGap"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "silence_gaps"
+          ],
+          "type": "object"
+        },
+        {
+          "type": "object"
+        }
+      ],
+      "description": "Scoring-only data that a trainer must not show to the model."
+    },
+    "CurveTarget": {
+      "properties": {
+        "bezier": {
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "event_index": {
+          "description": "Index into the same record's `visual_events`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "event_index"
+      ],
+      "type": "object"
+    },
+    "CutTarget": {
+      "properties": {
+        "time_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "time_ms"
+      ],
+      "type": "object"
+    },
+    "EditEventsTarget": {
+      "description": "Measured edit events. `visual_events` is `null` when the file predates schema\nversion 3 and `zoom_curves` is `null` unless curves were measured: not measured is\nnot the same as none.",
+      "properties": {
+        "cuts": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/CutTarget"
+          },
+          "type": "array"
+        },
+        "visual_events": {
+          "default": null,
+          "items": {
+            "$ref": "#/$defs/EventTarget"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "zoom_curves": {
+          "default": null,
+          "items": {
+            "$ref": "#/$defs/CurveTarget"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "EventTarget": {
+      "properties": {
+        "area": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/VisualEventKind"
+        },
+        "scale": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "time_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "time_ms",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "FrameSize": {
+      "description": "Decoded frame size in pixels.",
+      "properties": {
+        "height": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "width": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "width",
+        "height"
+      ],
+      "type": "object"
+    },
+    "Input": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TranscriptInput"
+        },
+        {
+          "$ref": "#/$defs/MediaFacts"
+        }
+      ]
+    },
+    "MediaFacts": {
+      "description": "What a model may see for an `edit_events` or `pacing` record: the facts of the\nfile, nothing about its edits.",
+      "properties": {
+        "duration_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "fps": {
+          "format": "double",
+          "type": "number"
+        },
+        "frame_size": {
+          "$ref": "#/$defs/FrameSize"
+        }
+      },
+      "required": [
+        "duration_ms",
+        "fps",
+        "frame_size"
+      ],
+      "type": "object"
+    },
+    "PacingTarget": {
+      "description": "Measured pacing, from `diff::reel_metrics` and the payoff window.",
+      "properties": {
+        "cut_count": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "dead_air_count": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "integrated_lufs": {
+          "format": "double",
+          "type": "number"
+        },
+        "longest_shot_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mean_shot_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "payoff_cue_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "payoff_has_cue": {
+          "type": "boolean"
+        },
+        "words_per_minute": {
+          "description": "`null` unless the words came from whisper; a burst rate is not a word rate.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "cut_count",
+        "mean_shot_ms",
+        "longest_shot_ms",
+        "dead_air_count",
+        "integrated_lufs",
+        "payoff_has_cue"
+      ],
+      "type": "object"
+    },
+    "PickIds": {
+      "description": "One clip the teacher run picked, by segment ID, in the teacher's rank order.",
+      "properties": {
+        "cutoff_segment": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "hook_segment": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "payoff_segment": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "hook_segment",
+        "payoff_segment",
+        "cutoff_segment"
+      ],
+      "type": "object"
+    },
+    "Provenance": {
+      "properties": {
+        "asr_backend": {
+          "type": "string"
+        },
+        "cut_detector": {
+          "type": "string"
+        },
+        "edit_dna_schema_version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "edit_dna_sha256": {
+          "type": "string"
+        },
+        "reel_id": {
+          "type": "string"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "tool_version": {
+          "type": "string"
+        },
+        "understanding": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UnderstandingProvenance"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "tool",
+        "tool_version",
+        "reel_id",
+        "edit_dna_schema_version",
+        "edit_dna_sha256",
+        "cut_detector",
+        "asr_backend"
+      ],
+      "type": "object"
+    },
+    "Segment": {
+      "description": "A run of whisper words split at sentence ends or measured pauses. `id` is 1-based.",
+      "properties": {
+        "end_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "ends_sentence": {
+          "description": "The text ends with `.`, `?` or `!`. A sentence starts at segment 1 and after\nevery segment with this set.",
+          "type": "boolean"
+        },
+        "id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "start_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "text": {
+          "description": "Whisper's exact words, joined by single spaces.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "start_ms",
+        "end_ms",
+        "text",
+        "ends_sentence"
+      ],
+      "type": "object"
+    },
+    "SilenceGap": {
+      "description": "A run of audio below the silence threshold.",
+      "properties": {
+        "duration_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "end_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "start_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "start_ms",
+        "end_ms",
+        "duration_ms"
+      ],
+      "type": "object"
+    },
+    "Split": {
+      "enum": [
+        "train",
+        "val"
+      ],
+      "type": "string"
+    },
+    "Target": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ClipPicksTarget"
+        },
+        {
+          "$ref": "#/$defs/EditEventsTarget"
+        },
+        {
+          "$ref": "#/$defs/PacingTarget"
+        }
+      ]
+    },
+    "Task": {
+      "enum": [
+        "clip_picks",
+        "edit_events",
+        "pacing"
+      ],
+      "type": "string"
+    },
+    "TranscriptInput": {
+      "description": "What a model may see for a `clip_picks` record.",
+      "properties": {
+        "duration_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "segments": {
+          "items": {
+            "$ref": "#/$defs/Segment"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "duration_ms",
+        "segments"
+      ],
+      "type": "object"
+    },
+    "UnderstandingProvenance": {
+      "properties": {
+        "schema_version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "teacher_model": {
+          "description": "The model that made the picks. Picks are that teacher's, checked by rules.",
+          "type": "string"
+        },
+        "teacher_provider": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "sha256",
+        "teacher_model",
+        "teacher_provider"
+      ],
+      "type": "object"
+    },
+    "VisualEventKind": {
+      "description": "What a [`VisualEvent`] is.",
+      "oneOf": [
+        {
+          "const": "punch_in",
+          "description": "A fast scale-up of the picture (`scale` above 1).",
+          "type": "string"
+        },
+        {
+          "const": "zoom_out",
+          "description": "A fast scale-down of the picture (`scale` below 1).",
+          "type": "string"
+        },
+        {
+          "const": "overlay_change",
+          "description": "A block of the frame changed and stayed changed (a caption, a graphic).",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "One line of `train.jsonl` or `val.jsonl`.",
+  "properties": {
+    "context": {
+      "$ref": "#/$defs/Context"
+    },
+    "dataset_schema_version": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "id": {
+      "type": "string"
+    },
+    "input": {
+      "$ref": "#/$defs/Input"
+    },
+    "instruction": {
+      "type": "string"
+    },
+    "provenance": {
+      "$ref": "#/$defs/Provenance"
+    },
+    "reel_id": {
+      "type": "string"
+    },
+    "split": {
+      "$ref": "#/$defs/Split"
+    },
+    "target": {
+      "$ref": "#/$defs/Target"
+    },
+    "task": {
+      "$ref": "#/$defs/Task"
+    },
+    "trainable": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "dataset_schema_version",
+    "id",
+    "task",
+    "reel_id",
+    "split",
+    "trainable",
+    "instruction",
+    "input",
+    "target",
+    "context",
+    "provenance"
+  ],
+  "title": "Record",
+  "type": "object"
+}

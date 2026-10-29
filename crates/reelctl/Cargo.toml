@@ -14,6 +14,7 @@ path = "src/main.rs"
 anyhow.workspace = true
 clap.workspace = true
 compositor = { path = "../compositor" }
+dataset = { path = "../dataset" }
 decompile = { path = "../decompile" }
 diff = { path = "../diff" }
 edit-dna = { path = "../edit-dna" }

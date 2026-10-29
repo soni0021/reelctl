@@ -18,6 +18,7 @@ use edit_dna::EditDna;
 
 mod card;
 mod compositor_cmd;
+mod dataset_cmd;
 mod look_cmd;
 mod timeline_cmd;
 mod understand_cmd;
@@ -51,6 +52,8 @@ fn run() -> Result<()> {
         Command::Render(args) => timeline_cmd::render(args),
         Command::Qa(command) => timeline_cmd::qa(command),
         Command::Compositor(command) => compositor_cmd::compositor(command),
+        Command::Dataset(command) => dataset_cmd::run_dataset(command),
+        Command::Eval(args) => dataset_cmd::run_eval(args),
         Command::WhisperWorker(args) => whisper_worker(args),
     }
 }
@@ -90,6 +93,11 @@ enum Command {
     Qa(timeline_cmd::QaCommand),
     /// Cut a presenter out of a video: `isolate-presenter`.
     Compositor(compositor_cmd::CompositorCommand),
+    /// Build instruction-tuning records from decompiled reels: `build`.
+    Dataset(dataset_cmd::DatasetCommand),
+    /// Score a model's answers against measured truth (an understanding.json or a
+    /// dataset). Offline: it reads an answers file and never calls a model.
+    Eval(dataset_cmd::EvalArgs),
     /// Internal: runs whisper passes for a parent `reelctl`, one JSON line in
     /// and one out per pass, so a whisper.cpp abort cannot end the parent.
     #[command(hide = true)]
