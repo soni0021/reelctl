@@ -11,27 +11,26 @@ sha256 -> ids/split -> metrics -> records (types, schema) -> builder -> jsonl/ma
 
 ## Tasks
 
-- [x] 1. Spec and plan written (this commit).
-- [ ] 2. `crates/dataset` skeleton in the workspace; `sha256` with the NIST vectors.
-- [ ] 3. Reel id check and `split_for`; tests for stability, no `val` at 0 percent, distribution.
-- [ ] 4. `metrics`: matching, precision/recall/F1 from counts, IoU, means, medians, rates, non-finite refused; hand-made and degenerate cases.
-- [ ] 5. Record types, `dataset_schema_version`, JSON schema file and its up-to-date test.
-- [ ] 6. Builder: `edit_events`, `pacing` records from `EditDna` with schema gating; skips with reasons; refusal of unknown schema versions.
-- [ ] 7. Builder: `clip_picks` from `Understanding` and the DNA; leakage tests (teacher prose, paths); determinism under shuffled input.
-- [ ] 8. JSONL writer, manifest, warnings for an empty split.
-- [ ] 9. Eval: `clip_picks` scoring and the round-trip test; `edit_events`; `pacing`; the report.
-- [ ] 10. `reelctl dataset build` and `reelctl eval` (`crates/reelctl/src/dataset_cmd.rs`), additive edits to `main.rs`.
-- [ ] 11. End-to-end test `dataset_fixture.rs` on generated fixtures with the scrubbed environment.
-- [ ] 12. Docs: README, `status.md`, `cli.md`, CHANGELOG, AGENTS.md crate list, `finetune.md`, ADR-024, capability map; real command output recorded in `status.md`.
+- [x] 1. Spec and plan written.
+- [x] 2. `crates/dataset` skeleton in the workspace; `sha256` with the NIST vectors.
+- [x] 3. Reel id check and `split_for`; tests for stability, no `val` at 0 percent, distribution.
+- [x] 4. `metrics`: matching, precision/recall/F1 from counts, IoU, means, medians, rates, non-finite refused; hand-made and degenerate cases.
+- [x] 5. Record types, `dataset_schema_version`, JSON schema files and their up-to-date test.
+- [x] 6. Builder: `edit_events`, `pacing` records from `EditDna` with schema gating; skips with reasons; refusal of unknown schema versions.
+- [x] 7. Builder: `clip_picks` from `Understanding` and the DNA; leakage tests (teacher prose, paths); determinism under shuffled input.
+- [x] 8. JSONL writer, manifest, warnings for an empty split.
+- [x] 9. Eval: `clip_picks` scoring and the round-trip test; `edit_events`; `pacing`; the report.
+- [x] 10. `reelctl dataset build` and `reelctl eval` (`crates/reelctl/src/dataset_cmd.rs`), additive edits to `main.rs`.
+- [x] 11. End-to-end test `dataset_fixture.rs` on generated fixtures with the scrubbed environment.
+- [x] 12. Docs: README, `status.md`, `cli.md`, CHANGELOG, AGENTS.md crate list, `finetune.md`, ADR-024, capability map; real command output recorded in `status.md`.
 - [ ] 13. Mutation pass on metrics, matching, split, hash; survivors in `status.md`; `cargo fmt --all`, `cargo check --workspace --all-targets` with no warnings, `cargo test --workspace` once.
 - [ ] 14. `audit` subagent on the committed branch.
 
 ## Commits
 
 1. `docs: spec and plan for the P3 dataset collector and eval harness`
-2. `feat: dataset crate with records, builder, metrics and eval` (tasks 2 to 9, with the crate-list docs)
-3. `feat: reelctl dataset build and reelctl eval` (tasks 10 to 12)
-4. `test: mutation survivors in the dataset metrics and split` (task 13)
+2. `feat: reelctl dataset build and reelctl eval, with the dataset crate` (tasks 2 to 12, in one commit because the workspace member, `Cargo.lock` and the `reelctl` dependency have to land together to build from a clean checkout)
+3. `test: mutation survivors in the dataset metrics and split` (task 13)
 
 ## Risks
 

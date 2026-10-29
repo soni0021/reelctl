@@ -13,6 +13,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+dataset = { path = "../dataset" }
 decompile = { path = "../decompile" }
 diff = { path = "../diff" }
 edit-dna = { path = "../edit-dna" }

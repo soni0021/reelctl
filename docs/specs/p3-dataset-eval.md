@@ -1,6 +1,6 @@
 # Spec: P3 offline half, a dataset collector and an eval harness (`dataset`)
 
-Status: written 2026-10-29 under the user's "p1-p3" (after "P3 with dataset collector and eval harness" and "skip fine tuning for now"); the user has not reviewed it line by line. Branch: `feature/p3-dataset-eval`, cut from `main` at b312ffd. Implements the part of P3 in [planer.md](../../planer.md) section 7 that needs no GPU and no training: turning decompiled reels into instruction-tuning records, and scoring a model's answers against them. The LoRA training itself is **not built** and the user has deferred it ([finetune.md](../finetune.md)). Module `dataset-eval` in the [P0 capability map](p0-capability-map.md).
+Status: built (see [status](../status.md#p3-dataset-collector-and-eval-harness-2026-10-29)); written 2026-10-29 under the user's "p1-p3" (after "P3 with dataset collector and eval harness" and "skip fine tuning for now"); the user has not reviewed it line by line. Branch: `feature/p3-dataset-eval`, cut from `main` at b312ffd. Implements the part of P3 in [planer.md](../../planer.md) section 7 that needs no GPU and no training: turning decompiled reels into instruction-tuning records, and scoring a model's answers against them. The LoRA training itself is **not built** and the user has deferred it ([finetune.md](../finetune.md)). Module `dataset-eval` in the [P0 capability map](p0-capability-map.md).
 
 ## Objective
 
@@ -75,7 +75,7 @@ Exit codes: 0 success; 1 runtime error (unreadable or unparseable input, unknown
 
 ### Skips (recorded in the manifest, printed on stderr)
 
-A skip names the reel id (or the input file name, never its directory), the task, a reason code, and a detail. Reasons: `bad_reel_id`; `zero_duration` (an `edit_dna.json` with `duration_ms` 0); `non_finite_value` (a number the record needs is NaN or infinite); `no_matching_edit_dna` (an `understanding.json` whose reel id has no `--dna` file); `duration_mismatch` (`source.duration_ms` differs from the DNA's); `no_rule_compliant_clips` (every clip has flags, or there are none); `inconsistent_understanding` (a kept clip names a segment ID that is not in `segments`); `duplicate_understanding` (the same bytes given twice). The number of flagged clips left out of targets is counted in the manifest. A reel whose `edit_dna.json` is fine and whose understanding is skipped still gets its `edit_events` and `pacing` records.
+A skip names the reel id (or the input file name, never its directory), the task, a reason code, and a detail. Reasons: `bad_reel_id`; `zero_duration` (an `edit_dna.json` with `duration_ms` 0); `non_finite_value` (a number the record needs is NaN or infinite); `no_matching_edit_dna` (an `understanding.json` whose reel id has no `--dna` file); `duration_mismatch` (`source.duration_ms` differs from the DNA's); `no_rule_compliant_clips` (every clip has flags, or there are none); `inconsistent_understanding` (a kept clip names a segment ID that is not in `segments`); `clips_not_reproducible` (a kept clip does not rebuild into a rule-compliant clip from the `edit_dna.json`'s pauses, which shows that the DNA is not the run's; added while building); `duplicate_understanding` (the same bytes given twice). The number of flagged clips left out of targets is counted in the manifest. A reel whose `edit_dna.json` is fine and whose understanding is skipped still gets its `edit_events` and `pacing` records.
 
 ### Splits
 
@@ -90,7 +90,7 @@ A skip names the reel id (or the input file name, never its directory), the task
 **Truth kinds.** A `.json` file is an `understanding.json` (`--dna` of the same reel is required, exit 2 without it, because the clip rules need the measured pauses and that file has none; its `duration_ms` must equal `source.duration_ms`, else exit 1). A directory is a dataset written by `dataset build` (`train.jsonl` and `val.jsonl` per `--split`, default `val`); a `.jsonl` file is read as one split. Only one answer format exists per truth kind:
 
 - **Understanding truth:** the answers file is a `VlmReply` JSON (what `reelctl understand --replay` reads) or a bare `RawReply`. Only `reel_candidates` is read: the five segment IDs of each pick, in order.
-- **Dataset truth:** a JSONL file, one line per record: `{"id": "<record id>", "answer": <a value shaped like that task's target>}`. For `clip_picks` an answer pick may also give `start_segment` and `end_segment`; absent, they default to the hook and the cutoff (the rules do not use them to decide the clip). A record with no line is **unanswered**; a line that does not parse is **unparseable** (listed in `problems`, at most 20, then counted); an `id` twice is an error (exit 1); an `id` not in the truth is counted as `extra_answers` and ignored.
+- **Dataset truth:** a JSONL file, one line per record: `{"id": "<record id>", "answer": <a value shaped like that task's target>}`. For `clip_picks` an answer pick may also give `start_segment` and `end_segment`; absent, they default to the hook and the cutoff (the rules do not use them to decide the clip). A record with no line is **missing**; a line that does not parse as JSON, or whose answer is not the task's shape, is **unparseable** (listed in `problems`, at most 20, then counted) and scored as no answer; an `id` twice is an error (exit 1); an `id` that is in no scored record (a record of the other split is one) is counted as `extra_answers` and ignored. `answered` is the records with a usable answer. (Written as "unanswered" before building; the report says `missing`.)
 
 An empty split to score is an error (exit 1, "split val has no records"), not a score.
 
@@ -129,7 +129,7 @@ Per field, over records where the truth and the answer both have a value: `mean_
 
 ### Report
 
-`eval` prints one JSON object (or `--format text`): `eval_schema_version` (1), `truth_kind`, `split`, `records`, `answered`, `unanswered`, `unparseable`, `extra_answers`, `problems`, `tolerances`, and one entry per task present: `clip_picks`, `edit_events`, `pacing`. The same fields in the same order for every model, so two reports are compared by diffing them. A report is not a ranking: nothing here defines a pass mark.
+`eval` prints one JSON object (or `--format text`): `eval_schema_version` (1), `truth_kind`, `split`, `records`, `answered`, `missing`, `unparseable`, `extra_answers`, `problems`, `tolerances`, and one entry per task present: `clip_picks`, `edit_events`, `pacing`. The same fields in the same order for every model, so two reports are compared by diffing them. A report is not a ranking: nothing here defines a pass mark.
 
 ## Boundaries
 

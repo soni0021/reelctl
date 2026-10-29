@@ -1,0 +1,237 @@
+{
+  "$defs": {
+    "FileInfo": {
+      "properties": {
+        "records": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sha256": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "records",
+        "sha256"
+      ],
+      "type": "object"
+    },
+    "ManifestFiles": {
+      "properties": {
+        "train.jsonl": {
+          "$ref": "#/$defs/FileInfo"
+        },
+        "val.jsonl": {
+          "$ref": "#/$defs/FileInfo"
+        }
+      },
+      "required": [
+        "train.jsonl",
+        "val.jsonl"
+      ],
+      "type": "object"
+    },
+    "ManifestReel": {
+      "properties": {
+        "edit_dna_sha256": {
+          "type": "string"
+        },
+        "reel_id": {
+          "type": "string"
+        },
+        "split": {
+          "$ref": "#/$defs/Split"
+        }
+      },
+      "required": [
+        "reel_id",
+        "split",
+        "edit_dna_sha256"
+      ],
+      "type": "object"
+    },
+    "Skip": {
+      "properties": {
+        "detail": {
+          "type": "string"
+        },
+        "input": {
+          "description": "A reel id, or an input file's name (never its directory).",
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/$defs/SkipReason"
+        },
+        "task": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Task"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "`None` when the whole input was skipped."
+        }
+      },
+      "required": [
+        "input",
+        "reason",
+        "detail"
+      ],
+      "type": "object"
+    },
+    "SkipReason": {
+      "description": "Why a record, or a whole input, was not built. The detail says which.",
+      "oneOf": [
+        {
+          "const": "bad_reel_id",
+          "description": "The reel id (the file name without `.edit_dna.json`) has characters that are not allowed.",
+          "type": "string"
+        },
+        {
+          "const": "zero_duration",
+          "description": "The `edit_dna.json` has a duration of 0.",
+          "type": "string"
+        },
+        {
+          "const": "non_finite_value",
+          "description": "A number the record needs is NaN or infinite.",
+          "type": "string"
+        },
+        {
+          "const": "no_matching_edit_dna",
+          "description": "An `understanding.json` whose reel has no `edit_dna.json` among the inputs.",
+          "type": "string"
+        },
+        {
+          "const": "duration_mismatch",
+          "description": "The understanding's `source.duration_ms` differs from the DNA's.",
+          "type": "string"
+        },
+        {
+          "const": "no_rule_compliant_clips",
+          "description": "Every clip of the run has flags, or the run has none.",
+          "type": "string"
+        },
+        {
+          "const": "inconsistent_understanding",
+          "description": "A kept clip names a segment ID that the run's segments do not have.",
+          "type": "string"
+        },
+        {
+          "const": "clips_not_reproducible",
+          "description": "A kept clip does not rebuild into a rule-compliant clip from the DNA's pauses.",
+          "type": "string"
+        },
+        {
+          "const": "duplicate_understanding",
+          "description": "The same `understanding.json` bytes were given twice.",
+          "type": "string"
+        }
+      ]
+    },
+    "Split": {
+      "enum": [
+        "train",
+        "val"
+      ],
+      "type": "string"
+    },
+    "SplitCounts": {
+      "properties": {
+        "train": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "val": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "train",
+        "val"
+      ],
+      "type": "object"
+    },
+    "Task": {
+      "enum": [
+        "clip_picks",
+        "edit_events",
+        "pacing"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "dataset_schema_version": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "files": {
+      "$ref": "#/$defs/ManifestFiles"
+    },
+    "flagged_clips_left_out": {
+      "description": "Clips of an understanding run that were left out of the targets for having flags.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "records": {
+      "additionalProperties": {
+        "$ref": "#/$defs/SplitCounts"
+      },
+      "description": "Per task, in task order, the records written to each split.",
+      "type": "object"
+    },
+    "reels": {
+      "items": {
+        "$ref": "#/$defs/ManifestReel"
+      },
+      "type": "array"
+    },
+    "salt": {
+      "type": "string"
+    },
+    "skipped": {
+      "items": {
+        "$ref": "#/$defs/Skip"
+      },
+      "type": "array"
+    },
+    "tool_version": {
+      "type": "string"
+    },
+    "val_percent": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "warnings": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "dataset_schema_version",
+    "tool_version",
+    "salt",
+    "val_percent",
+    "reels",
+    "files",
+    "records",
+    "skipped",
+    "flagged_clips_left_out",
+    "warnings"
+  ],
+  "title": "Manifest",
+  "type": "object"
+}

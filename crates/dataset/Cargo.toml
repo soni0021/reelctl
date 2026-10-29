@@ -1,0 +1,16 @@
+[package]
+name = "dataset"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Instruction-tuning records from decompiled reels, and metrics that score a model's answers against them"
+
+[dependencies]
+diff = { path = "../diff" }
+edit-dna = { path = "../edit-dna" }
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+understand = { path = "../understand" }

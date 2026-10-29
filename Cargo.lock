@@ -282,6 +282,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "dataset"
+version = "0.1.0"
+dependencies = [
+ "diff",
+ "edit-dna",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "understand",
+]
+
+[[package]]
 name = "decompile"
 version = "0.1.0"
 dependencies = [
@@ -940,6 +953,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "dataset",
  "decompile",
  "diff",
  "edit-dna",

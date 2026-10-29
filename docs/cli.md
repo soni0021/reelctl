@@ -273,13 +273,42 @@ reelctl qa inspect-boundaries --project edit.otio --out-dir views/
 - Media paths must be plain local files (no `://`, `concat:` or `pipe:`; a directory or device is refused); `ffmpeg` and `ffprobe` run with only the `file` protocol allowed.
 - Exit 2: a bad argument, an unreadable or invalid project or DNA, a media file that is missing, not a regular file or not a local path, a file `ffprobe` cannot read, a span outside the timeline, a project with no frames or with values out of range, an oversize `--size` or `--card-ms`, or a DNA that is not the media's. Exit 1: `ffmpeg` or `ffprobe` missing, `ffmpeg` failing, or an `--out` that cannot be written.
 
+## reelctl dataset build
+
+```bash
+reelctl dataset build --dna <dir|edit_dna.json>... [--understanding <understanding.json>...] --out <dir> [--val-percent 10] [--salt reelctl-dataset-v1]
+```
+
+Writes instruction-tuning records for a later fine-tune ([finetune.md](finetune.md), [spec](specs/p3-dataset-eval.md)). Offline: no network, no model. The output is `train.jsonl`, `val.jsonl` and `manifest.json` in `--out` (created if missing; files of those names are replaced through a temporary file; other files are left alone). It prints one line, `wrote N records (a train, b val) from R reels, S skipped, to <out>`, and one `skipped ...` or `warning: ...` line on stderr for each skip and warning.
+
+- `--dna`: a directory (every regular file directly inside it whose name ends `.edit_dna.json`, not recursive) or files; repeatable. The reel id is the file name without `.edit_dna.json`. A file whose id has characters other than `A-Za-z0-9._-` (or is empty, starts with a dot, or is over 96 characters) is skipped as `bad_reel_id`; two files with one id are an error.
+- `--understanding`: `understanding.json` files. A run joins the reel whose id is the file stem of its `source.path` (never copied) and whose duration matches the `edit_dna.json`'s. It adds a `clip_picks` record of the clips that met every clip rule; flagged clips and all model prose are left out and counted.
+- `--val-percent 0..50` and `--salt`: the split is by reel, from the salt and the reel id only, so every record of a reel is in one split and adding reels never moves one. `--val-percent 0` leaves `val` empty.
+- Records: `edit_events` and `pacing` for each reel, `clip_picks` for each usable understanding run. The record fields, the targets, and the reasons a record is skipped are in [finetune.md](finetune.md#the-data-format-the-collector-writes) and the [spec](specs/p3-dataset-eval.md). Output is byte-identical for the same inputs whatever order they are given in.
+- An `edit_dna.json` whose `schema_version` is missing, 0 or above 4, or an `understanding.json` whose is not 1, is an error (exit 1) and nothing is written. Unparseable files are errors too.
+- Exit 2: `--val-percent` over 50, a `--dna` directory with no `.edit_dna.json`, or an input that is not a regular file. Exit 1: unreadable or unusable input, duplicate reel ids, or an output that cannot be written.
+
+## reelctl eval
+
+```bash
+reelctl eval --truth <understanding.json | dataset dir | .jsonl> --answers <file> [--dna <edit_dna.json>] [--split val|train|all] [--cut-tolerance-ms 100] [--event-tolerance-ms 250] [--format json|text]
+```
+
+Scores a model's answers against measured truth; reads files only, never calls a model ([spec](specs/p3-dataset-eval.md) defines every metric, its ties and its degenerate cases).
+
+- **Truth is an `understanding.json`:** `--dna` of the same video is required (exit 2 without it) because the clip rules need the measured pauses; the durations must match (exit 1 otherwise). `--answers` is a model reply: the file `reelctl understand --replay` reads, or a bare reply. Only `reel_candidates` is read. `--split` is ignored.
+- **Truth is a dataset** (the directory `dataset build` wrote, or one of its `.jsonl` files): `--answers` is JSON lines `{"id": "<record id>", "answer": <shaped like the task's target>}`. `--split` (default `val`) picks the records. Records with no line are `missing`; a line that does not parse is `unparseable` (listed in `problems`, the first 20) and scored as no answer; a duplicate id is an error; a line whose id is not among the scored records, including records of the other split, is counted in `extra_answers` and ignored. A split with no records is an error (exit 1), not a score.
+- **Report:** JSON by default, or `--format text`. `eval_schema_version`, `truth_kind`, `split`, `records`, `answered`, `missing`, `unparseable`, `extra_answers`, `problems`, `tolerances`, then `clip_picks`, `edit_events` and `pacing` where the truth has them. `clip_picks` has `valid_rate` and `rule_pass_rate` (about the answer alone), then agreement with the named teacher: `hook`, `payoff_given_hook`, `cutoff_given_hook` and `interval` (IoU at least 0.5). `edit_events` has `cuts` and `visual_events` (precision, recall, F1, timing error), `scale` and `zoom_curves` errors. `pacing` has mean absolute error and exact rate per field and the payoff accuracy. A score that cannot be computed (nothing to score) is `null`, never 0 or NaN. Two reports are compared by diffing them; nothing in them is a pass mark.
+- `--cut-tolerance-ms` and `--event-tolerance-ms`: times this close (inclusive) are the same cut, or the same event of one kind.
+- Exit 2: an `understanding.json` without `--dna`. Exit 1: an unreadable or malformed file, an unknown schema version, a duration mismatch, an empty split, a duplicate answer id.
+
 ## Exit codes
 
 | Code | Meaning |
 |---|---|
 | 0 | Success |
 | 1 | Runtime error. stderr gets `error: ` and the cause chain, for example `error: decompile: open input: No such file or directory` or `error: decompile: whisper: model not found at /missing.bin` |
-| 2 | Invalid arguments, including more than three `--outlier` files or none, or a `--dna` for `understand` without whisper words; clap prints the usage |
+| 2 | Invalid arguments, including more than three `--outlier` files or none, or a `--dna` for `understand` without whisper words, or an `eval` of an `understanding.json` without `--dna`, or `--val-percent` over 50; clap prints the usage |
 | 3 | `reelctl understand` without `OPENROUTER_API_KEY` |
 | 4 | `reelctl understand` with a cost upper bound over `--max-cost-usd` |
 
