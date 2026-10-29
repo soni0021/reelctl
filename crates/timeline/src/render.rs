@@ -145,14 +145,14 @@ impl Taps {
     }
 }
 
-struct Zoom {
-    scale: f64,
-    ramp_frames: i64,
-    start: f64,
-    end: f64,
+pub(crate) struct Zoom {
+    pub(crate) scale: f64,
+    pub(crate) ramp_frames: i64,
+    pub(crate) start: f64,
+    pub(crate) end: f64,
 }
 
-fn zoom_of(clip: &Clip) -> Result<Option<Zoom>> {
+pub(crate) fn zoom_of(clip: &Clip) -> Result<Option<Zoom>> {
     let Some(map) = reelctl(&clip.metadata).and_then(|map| map.get(PUNCH_IN_KEY)) else {
         return Ok(None);
     };
@@ -176,14 +176,14 @@ fn zoom_of(clip: &Clip) -> Result<Option<Zoom>> {
     }))
 }
 
-fn fade_ms(clip: &Clip) -> u64 {
+pub(crate) fn fade_ms(clip: &Clip) -> u64 {
     reelctl(&clip.metadata)
         .and_then(|map| map.get(FADE_KEY))
         .and_then(Value::as_u64)
         .unwrap_or(0)
 }
 
-fn card_of(reference: &GeneratorReference, frames: i64) -> Result<CardSpec> {
+pub(crate) fn card_of(reference: &GeneratorReference, frames: i64) -> Result<CardSpec> {
     let text = |key: &str| -> Result<String> {
         reference
             .parameters
@@ -215,7 +215,7 @@ fn media_index(media: &mut Vec<String>, url: &str) -> usize {
 }
 
 /// Whether `next` plays on from where `previous` stopped, with no cut between.
-fn continues(previous: &Item, next: &Item, rate: f64) -> Result<bool> {
+pub(crate) fn continues(previous: &Item, next: &Item, rate: f64) -> Result<bool> {
     let (Item::Clip(a), Item::Clip(b)) = (previous, next) else {
         return Ok(false);
     };

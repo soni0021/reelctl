@@ -87,7 +87,7 @@ Mapping, with `fps` the project rate, `ms(f) = f * 1000 / fps`, `W x H` the outp
 | Silence generator | no mixer input (the mixer outputs silence) |
 | End | `send_eos_when: {"all_inputs": true}` on video and audio; the "clock" input when the last item has no input |
 
-The order of the requests is fixed: reset, images, inputs, output, scheduled updates, scheduled unregisters, `start`. The same project gives the same requests.
+The order of the requests is fixed: images, inputs, output, scheduled updates, scheduled unregisters, `start` (no reset: a server is started for one render). The same project gives the same requests.
 
 ### The backend (`crates/reelctl/src/smelter_backend.rs`, `smelter_client.rs`)
 
