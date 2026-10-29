@@ -285,15 +285,15 @@ reelctl overlay remove --project edit.otio --id ID --out edit.otio
 | Command | Stdout line |
 |---|---|
 | `overlay add-chart` | `overlay add-chart: out= id= frames=a..b asset= unchanged= renderer="..."` (`renderer` is missing when `unchanged=true`) |
-| `overlay remove` | `overlay remove: out= id= removed=true` |
+| `overlay remove` | `overlay remove: out= id= removed=true` (exit 2 if the project has no overlay with that id) |
 
 The spec is a JSON object, at most 64 KiB, and unknown fields are refused:
 
 | Field | |
 |---|---|
 | `kind` | `bar` (1 to 8 points), `line` (2 to 24) or `number-callout` (exactly 1) |
-| `title` | 1 to 60 characters |
-| `series` | `[{"label": 1 to 24 characters, "value": number}]`; 0 to 1e12 for bars and lines, magnitude at most 1e12 for the callout |
+| `title` | 1 to 60 characters, not only spaces |
+| `series` | `[{"label": 1 to 24 characters (not only spaces), "value": number}]`; 0 to 1e12 for bars and lines, magnitude at most 1e12 for the callout |
 | `unit` | optional, 1 to 8 characters, shown after every value |
 | `start_ms`, `end_ms` | the span on the edited timeline, 500 to 30000 ms, inside the timeline, rounded to the nearest frame |
 | `position` | `top`, `center` (default) or `bottom` |

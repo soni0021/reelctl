@@ -70,7 +70,12 @@ class ReelctlChart(m.Scene):
         # The marks are placed against the chart, so they move with it.
         block = m.VGroup(body, *marks)
         m.VGroup(title, block).arrange(m.DOWN, buff=0.6)
+        # A span shorter than the draw-in is all draw-in, so the video is never longer
+        # than the span (500 ms is the shortest span reelctl accepts).
+        animation = min(ANIMATION_SECONDS, DATA["duration_s"])
         self.add(title)
-        self.play(m.Create(body), run_time=ANIMATION_SECONDS)
+        self.play(m.Create(body), run_time=animation)
         self.add(*marks)
-        self.wait(max(DATA["duration_s"] - ANIMATION_SECONDS, 0))
+        remaining = DATA["duration_s"] - animation
+        if remaining > 0:
+            self.wait(remaining)

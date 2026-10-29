@@ -85,6 +85,10 @@ mod tests {
         assert_eq!(TEMPLATE.matches(MARKER).count(), 1);
         assert!(TEMPLATE.contains(&format!("class {SCENE_NAME}(")));
         assert!(TEMPLATE.contains("m.config.background_color = \"#ff00ff\""));
+        // The draw-in never outlasts a short span (the shortest is 500 ms).
+        assert!(TEMPLATE.contains("animation = min(ANIMATION_SECONDS, DATA[\"duration_s\"])"));
+        assert!(TEMPLATE.contains("run_time=animation"));
+        assert!(!TEMPLATE.contains("run_time=ANIMATION_SECONDS"));
         assert!(TEMPLATE.contains(&format!("\"{}\"", timeline::KEY_COLOR)));
     }
 

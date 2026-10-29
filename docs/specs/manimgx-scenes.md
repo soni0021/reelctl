@@ -114,7 +114,7 @@ The video of the project is concatenated as before. When there are overlays, the
 
 ## Commands and errors
 
-Exit 2: a bad spec, a spec file that is not a plain local file or is over 64 KiB, an unknown field, a span outside the timeline, an overlap, layout problems found by `inspect`, a `://` in a path, a project the overlay cannot be put in. Exit 1: the worker is missing, does not answer `--version`, fails, times out, or writes a video that fails the checks; `ffmpeg` fails. `add-chart` prints `overlay add-chart: out=… id=… frames=A..B asset=… unchanged=false`.
+Exit 2: a bad spec, a spec file that is not a plain local file or is over 64 KiB, an unknown field, a span outside the timeline, an overlap, layout problems found by `inspect`, a `://` in a path, a project the overlay cannot be put in. Exit 1: the worker is missing, does not answer `--version`, fails, times out, or writes a video that fails the checks; `ffmpeg` fails. `add-chart` prints `overlay add-chart: out=… id=… frames=A..B asset=… unchanged=false renderer="…"`.
 
 ## Boundaries
 
