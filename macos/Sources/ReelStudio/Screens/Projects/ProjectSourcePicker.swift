@@ -9,7 +9,10 @@ enum ProjectSourceChoice: Hashable, Sendable {
     case asset(AssetID)
     case subject(SubjectID)
 
-    var isNone: Bool { self == .none }
+    var isNone: Bool {
+        if case .none = self { return true }
+        return false
+    }
 
     /// The input for `jobs.submit`; nil when nothing is chosen or the subject
     /// has no `out` yet.

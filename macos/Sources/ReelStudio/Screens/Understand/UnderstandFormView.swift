@@ -143,6 +143,6 @@ struct UnderstandPlanCard: View {
     }
 
     private func countdown(_ seconds: Int) -> String {
-        String(format: "%d:%02d", seconds / 60, seconds % 60)
+        String(format: "%ld:%02ld", seconds / 60, seconds % 60)
     }
 }

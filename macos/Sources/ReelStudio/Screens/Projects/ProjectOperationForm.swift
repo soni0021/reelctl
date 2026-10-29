@@ -120,7 +120,7 @@ struct ProjectOperationForm: View {
 
     private func sourceBinding(_ role: String) -> Binding<ProjectSourceChoice> {
         Binding<ProjectSourceChoice>(
-            get: { sources[role] ?? .none },
+            get: { sources[role] ?? ProjectSourceChoice.none },
             set: { sources[role] = $0 }
         )
     }
@@ -143,7 +143,7 @@ struct ProjectOperationForm: View {
         }
         var inputs: [String: InputRef] = [:]
         for slot in operation.inputs {
-            let choice = sources[slot.role] ?? .none
+            let choice: ProjectSourceChoice = sources[slot.role] ?? ProjectSourceChoice.none
             if choice.isNone {
                 if slot.required {
                     localProblem = ProjectFormProblem(command: operation.command, key: slot.role, message: "\(slot.title) is required.")

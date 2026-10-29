@@ -151,7 +151,7 @@ final class AppModel {
             studio = Studio(client: calls)
             events = Studio(client: pushes)
             try await events?.subscribe { [weak self] event in
-                Task { @MainActor in self?.apply(event) }
+                Task { @MainActor [weak self] in self?.apply(event) }
             }
             connection = .connected
             await refresh()

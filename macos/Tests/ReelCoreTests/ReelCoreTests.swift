@@ -66,7 +66,8 @@ final class FakeServer: @unchecked Sendable {
                 lock.unlock()
                 let method = request["method"].string ?? ""
                 if let note = push[method] {
-                    write(client, ["jsonrpc": "2.0", "method": note["method"], "params": note["params"]].text + "\n")
+                    let notification: JSONValue = ["jsonrpc": "2.0", "method": note["method"], "params": note["params"]]
+                    write(client, notification.text + "\n")
                 }
                 let reply = replies[method] ?? ["error": ["code": -32601, "message": "no method"]]
                 var message: [String: JSONValue] = ["jsonrpc": "2.0", "id": request["id"]]

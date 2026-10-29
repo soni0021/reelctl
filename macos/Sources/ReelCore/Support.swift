@@ -92,11 +92,11 @@ public enum KeyStore {
 
     public static func read() -> String? {
         for dataProtection in [true, false] {
-            var query = query(dataProtection: dataProtection)
-            query[kSecReturnData as String] = true
-            query[kSecMatchLimit as String] = kSecMatchLimitOne
+            var request = query(dataProtection: dataProtection)
+            request[kSecReturnData as String] = true
+            request[kSecMatchLimit as String] = kSecMatchLimitOne
             var item: CFTypeRef?
-            if SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+            if SecItemCopyMatching(request as CFDictionary, &item) == errSecSuccess,
                let data = item as? Data,
                let key = String(data: data, encoding: .utf8),
                !key.isEmpty
@@ -115,10 +115,10 @@ public enum KeyStore {
         delete()
         let data = Data(key.utf8)
         for dataProtection in [true, false] {
-            var query = query(dataProtection: dataProtection)
-            query[kSecValueData as String] = data
-            query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
-            let status = SecItemAdd(query as CFDictionary, nil)
+            var request = query(dataProtection: dataProtection)
+            request[kSecValueData as String] = data
+            request[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
+            let status = SecItemAdd(request as CFDictionary, nil)
             if status == errSecSuccess { return dataProtection ? "data protection keychain" : "login keychain" }
         }
         throw RPCError(code: RPCError.internalError, message: "the Keychain refused to store the key")

@@ -13,7 +13,7 @@ func formatMs(_ ms: Int64) -> String {
     let seconds = Double(ms) / 1000
     if seconds < 60 { return String(format: "%.3f s", seconds) }
     let minutes = Int(seconds) / 60
-    return String(format: "%d:%04.1f", minutes, seconds - Double(minutes * 60))
+    return String(format: "%ld:%04.1f", minutes, seconds - Double(minutes * 60))
 }
 
 func formatBytes(_ bytes: UInt64) -> String {
@@ -178,8 +178,11 @@ final class FramePlayer {
 
     init() {
         observer = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 30), queue: .main) { [weak self] time in
+            let seconds = time.seconds
+            let ms = seconds.isFinite ? Int64(seconds * 1000) : 0
             MainActor.assumeIsolated {
-                self?.currentMs = Int64(time.seconds * 1000)
+                guard let self else { return }
+                self.currentMs = ms
             }
         }
     }
@@ -203,7 +206,7 @@ final class FramePlayer {
         seeking = true
         self.target = nil
         player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.seeking = false
                 if self.target != nil { self.chase() }
