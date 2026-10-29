@@ -17,6 +17,7 @@ use diff::{compare_many, render_text, NamedReel};
 use edit_dna::EditDna;
 
 mod card;
+mod compositor_cmd;
 mod look_cmd;
 mod timeline_cmd;
 mod understand_cmd;
@@ -25,6 +26,7 @@ fn main() {
     let result = run();
     // Before any exit: a live ONNX Runtime environment makes the process abort at exit.
     decompile::release_onnx_runtime();
+    compositor::release_runtime();
     if let Err(err) = result {
         // Some failures have their own exit code (3: no API key, 4: over the cost cap).
         if let Some(exit) = err.downcast_ref::<understand_cmd::ExitWith>() {
@@ -48,6 +50,7 @@ fn run() -> Result<()> {
         Command::Funnel(command) => timeline_cmd::funnel(command),
         Command::Render(args) => timeline_cmd::render(args),
         Command::Qa(command) => timeline_cmd::qa(command),
+        Command::Compositor(command) => compositor_cmd::compositor(command),
         Command::WhisperWorker(args) => whisper_worker(args),
     }
 }
@@ -85,6 +88,8 @@ enum Command {
     Render(timeline_cmd::RenderArgs),
     /// Check a project: `inspect-boundaries`.
     Qa(timeline_cmd::QaCommand),
+    /// Cut a presenter out of a video: `isolate-presenter`.
+    Compositor(compositor_cmd::CompositorCommand),
     /// Internal: runs whisper passes for a parent `reelctl`, one JSON line in
     /// and one out per pass, so a whisper.cpp abort cannot end the parent.
     #[command(hide = true)]

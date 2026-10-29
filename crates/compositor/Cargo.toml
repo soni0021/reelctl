@@ -1,0 +1,15 @@
+[package]
+name = "compositor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Cut a presenter out of a video with RobustVideoMatting and composite it over a background"
+
+[dependencies]
+# `half` is ort's feature for the float16 RVM file. The ONNX Runtime library is
+# loaded at run time (ORT_DYLIB_PATH): nothing is linked or downloaded at build time.
+half = "2"
+ort = { workspace = true, features = ["half"] }
+serde_json.workspace = true
+thiserror.workspace = true

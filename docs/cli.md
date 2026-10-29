@@ -273,13 +273,41 @@ reelctl qa inspect-boundaries --project edit.otio --out-dir views/
 - Media paths must be plain local files (no `://`, `concat:` or `pipe:`; a directory or device is refused); `ffmpeg` and `ffprobe` run with only the `file` protocol allowed.
 - Exit 2: a bad argument, an unreadable or invalid project or DNA, a media file that is missing, not a regular file or not a local path, a file `ffprobe` cannot read, a span outside the timeline, a project with no frames or with values out of range, an oversize `--size` or `--card-ms`, or a DNA that is not the media's. Exit 1: `ffmpeg` or `ffprobe` missing, `ffmpeg` failing, or an `--out` that cannot be written.
 
+## reelctl compositor isolate-presenter
+
+```
+reelctl compositor isolate-presenter --input talk.mp4 --background "#0b1d2a" --weights rvm_mobilenetv3_fp32.onnx --out cutout.mp4
+reelctl compositor isolate-presenter --input talk.mp4 --background chart.png --weights rvm.onnx --out cutout.mp4 [--downsample-ratio 0.4]
+reelctl compositor isolate-presenter --input talk.mp4 --weights rvm.onnx --mode matte --out matte.mp4
+reelctl compositor isolate-presenter --input talk.mp4 --weights rvm.onnx --mode rgba --out presenter.mov
+```
+
+Cuts the presenter out of a video with RobustVideoMatting (RVM, a recurrent matting network) and writes the presenter over a background, the alpha matte alone, or the presenter with its alpha. The model is a file you supply (`--weights` or `REELCTL_RVM_WEIGHTS`: `rvm_mobilenetv3_fp32.onnx` or `rvm_mobilenetv3_fp16.onnx` from the [PeterL1n/RobustVideoMatting](https://github.com/PeterL1n/RobustVideoMatting/releases) releases) and ONNX Runtime is a library you install and name in `ORT_DYLIB_PATH` (an absolute path, version 1.17 or newer; macOS: `brew install onnxruntime`, or a conda wheel's `libonnxruntime.*.dylib`). Neither is bundled, downloaded or committed. It needs the `ffmpeg` and `ffprobe` command line tools, and uses no network.
+
+| Flag | Meaning |
+|---|---|
+| `--input` | The video with the presenter. SDR only: HDR (HLG or PQ) input exits 2 with a hint to convert it first |
+| `--background` | `#rrggbb` for a colour (the `#` is required), or the path of an image or video. A file is scaled to cover the frame and cropped at the centre, never stretched, and a video loops until the input ends. Required for `--mode composite`, refused for the other modes |
+| `--weights` | The RVM ONNX file; also `REELCTL_RVM_WEIGHTS` |
+| `--out` | Where to write. The file is made beside it under a temporary name and renamed when the whole run succeeds; a failed run leaves nothing |
+| `--mode` | `composite` (default, mp4: the presenter over `--background`), `matte` (mp4: the alpha as a grey video, limited range, so 16 is transparent and 235 opaque after decoding, no audio) or `rgba` (the presenter with straight alpha, ProRes 4444 in a `.mov`, which `--out` must be) |
+| `--downsample-ratio` | The model's downsample ratio, above 0 and at most 1. Default: 512 divided by the longest side, at most 1 (0.4 for 720p, 0.2667 for 1080p, 1 up to 512 pixels). A lower ratio is faster and sees less detail |
+
+One line on stdout: `isolate-presenter: out=cutout.mp4 mode=composite frames=151 size=1280x720 fps=29.970 downsample_ratio=0.4000 model=float32 model_ms=11600 ms_per_frame=76.8 total_ms=12749`. `model` is the precision of the weights file; `model_ms` is the time inside ONNX Runtime and `total_ms` the whole run.
+
+- The output has the input's size (cropped by at most one pixel to even sides, for H.264), its average frame rate made constant (a variable-rate phone video is resampled), and the original audio (AAC for mp4, `pcm_s16le` for mov; none for `matte`). A video with a rotation tag is rotated upright. Colour is converted with the video's own matrix, or BT.709 when untagged and 720 lines or taller (BT.601 below), and written as BT.709 limited range, tagged, so an opaque presenter keeps its colours.
+- The recurrent state runs from frame to frame for the whole clip, so frames are processed in order, one at a time; memory is a few frames' worth (about 210 MB for 720p and 420 MB for 1080x1920 in the runs in [status](status.md#rvm-presenter-2026-10-29)). `rgba` is large (about 22 MB per second at 720p).
+- Exit 2: no `--background` for composite or one with another mode, a `--background` that is neither `#rrggbb` nor a file, a missing or unreadable input or background, HDR input, a size under 16x16, `--out` a directory or without an extension (or not `.mov` for `rgba`), a `--downsample-ratio` outside 0 to 1, weights that are missing, a directory or not found, `ORT_DYLIB_PATH` unset, empty, relative, not a file or not loadable, or weights that are not an RVM model. These are all checked before the first frame is decoded, the input and background first and the weights after. Exit 1: `ffmpeg` or `ffprobe` missing or failing, the model failing or giving a non-finite alpha (the message names the frame), or an output that cannot be written.
+- Limits: the matte is the model's (a second person, a cluttered scene or a fast camera move gives what RVM gives; there is no refinement); HDR input is refused, not tone-mapped; a GPU provider is not used; the run is not real time on a CPU. OpenTimelineIO is not involved: `reelctl timeline init --input cutout.mp4` makes a project of the result. See [spec](specs/rvm-presenter.md) and [ADR-021](decisions/ADR-021-matte-presenters-with-rvm-through-a-second-onnx-session.md).
+- Manual check with the real model (not part of `cargo test`): `crates/compositor/examples/rvm_dump.rs` writes the crate's alpha for raw frames and `crates/compositor/manual/rvm_reference.py` compares it with the official Python path; the commands are in [status](status.md#rvm-presenter-2026-10-29).
+
 ## Exit codes
 
 | Code | Meaning |
 |---|---|
 | 0 | Success |
 | 1 | Runtime error. stderr gets `error: ` and the cause chain, for example `error: decompile: open input: No such file or directory` or `error: decompile: whisper: model not found at /missing.bin` |
-| 2 | Invalid arguments, including more than three `--outlier` files or none, or a `--dna` for `understand` without whisper words; clap prints the usage |
+| 2 | Invalid arguments, including more than three `--outlier` files or none, or a `--dna` for `understand` without whisper words; clap prints the usage. `timeline`, `render` and `compositor isolate-presenter` also use 2 for a file or setup that is unusable (see their sections) |
 | 3 | `reelctl understand` without `OPENROUTER_API_KEY` |
 | 4 | `reelctl understand` with a cost upper bound over `--max-cost-usd` |
 
