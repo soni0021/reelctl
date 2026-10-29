@@ -283,7 +283,7 @@ impl Queue {
             inputs: old.inputs,
             class: old.class,
             priority: old.priority,
-            after: Vec::new(),
+            after: old.after,
             env_names: old.env_names,
             force: old.force,
         })
@@ -438,6 +438,7 @@ fn dispatch(inner: Arc<Inner>, catalogue: Catalogue) {
 /// Resolve an input to its hash, and for an asset the file it is read from.
 fn resolve(
     catalogue: &Catalogue,
+    store: &Store,
     role: &str,
     input: &InputRef,
 ) -> Result<(String, Option<PathBuf>)> {
@@ -447,6 +448,14 @@ fn resolve(
             let asset = catalogue.asset(*asset)?.ok_or_else(|| {
                 StudioError::invalid(format!("input {role}: there is no asset {asset}"))
             })?;
+            // A copy in the store is the asset's bytes, wherever the source went.
+            if asset.copied {
+                if let Ok(path) = store.path(&asset.hash) {
+                    if path.is_file() {
+                        return Ok((asset.hash, Some(path)));
+                    }
+                }
+            }
             if !catalogue.asset_unchanged(&asset)? {
                 return Err(StudioError::invalid(format!(
                     "input {role}: {} changed or is gone since it was imported",
@@ -475,7 +484,7 @@ fn execute(inner: &Inner, job: &Job, cancel: &AtomicBool) -> Result<JobStatus> {
     let mut hashes = BTreeMap::new();
     let mut referenced = BTreeMap::new();
     for (role, input) in &job.inputs {
-        let (hash, path) = resolve(&catalogue, role, input)?;
+        let (hash, path) = resolve(&catalogue, &inner.store, role, input)?;
         if let Some(path) = path {
             referenced.insert(role.clone(), path);
         }

@@ -308,6 +308,9 @@ pub fn write_caption_sequence(plan: &CaptionPlan, size: RenderSize, dir: &Path) 
         .save(&blank)
         .with_context(|| format!("write {}", blank.display()))?;
     for (frame, shown) in plan.shown.iter().enumerate() {
+        if frame % 256 == 0 {
+            crate::timeline_cmd::cancelled()?;
+        }
         let source = shown.map_or(&blank, |state| &states[state]);
         let link = dir.join(format!("cap_{frame:06}.png"));
         fs::hard_link(source, &link)

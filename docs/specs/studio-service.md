@@ -107,18 +107,19 @@ Migrations are explicit and numbered. An unknown `version`, newer than this bina
 | `store.gc` | `{dry_run}` | as in section 3 |
 | `understand.plan` | `{subject, input, dna, model?, max_cost_usd?, ...}` | `{plan, cost_upper_bound_usd, frames, images, expires_at}` |
 | `understand.run` | `{plan, approved_max_usd, api_key}` | `{job}` |
-| `pipelines.make_reels` | as the `make-reels` flags, plus `{subject}` | `{jobs: [...], subject}` |
+| `pipelines.make_reels` | as the `make-reels` flags (`input`, `outliers`, `target_url`, ...), plus `dna?`, `understanding?`, `subject?` | `{stage, subject, ...}`: `decompile` with `jobs`, `plan` with `plan`, or `reels` with `reels`, `follow`, `notes` (see `docs/cli.md`) |
+| `jobs.argv` | `{job}` | `{argv}`: the job as `reelctl` arguments, for "Copy as CLI command"; never a key |
 | `shutdown` | none | `{}`; running jobs are cancelled cleanly |
 
 Errors are JSON-RPC errors with `code` and `message`, and `data.exit_code` when a child's exit code is the cause (2 to 4, as on the command line).
 
-- **The paid call takes two requests.** `understand.plan` runs `understand --dry-run` as a job and stores the bound, reported rounded up to the next $0.0001. `understand.run` is refused unless it names an unused, unexpired plan (15 minutes) and `approved_max_usd` equals that bound ([ADR-031](../decisions/ADR-031-a-live-understand-call-needs-the-plans-bound-approved-exactly.md)), which is then passed as `--max-cost-usd`. `jobs.submit` refuses `understand`, and `jobs.retry` refuses a live one. The key comes in that request only. It is kept in memory for that one child's environment and never written to the catalogue, an event, a log or an error. The client (the Mac app) asks the user each time. A request without `approved_max_usd` cannot make a live call.
+- **The paid call takes two requests.** `understand.plan` runs `understand --dry-run` as a job and stores the bound, reported as the printed bound plus $0.0001. `understand.run` is refused unless it names an unused, unexpired plan (15 minutes) and `approved_max_usd` equals that bound ([ADR-031](../decisions/ADR-031-a-live-understand-call-needs-the-plans-bound-approved-exactly.md)), which is then passed as `--max-cost-usd`. `jobs.submit` refuses `understand`, and `jobs.retry` refuses a live one. The key comes in that request only. It is kept in memory for that one child's environment and never written to the catalogue, an event, a log or an error. The client (the Mac app) asks the user each time. A request without `approved_max_usd` cannot make a live call.
 - **`pipelines.make_reels`** queues the M0 chain as jobs with `after` links, on one `make_reels` subject plus one `reel` subject per clip:
   1. decompile
   2. understand, through the plan and run pair: the pipeline stops at the plan and returns it, and the client continues with `understand.run`
   3. then, per clip: from-clip, cut-silence, auto-punch-in, reframe, bridge, captions, render and diff
 
-  Every step is then a checkpoint that can be reverted, and a reel can be re-rendered from any earlier step. The step list and argv building move from `crates/reelctl/src/make_reels_cmd.rs` into `crates/studio` (section 6), so the command line and the service build the same steps.
+  Every step is then a checkpoint that can be reverted, and a reel can be re-rendered from any earlier step. The step list and the clip choice are `crates/studio/src/pipeline.rs`, which `reelctl make-reels` uses too, so the command line and the service build the same steps. As built, it is three calls with the same params, adding `dna` and then `understanding` as each stage finishes (`docs/cli.md`, "reelctl serve"); each step reads the previous one's output by `{"from": job}`, which makes the chain. The presenter crop runs only when `weights` names a file and `ORT_DYLIB_PATH` is set; otherwise the crop is centred, with a note. Unlike the command line, the service does not try the presenter crop and fall back after a failure: it decides before queueing.
 
 ### 6. The command catalogue
 
@@ -155,7 +156,7 @@ On SIGTERM, SIGINT or SIGHUP (through the `ctrlc` crate, whose API is safe; it i
 
 ### 9. Security
 
-- **No network port.** The only listener is the Unix socket: 0600, inside a 0700 directory. Each connection's peer uid is checked (`SO_PEERCRED` on Linux, `getpeereid` on macOS), and any other user is refused.
+- **No network port.** The only listener is the Unix socket: 0600, inside a 0700 directory. `jobs.submit` refuses `render` with the Smelter backend, whose server listens on every interface. Each connection's peer uid is checked (`SO_PEERCRED` on Linux, `getpeereid` on macOS), and any other user is refused.
 - **Paths.** Paths in requests must be absolute. Imports are opened read-only, and the same "local regular file, no URL or protocol" rule as the CLI applies.
 - **The key.** It is held in memory only, for one `understand` child, and its value is never logged. A test sets a key and checks that it is not in the database file, the events or any response.
 - **The paid call** needs `understand.run` with a plan id and an approved amount (section 5).

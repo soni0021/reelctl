@@ -736,6 +736,11 @@ impl Prepared {
                 tail(&encoder_said)
             )));
         }
+        if progress::cancel_requested() {
+            return Err(CompositorError::run(
+                progress::CANCELLED_MESSAGE.to_string(),
+            ));
+        }
         fs::rename(&temporary.path, &request.out).map_err(|error| {
             CompositorError::run(format!("cannot write {}: {error}", request.out.display()))
         })?;

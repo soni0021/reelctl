@@ -10,6 +10,7 @@ use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -244,9 +245,16 @@ fn connection(stream: UnixStream, service: &Arc<Service>, stopping: &AtomicBool)
                 continue;
             }
         };
+        // The subscription's notifications start only after its reply is sent.
+        let mut start_events: Option<Box<dyn FnOnce() + Send>> = None;
         let result = match request.method.as_str() {
             "doctor.check" => Ok(doctor()),
-            "events.subscribe" => subscribe(service, &request.params, &writer),
+            "events.subscribe" => {
+                subscribe(service, &request.params, &writer).map(|(reply, start)| {
+                    start_events = Some(start);
+                    reply
+                })
+            }
             "shutdown" => {
                 stopping.store(true, Ordering::SeqCst);
                 Ok(json!({}))
@@ -255,6 +263,9 @@ fn connection(stream: UnixStream, service: &Arc<Service>, stopping: &AtomicBool)
         };
         if let Some(id) = &request.id {
             send(&writer, &protocol::response(id, result))?;
+        }
+        if let Some(start) = start_events.take() {
+            start();
         }
     }
     Ok(())
@@ -300,7 +311,7 @@ fn subscribe(
     service: &Arc<Service>,
     params: &Value,
     writer: &Writer,
-) -> std::result::Result<Value, RpcError> {
+) -> std::result::Result<(Value, Box<dyn FnOnce() + Send>), RpcError> {
     let job = match params.get("job") {
         None | Some(Value::Null) => None,
         Some(value) => Some(
@@ -326,22 +337,24 @@ fn subscribe(
         }
     }
     let writer = Arc::clone(writer);
-    std::thread::spawn(move || {
-        for line in replay {
-            if send(&writer, &line).is_err() {
-                return;
+    let start = move || {
+        std::thread::spawn(move || {
+            for line in replay {
+                if send(&writer, &line).is_err() {
+                    return;
+                }
             }
-        }
-        for notification in receiver {
-            if job.is_some_and(|job| notification_job(&notification) != job) {
-                continue;
+            for notification in receiver {
+                if job.is_some_and(|job| notification_job(&notification) != job) {
+                    continue;
+                }
+                if send(&writer, &notification_line(&notification)).is_err() {
+                    return;
+                }
             }
-            if send(&writer, &notification_line(&notification)).is_err() {
-                return;
-            }
-        }
-    });
-    Ok(json!({ "subscribed": true, "job": job }))
+        });
+    };
+    Ok((json!({ "subscribed": true, "job": job }), Box::new(start)))
 }
 
 /// The first line `tool -version` prints, if it runs.
@@ -414,12 +427,11 @@ fn failed(message: impl Into<String>) -> RunOutcome {
     }
 }
 
-fn terminate(pid: u32) {
+/// Signal a job's whole process group (the child `reelctl` and the ffmpeg,
+/// whisper or manimgx processes it started), through `nix`'s safe `killpg`.
+fn signal_group(pid: u32, signal: nix::sys::signal::Signal) {
     if let Ok(pid) = i32::try_from(pid) {
-        let _ = nix::sys::signal::kill(
-            nix::unistd::Pid::from_raw(pid),
-            nix::sys::signal::Signal::SIGTERM,
-        );
+        let _ = nix::sys::signal::killpg(nix::unistd::Pid::from_raw(pid), signal);
     }
 }
 
@@ -433,7 +445,7 @@ impl Runner for ProcessRunner {
             Ok(spec) => spec,
             Err(error) => return failed(error.to_string()),
         };
-        let planned = commands::default_outputs(spec, context.scratch);
+        let planned = commands::outputs_for(spec, &job.args, context.scratch);
         let built = match commands::build(&job.command, &job.args, context.inputs, &planned) {
             Ok(built) => built,
             Err(error) => return failed(error.to_string()),
@@ -446,6 +458,8 @@ impl Runner for ProcessRunner {
             .arg("json")
             .args(&built.argv)
             .current_dir(context.scratch)
+            // Its own process group, so a cancel reaches its children too.
+            .process_group(0)
             .env_clear()
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -477,6 +491,8 @@ impl Runner for ProcessRunner {
             Err(error) => return failed(format!("cannot run {}: {error}", self.exe.display())),
         };
         drop(key);
+        // Registered, so serve's own forced exit stops it as well.
+        let _tracked = progress::track(child.id());
 
         let stdout = child.stdout.take().map(|mut pipe| {
             std::thread::spawn(move || {
@@ -526,10 +542,11 @@ impl Runner for ProcessRunner {
             if context.cancel.load(Ordering::SeqCst) {
                 match terminated_at {
                     None => {
-                        terminate(child.id());
+                        signal_group(child.id(), nix::sys::signal::Signal::SIGTERM);
                         terminated_at = Some(Instant::now());
                     }
                     Some(at) if at.elapsed() >= KILL_AFTER => {
+                        signal_group(child.id(), nix::sys::signal::Signal::SIGKILL);
                         let _ = child.kill();
                     }
                     Some(_) => {}
@@ -549,6 +566,21 @@ impl Runner for ProcessRunner {
             .and_then(|handle| handle.join().ok())
             .unwrap_or_default();
         let exit_code = status.and_then(|status| status.code());
+        // Stopped because serve itself is stopping (its signal reached the child
+        // first): a cancel, not a failure.
+        if exit_code == Some(progress::CANCELLED_EXIT) && progress::cancel_requested() {
+            context.cancel.store(true, Ordering::SeqCst);
+        }
+        if job.command == "understand" && !dry_run && context.cancel.load(Ordering::SeqCst) {
+            (context.emit)(json!({
+                "v": 1,
+                "event": "warning",
+                "message": format!(
+                    "the model call was stopped; it may already have been billed (up to ${})",
+                    job.args["max_cost_usd"]
+                ),
+            }));
+        }
 
         let mut outputs = if dry_run {
             BTreeMap::new()

@@ -25,8 +25,8 @@ Plan: [plan.md](plan.md). Spec: [docs/specs/studio-service.md](../docs/specs/stu
 - [x] Socket, lock, peer uid; JSON-RPC and events; understand plan/run gate; gc; doctor (checkpoint diff by hash only; the DNA metrics and `.otio` differences are later)
 
 ## Task 7: `pipelines.make_reels`
-- [ ] The M0 chain as jobs and checkpoints
-  - [x] The step list and clip choice as pure code in `crates/studio/src/pipeline.rs` (2 tests); `make-reels` and `pipelines.make_reels` not yet moved onto it
+- [x] The M0 chain as jobs and checkpoints: `pipelines.make_reels` in three stages, on the shared `crates/studio/src/pipeline.rs`, which `make-reels` now uses (its tests unchanged)
 
 ## Task 8: End to end
-- [ ] `serve_fixture.rs` covers the success criteria
+- [x] `serve_fixture.rs` covers the success criteria: the edit chain with cache and revert, cancel, restart, the paid-call gate, the peer check, and `pipelines.make_reels` to two reels of 8 checkpoints each (class limits: the queue's unit tests); `docs/studio.md`
+- [x] The task 1 and task 6 audit findings fixed or recorded (status)

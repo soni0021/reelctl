@@ -235,41 +235,10 @@ fn confirm(question: &str) -> bool {
 }
 
 /// The clips to make: `--clips`, else every clip that passes the rules (or every
-/// clip with `--allow-flagged`), then at most `--reels`.
+/// clip with `--allow-flagged`), then at most `--reels` (the service's rule too).
 fn choose(understanding: &Value, args: &MakeReelsArgs) -> Result<Vec<usize>> {
-    let clips = understanding["clips"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-    let flagged = |index: usize| {
-        clips[index - 1]["flags"]
-            .as_array()
-            .is_some_and(|flags| !flags.is_empty())
-    };
-    let mut chosen: Vec<usize> = if args.clips.is_empty() {
-        (1..=clips.len())
-            .filter(|&index| args.allow_flagged || !flagged(index))
-            .collect()
-    } else {
-        for &index in &args.clips {
-            if index == 0 || index > clips.len() {
-                return Err(usage(format!(
-                    "--clips {index}: understanding.json has {} clips (numbered from 1)",
-                    clips.len()
-                )));
-            }
-            if flagged(index) && !args.allow_flagged {
-                return Err(usage(format!(
-                    "clip {index} breaks the clip rules; pass --allow-flagged to make it anyway"
-                )));
-            }
-        }
-        args.clips.clone()
-    };
-    if let Some(limit) = args.reels {
-        chosen.truncate(limit);
-    }
-    Ok(chosen)
+    studio::pipeline::choose(understanding, &args.clips, args.reels, args.allow_flagged)
+        .map_err(|error| usage(error.to_string()))
 }
 
 /// The style flags as `overlay captions` job arguments. File paths are made
@@ -374,116 +343,75 @@ fn make_reel(
             .map_err(|error| usage(error.to_string()))?;
         Ok(built.argv.into_iter().map(OsString::from).collect())
     };
-    let outlier_roles: Vec<String> = (1..=args.outlier.len())
-        .map(|n| {
-            if n == 1 {
-                "outlier".to_string()
-            } else {
-                format!("outlier.{n}")
-            }
-        })
-        .collect();
-    let mut plan: Vec<(&str, Vec<OsString>, Vec<(&str, OsString)>)> = Vec::new();
-    plan.push((
-        "from-clip",
-        built(
-            "timeline.from-clip",
-            json!({"clip": index, "allow_flagged": args.allow_flagged}),
-            &[
-                ("input", &args.input),
-                ("dna", dna),
-                ("understanding", understanding),
-            ],
-            &project(1, "from-clip"),
-        )?,
-        Vec::new(),
-    ));
-    plan.push((
-        "cut-silence",
-        built(
-            "timeline.cut-silence",
-            json!({}),
-            &[("project", &project(1, "from-clip")), ("dna", dna)],
-            &project(2, "cut-silence"),
-        )?,
-        Vec::new(),
-    ));
-    let cut = project(2, "cut-silence");
-    let outliers: Vec<(&str, &Path)> = outlier_roles
-        .iter()
-        .zip(&args.outlier)
-        .map(|(role, path)| (role.as_str(), path.as_path()))
-        .collect();
-    let punch_inputs: Vec<(&str, &Path)> = [
-        vec![("project", cut.as_path()), ("dna", dna)],
-        outliers.clone(),
-    ]
-    .concat();
-    plan.push((
-        "auto-punch-in",
-        built(
-            "transform.auto-punch-in",
-            json!({}),
-            &punch_inputs,
-            &project(3, "auto-punch-in"),
-        )?,
-        Vec::new(),
-    ));
-    let mut reframe_env: Vec<(&'static str, OsString)> = Vec::new();
-    if let Some(library) = std::env::var_os(compositor::LIBRARY_ENV) {
-        reframe_env.push((compositor::LIBRARY_ENV, library));
-    }
-    let punched = project(3, "auto-punch-in");
-    let reframe_inputs = [("project", punched.as_path()), ("dna", dna)];
-    // The fallback is built like the first, never by rewriting it.
-    let centre_argv = built(
-        "transform.reframe",
-        json!({"follow": "centre"}),
-        &reframe_inputs,
-        &project(4, "reframe"),
-    )?;
-    let reframe_args = match (args.follow, &args.weights) {
-        (FollowArg::Presenter, Some(weights)) => {
-            // The catalogue takes absolute paths; a missing file is reframe's to
-            // report (and to fall back from).
-            let weights = fs::canonicalize(weights)
-                .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(weights));
-            json!({"follow": "presenter", "weights": weights.to_string_lossy()})
-        }
-        (FollowArg::Presenter, None) => json!({"follow": "presenter"}),
-        (FollowArg::Centre, _) => json!({"follow": "centre"}),
+    // The steps come from the list the service's `pipelines.make_reels` uses.
+    let weights = match (args.follow, &args.weights) {
+        // The catalogue takes absolute paths; a missing file is reframe's to
+        // report (and to fall back from).
+        (FollowArg::Presenter, Some(weights)) => Some(
+            fs::canonicalize(weights)
+                .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(weights))
+                .to_string_lossy()
+                .into_owned(),
+        ),
+        _ => None,
     };
-    plan.push((
-        "reframe",
-        built(
-            "transform.reframe",
-            reframe_args,
-            &reframe_inputs,
-            &project(4, "reframe"),
-        )?,
-        reframe_env,
-    ));
-    plan.push((
-        "bridge",
-        built(
-            "funnel.attach-bridge",
-            json!({"target_url": args.target_url, "append": true, "card_ms": args.card_ms}),
-            &[("project", &project(4, "reframe"))],
-            &project(5, "bridge"),
-        )?,
-        Vec::new(),
-    ));
-    plan.push((
-        "captions",
-        built(
-            "overlay.captions",
-            style_json(&args.style),
-            &[("project", &project(5, "bridge")), ("dna", dna)],
-            &project(6, "captions"),
-        )?,
-        Vec::new(),
-    ));
-    let previous = project(6, "captions");
+    let options = studio::pipeline::ReelOptions {
+        allow_flagged: args.allow_flagged,
+        outliers: args.outlier.len(),
+        follow_presenter: matches!(args.follow, FollowArg::Presenter),
+        weights,
+        target_url: args.target_url.clone(),
+        card_ms: args.card_ms,
+        style: style_json(&args.style),
+        size: args.size.clone(),
+    };
+    let steps = studio::pipeline::reel_steps(index, &options);
+    let video = reel_dir.join(format!("reel-{index}.mp4"));
+    let report_path = reel_dir.join(format!("reel-{index}.diff.json"));
+    // Where each step writes: `NN-<step>.otio`, then the reel and its report.
+    let out_of = |at: usize| -> PathBuf {
+        match at {
+            studio::pipeline::at::RENDER => video.clone(),
+            studio::pipeline::at::DIFF => report_path.clone(),
+            n => project(n + 1, steps[n].name),
+        }
+    };
+    let argv_of = |step: &studio::pipeline::Step, at: usize| -> Result<Vec<OsString>> {
+        let inputs: Vec<(String, PathBuf)> = step
+            .inputs
+            .iter()
+            .map(|(role, source)| {
+                let path = match source {
+                    studio::pipeline::Source::Input => args.input.clone(),
+                    studio::pipeline::Source::Dna => dna.to_path_buf(),
+                    studio::pipeline::Source::Understanding => understanding.to_path_buf(),
+                    studio::pipeline::Source::Outlier(n) => args.outlier[n - 1].clone(),
+                    studio::pipeline::Source::Step(from) => out_of(*from),
+                };
+                (role.clone(), path)
+            })
+            .collect();
+        let inputs: Vec<(&str, &Path)> = inputs
+            .iter()
+            .map(|(role, path)| (role.as_str(), path.as_path()))
+            .collect();
+        built(step.command, step.args.clone(), &inputs, &out_of(at))
+    };
+    let mut plan: Vec<(&str, Vec<OsString>, Vec<(&str, OsString)>)> = Vec::new();
+    for at in studio::pipeline::at::FROM_CLIP..=studio::pipeline::at::CAPTIONS {
+        let mut env: Vec<(&'static str, OsString)> = Vec::new();
+        if at == studio::pipeline::at::REFRAME {
+            if let Some(library) = std::env::var_os(compositor::LIBRARY_ENV) {
+                env.push((compositor::LIBRARY_ENV, library));
+            }
+        }
+        plan.push((steps[at].name, argv_of(&steps[at], at)?, env));
+    }
+    // The fallback is built like the first, never by rewriting it.
+    let centre_argv = argv_of(
+        &studio::pipeline::centre_reframe(),
+        studio::pipeline::at::REFRAME,
+    )?;
 
     for (name, argv, env) in plan {
         let mut step = run(name, argv.clone(), &env)?;
@@ -515,14 +443,11 @@ fn make_reel(
         reel.steps.push(step);
     }
 
-    let video = reel_dir.join(format!("reel-{index}.mp4"));
     let render = run(
         "render",
-        built(
-            "render",
-            json!({"size": args.size}),
-            &[("project", &previous)],
-            &video,
+        argv_of(
+            &steps[studio::pipeline::at::RENDER],
+            studio::pipeline::at::RENDER,
         )?,
         &[],
     )?;
@@ -545,11 +470,12 @@ fn make_reel(
     reel.path = Some(video.clone());
     reel.status = "ok";
 
-    let report_path = reel_dir.join(format!("reel-{index}.diff.json"));
-    let diff_inputs: Vec<(&str, &Path)> = [vec![("draft", video.as_path())], outliers].concat();
     let diff = run(
         "diff",
-        built("diff", json!({}), &diff_inputs, &report_path)?,
+        argv_of(
+            &steps[studio::pipeline::at::DIFF],
+            studio::pipeline::at::DIFF,
+        )?,
         &[],
     )?;
     if diff.ok() {
@@ -790,6 +716,7 @@ pub fn make_reels(args: MakeReelsArgs) -> Result<()> {
                        "tight_length_ms": clip["tight_length_ms"], "flags": clip["flags"]})
             })
             .collect();
+        crate::timeline_cmd::cancelled()?;
         write_summary(&base_summary(Value::Array(picked), "picked"))?;
         out!(
             "make-reels: out_dir={} reels={} ok=0 failed=0 cost_usd={} picked=true",
@@ -824,6 +751,11 @@ pub fn make_reels(args: MakeReelsArgs) -> Result<()> {
             diff_flags: Vec::new(),
             steps: Vec::new(),
         });
+        // A reel stopped by the cancel is cancelled, not failed.
+        let mut reel = reel;
+        if progress::cancel_requested() && reel.status != "ok" {
+            reel.status = "cancelled";
+        }
         let clip = &understanding["clips"][index - 1];
         let mut notes = reel.notes.clone();
         if clip["flags"]

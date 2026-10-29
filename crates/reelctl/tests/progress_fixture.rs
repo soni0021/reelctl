@@ -380,3 +380,98 @@ fn sigterm_during_look_exits_130_and_writes_no_cube() {
     assert_eq!(status.code(), Some(130), "{rest:?}");
     assert!(!cube.exists(), "a cancelled look wrote {}", cube.display());
 }
+
+/// Spawn `reelctl --progress json <args>`, wait for a progress event of
+/// `stage` past 0, then send SIGTERM `signals` times. Returns the exit code.
+fn cancel_during(args: &[&str], stage: &str, signals: usize) -> Option<i32> {
+    let mut child = reelctl()
+        .args(["--progress", "json"])
+        .args(args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut lines = BufReader::new(child.stderr.take().unwrap()).lines();
+    loop {
+        let line = lines
+            .next()
+            .unwrap_or_else(|| panic!("stderr ended before {stage} progress"))
+            .unwrap();
+        let event: Value = serde_json::from_str(&line).unwrap();
+        if event["event"] == "progress"
+            && event["stage"] == stage
+            && event["done"].as_u64().unwrap_or(0) > 0
+        {
+            break;
+        }
+    }
+    for _ in 0..signals {
+        let killed = Command::new("kill")
+            .args(["-TERM", &child.id().to_string()])
+            .status()
+            .unwrap();
+        assert!(killed.success());
+    }
+    let _rest: Vec<String> = lines.map_while(Result::ok).collect();
+    child.wait().unwrap().code()
+}
+
+#[test]
+fn a_decompile_cancelled_while_it_decodes_writes_no_dna_and_no_pictures() {
+    let root = scratch("decompile-cancel");
+    let video = root.join("bench.mp4");
+    generate("bench60", &video);
+    let out_dir = root.join("out");
+    fs::create_dir_all(&out_dir).unwrap();
+    let dna = out_dir.join("bench.edit_dna.json");
+    let views = out_dir.join("views");
+    let code = cancel_during(
+        &[
+            "decompile",
+            "--input",
+            &s(&video),
+            "--out",
+            &s(&dna),
+            "--filmstrip-dir",
+            &s(&views),
+        ],
+        "decode",
+        1,
+    );
+    assert_eq!(code, Some(130));
+    let left: Vec<String> = fs::read_dir(&out_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(left.is_empty(), "left behind: {left:?}");
+}
+
+#[test]
+fn a_second_sigterm_during_a_render_still_exits_130_and_leaves_nothing() {
+    let root = scratch("twice");
+    let video = root.join("bench.mp4");
+    generate("bench60", &video);
+    let project = root.join("bench.otio");
+    let init = reelctl()
+        .args([
+            "timeline",
+            "init",
+            "--input",
+            &s(&video),
+            "--out",
+            &s(&project),
+        ])
+        .output()
+        .unwrap();
+    assert!(init.status.success());
+    let out_dir = root.join("out");
+    fs::create_dir_all(&out_dir).unwrap();
+    let out = out_dir.join("bench.render.mp4");
+    let code = cancel_during(
+        &["render", "--project", &s(&project), "--out", &s(&out)],
+        "render",
+        2,
+    );
+    assert_eq!(code, Some(130));
+    assert_eq!(fs::read_dir(&out_dir).unwrap().count(), 0);
+}

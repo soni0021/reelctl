@@ -505,6 +505,19 @@ pub fn default_outputs(spec: &CommandSpec, scratch: &Path) -> BTreeMap<String, P
         .collect()
 }
 
+/// Where each output of a job of `spec` with `args` goes in `scratch`: as
+/// [`default_outputs`], except that an RGBA presenter cut-out is a `.mov` (the
+/// command refuses another container for it).
+pub fn outputs_for(spec: &CommandSpec, args: &Value, scratch: &Path) -> BTreeMap<String, PathBuf> {
+    let mut outputs = default_outputs(spec, scratch);
+    if spec.name == "compositor.isolate-presenter"
+        && args.get("mode").and_then(Value::as_str) == Some("rgba")
+    {
+        outputs.insert("out".to_string(), scratch.join("presenter.mov"));
+    }
+    outputs
+}
+
 /// A built command line.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Built {
