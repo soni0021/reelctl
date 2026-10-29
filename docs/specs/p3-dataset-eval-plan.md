@@ -23,7 +23,7 @@ sha256 -> ids/split -> metrics -> records (types, schema) -> builder -> jsonl/ma
 - [x] 10. `reelctl dataset build` and `reelctl eval` (`crates/reelctl/src/dataset_cmd.rs`), additive edits to `main.rs`.
 - [x] 11. End-to-end test `dataset_fixture.rs` on generated fixtures with the scrubbed environment.
 - [x] 12. Docs: README, `status.md`, `cli.md`, CHANGELOG, AGENTS.md crate list, `finetune.md`, ADR-024, capability map; real command output recorded in `status.md`.
-- [ ] 13. Mutation pass on metrics, matching, split, hash; survivors in `status.md`; `cargo fmt --all`, `cargo check --workspace --all-targets` with no warnings, `cargo test --workspace` once.
+- [x] 13. Mutation pass on metrics, matching, split, hash; survivors in `status.md`; `cargo fmt --all`, `cargo check --workspace --all-targets` with no warnings, `cargo test --workspace` once.
 - [ ] 14. `audit` subagent on the committed branch.
 
 ## Commits
