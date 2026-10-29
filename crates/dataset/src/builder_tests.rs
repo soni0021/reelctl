@@ -813,6 +813,33 @@ fn a_jsonl_file_has_one_record_per_line() {
 }
 
 #[test]
+fn a_file_of_schema_3_that_claims_measured_curves_still_gets_null_curves() {
+    // Curves arrived in schema 4; a version 3 file cannot have measured them.
+    let mut dna = reel_dna();
+    dna.schema_version = 3;
+    let output = build(&[dna_file("a", &dna)], &[], &options(0)).expect("build");
+    let target = &all_lines(&output)[0]["target"];
+    assert_eq!(target["zoom_curves"], serde_json::Value::Null);
+    assert_eq!(target["visual_events"].as_array().map(Vec::len), Some(1));
+}
+
+#[test]
+fn targets_follow_the_teachers_rank_whatever_order_the_file_lists_the_clips_in() {
+    let mut run = understanding("lecture.mp4", 40, &[pick(1, 3, 13), pick(20, 22, 32)]);
+    run.clips.reverse();
+    assert_eq!(run.clips[0].rank, 2);
+    let output = build(
+        &[dna_file("lecture", &lecture_dna(40))],
+        &[file("r.json", &run)],
+        &options(0),
+    )
+    .expect("build");
+    let clip = clip_record(&output).expect("record");
+    assert_eq!(clip["target"]["picks"][0]["hook_segment"], 1);
+    assert_eq!(clip["target"]["picks"][1]["hook_segment"], 20);
+}
+
+#[test]
 fn a_trainable_task_on_one_side_of_the_split_only_is_warned_about() {
     // "lecture" has bucket 78, so it is train at every allowed --val-percent.
     let (dna, run) = lecture_inputs();

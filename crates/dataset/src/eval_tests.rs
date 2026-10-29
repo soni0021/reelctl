@@ -283,6 +283,7 @@ fn a_datasets_own_targets_score_perfectly() {
     assert_eq!(clip.interval.f1, Some(1.0));
     assert_eq!(clip.rule_pass_rate.rate, Some(1.0));
     assert_eq!(clip.teachers, vec!["teacher/model-x".to_string()]);
+    assert_eq!((clip.records, clip.answered), (1, 1));
     let events = report.edit_events.expect("events");
     assert_eq!(events.cuts.scores.f1, Some(1.0));
     assert_eq!(events.cuts.mean_abs_error_ms, Some(0.0));
@@ -392,17 +393,45 @@ fn an_event_of_the_wrong_kind_is_not_a_match_and_the_scale_and_curve_errors_are_
     let off = answers_for(&records, |record, mut target| {
         if record.task == Task::EditEvents && record.reel_id == "reel-a" {
             target["visual_events"][0]["scale"] = 1.3.into();
-            target["zoom_curves"][0]["bezier"] = json!([1.0 / 3.0, 0.2, 2.0 / 3.0, 0.9]);
+            target["zoom_curves"][0]["bezier"] = json!([1.0 / 3.0, 0.2, 2.0 / 3.0, 0.7]);
         }
         target
     });
     let report = dataset_score(&records, &off).edit_events.expect("events");
     let scale = report.scale.mean_abs_error.expect("scale error");
     assert!((scale - 0.1).abs() < 1e-9, "{scale}");
-    // y1 is off by 0.1 and y2 by 0: the mean over the two is 0.05.
+    // y1 is off by 0.1 and y2 by 0.2: the mean over the two is 0.15.
     let curve = report.zoom_curves.mean_abs_error.expect("curve error");
-    assert!((curve - 0.05).abs() < 1e-9, "{curve}");
+    assert!((curve - 0.15).abs() < 1e-9, "{curve}");
     assert_eq!(report.zoom_curves.pairs, 1);
+}
+
+#[test]
+fn an_event_is_matched_within_the_event_tolerance_not_the_cut_tolerance() {
+    let records = records();
+    let shifted = |by: i64| {
+        answers_for(&records, move |record, mut target| {
+            if record.task == Task::EditEvents && record.reel_id == "reel-a" {
+                let time = target["visual_events"][0]["time_ms"]
+                    .as_i64()
+                    .expect("time")
+                    + by;
+                target["visual_events"][0]["time_ms"] = time.into();
+            }
+            target
+        })
+    };
+    // 200 ms is beyond a cut's 100 ms and inside an event's 250 ms.
+    let events = dataset_score(&records, &shifted(200))
+        .edit_events
+        .expect("events")
+        .visual_events;
+    assert_eq!((events.tp, events.fp, events.fn_), (1, 0, 0));
+    let events = dataset_score(&records, &shifted(251))
+        .edit_events
+        .expect("events")
+        .visual_events;
+    assert_eq!((events.tp, events.fp, events.fn_), (0, 1, 1));
 }
 
 #[test]

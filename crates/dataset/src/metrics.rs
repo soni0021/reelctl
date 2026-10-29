@@ -345,6 +345,16 @@ mod tests {
         );
         // Micro recall 1/4, not the mean of 1.0 and 0.0.
         assert_eq!(total.recall(), Some(0.25));
+        // A third record adds to every total, the false negatives included.
+        total.add(Counts::from_matches(0, 2, 0));
+        assert_eq!(
+            total,
+            Counts {
+                tp: 1,
+                fp: 1,
+                fn_: 5
+            }
+        );
     }
 
     #[test]
@@ -458,6 +468,15 @@ mod tests {
     }
 
     #[test]
+    fn the_better_overlap_is_taken_first_whatever_the_order_of_the_answers() {
+        // IoU 0.6 at index 0 and 0.9 at index 1: the truth takes index 1.
+        let matched = match_intervals(&[(0, 10)], &[(0, 6), (0, 9)], 0.5).expect("ok");
+        assert_eq!(matched.len(), 1);
+        assert_eq!((matched[0].truth, matched[0].predicted), (0, 1));
+        assert_eq!(matched[0].iou, 0.9);
+    }
+
+    #[test]
     fn interval_ties_go_to_the_lower_indices_and_each_item_is_used_once() {
         let matched = match_intervals(&[(0, 10), (0, 10)], &[(0, 10), (0, 10)], 0.5).expect("ok");
         let found: Vec<_> = matched.iter().map(|p| (p.truth, p.predicted)).collect();
@@ -531,6 +550,13 @@ mod tests {
         assert_eq!(median("x", &[9.0, 1.0, 5.0]).ok(), Some(Some(5.0)));
         assert_eq!(median("x", &[4.0, 1.0, 3.0, 2.0]).ok(), Some(Some(2.5)));
         assert_eq!(median("x", &[2.0, 2.0, 2.0, 2.0]).ok(), Some(Some(2.0)));
+    }
+
+    #[test]
+    fn a_nan_that_sorts_past_the_middle_is_still_refused() {
+        // The median of [1, 2, NaN] would be 2 if the NaN were not looked for.
+        assert!(median("x", &[1.0, 2.0, f64::NAN]).is_err());
+        assert!(median("x", &[f64::NEG_INFINITY, 2.0, 3.0]).is_err());
     }
 
     #[test]
