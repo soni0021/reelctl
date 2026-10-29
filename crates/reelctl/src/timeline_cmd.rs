@@ -22,9 +22,9 @@ use edit_dna::{BoundaryView, EditDna};
 use serde_json::Value;
 use timeline::{
     attach_bridge, bridge_of, build_render_plan, check_dna_length as check_project_dna,
-    cut_silence, dna_ref, init, joins, media_info, punch_in, set_dna_ref, single_media,
-    words_on_timeline, BridgeRequest, CutOptions, DnaRef, InitSpec, PunchRequest, RenderPlan,
-    RenderSize, Timeline, TimelineError, MAX_PIXELS, MAX_SIDE,
+    cut_silence, dna_ref, from_clip, init, joins, media_info, punch_in, set_dna_ref, single_media,
+    words_on_timeline, BridgeRequest, ClipPick, CutOptions, DnaRef, InitSpec, PunchRequest,
+    RenderPlan, RenderSize, Timeline, TimelineError, MAX_PIXELS, MAX_SIDE,
 };
 
 use crate::card::{draw_card, parse_color};
@@ -55,6 +55,8 @@ pub struct TimelineCommand {
 enum TimelineSub {
     /// Make a project (.otio) with one clip spanning a video.
     Init(InitArgs),
+    /// Make a project (.otio) trimmed to one clip pick of `understand`.
+    FromClip(FromClipArgs),
     /// Cut silence gaps (and filler words) out of a project, from its edit DNA.
     CutSilence(CutSilenceArgs),
 }
@@ -104,6 +106,27 @@ struct InitArgs {
     #[arg(long)]
     dna: Option<PathBuf>,
     /// Where to write the project.
+    #[arg(long)]
+    out: PathBuf,
+}
+
+#[derive(Args)]
+struct FromClipArgs {
+    /// The long video the clip is cut from.
+    #[arg(long)]
+    input: PathBuf,
+    /// Its edit_dna.json from `decompile`.
+    #[arg(long)]
+    dna: PathBuf,
+    /// Its understanding.json from `understand`.
+    #[arg(long)]
+    understanding: PathBuf,
+    /// Which clip, counting from 1 in the file's `clips` order (the model's ranking).
+    #[arg(long)]
+    clip: usize,
+    /// Use a clip the clip rules flagged.
+    #[arg(long)]
+    allow_flagged: bool,
     #[arg(long)]
     out: PathBuf,
 }
@@ -221,6 +244,7 @@ fn parse_size(text: &str) -> std::result::Result<RenderSize, String> {
 pub fn timeline(command: TimelineCommand) -> Result<()> {
     match command.command {
         TimelineSub::Init(args) => init_cmd(args),
+        TimelineSub::FromClip(args) => from_clip_cmd(args),
         TimelineSub::CutSilence(args) => cut_silence_cmd(args),
     }
 }
@@ -518,6 +542,102 @@ fn init_cmd(args: InitArgs) -> Result<()> {
         probe.width,
         probe.height,
         probe.has_audio
+    );
+    Ok(())
+}
+
+fn load_understanding(path: &Path) -> Result<understand::Understanding> {
+    let text = fs::read_to_string(path).map_err(|error| {
+        usage(format!(
+            "cannot read understanding {}: {error}",
+            path.display()
+        ))
+    })?;
+    serde_json::from_str(&text).map_err(|error| {
+        usage(format!(
+            "{}: not an understanding.json: {error}",
+            path.display()
+        ))
+    })
+}
+
+fn from_clip_cmd(args: FromClipArgs) -> Result<()> {
+    let media = local_media_file(&utf8(&args.input)?)?;
+    let dna = load_dna(&args.dna)?;
+    let understanding = load_understanding(&args.understanding)?;
+    // The understanding must be of this video: same file name, same length.
+    let named = Path::new(&understanding.source.path)
+        .file_name()
+        .map(|name| name.to_os_string());
+    if named.as_deref() != media.file_name() {
+        return Err(usage(format!(
+            "{}: it is of \"{}\", not of {}",
+            args.understanding.display(),
+            understanding.source.path,
+            media.display()
+        )));
+    }
+    if understanding.source.duration_ms.abs_diff(dna.duration_ms) > DNA_TOLERANCE_MS {
+        return Err(usage(format!(
+            "{}: it is of a {} ms video and the edit DNA of a {} ms one",
+            args.understanding.display(),
+            understanding.source.duration_ms,
+            dna.duration_ms
+        )));
+    }
+    let count = understanding.clips.len();
+    let clip = args
+        .clip
+        .checked_sub(1)
+        .and_then(|index| understanding.clips.get(index))
+        .ok_or_else(|| {
+            usage(format!(
+                "--clip {}: {} has {count} clip{} (numbered from 1)",
+                args.clip,
+                args.understanding.display(),
+                if count == 1 { "" } else { "s" }
+            ))
+        })?;
+    if !clip.flags.is_empty() && !args.allow_flagged {
+        return Err(usage(format!(
+            "clip {} breaks the clip rules ({}); pass --allow-flagged to use it anyway",
+            args.clip,
+            clip.flags.join("; ")
+        )));
+    }
+    let probe = probe_media(&media)?;
+    check_dna_length(&dna, &args.dna, &probe)?;
+    let spec = InitSpec {
+        media_path: utf8(&media)?,
+        fps: probe.fps,
+        frames: probe.frames,
+        width: probe.width,
+        height: probe.height,
+        has_audio: probe.has_audio,
+        dna: Some(DnaRef {
+            path: utf8(&absolute(&args.dna, "edit DNA")?)?,
+            duration_ms: dna.duration_ms,
+        }),
+    };
+    let pick = ClipPick {
+        understanding_path: utf8(&absolute(&args.understanding, "understanding")?)?,
+        index: args.clip,
+        start_ms: clip.start_ms,
+        end_ms: clip.end_ms,
+        hook_id: clip.hook.id,
+        last_id: clip.last.id,
+    };
+    let project = from_clip(&spec, &pick).map_err(invalid)?;
+    save_project(&project, &args.out)?;
+    let frames = timeline::timeline_frames(&project).map_err(invalid)?;
+    println!(
+        "from-clip: out={} clip={} start_ms={} end_ms={} frames={} flags={}",
+        args.out.display(),
+        args.clip,
+        clip.start_ms,
+        clip.end_ms,
+        frames,
+        clip.flags.len()
     );
     Ok(())
 }
