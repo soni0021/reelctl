@@ -13,6 +13,7 @@ mod otio;
 mod overlay;
 mod punch;
 mod render;
+mod smelter;
 mod tracks;
 
 #[cfg(test)]
@@ -42,6 +43,10 @@ pub use punch::{punch_in, PunchReport, PunchRequest, MAX_SCALE, RAMP_FRAMES};
 pub use render::{
     build_render_plan, frame_rate_arg, CardSpec, OverlayInput, RenderPlan, RenderSize,
     AUDIO_SAMPLE_RATE, MAX_PIXELS, MAX_SIDE,
+};
+pub use smelter::{
+    build_smelter_plan, SceneStep, SmelterFiles, SmelterInput, SmelterPlan, SmelterRequest,
+    CLOCK_ID, CLOCK_MARGIN_FRAMES, END_LEAD_FRAMES, JITTER_NOTE, OUTPUT_ID, UPDATE_LEAD_FRAMES,
 };
 pub use tracks::{
     ceil_frame, check_editable, floor_frame, frame_ms, project_rate, round_frame, single_media,

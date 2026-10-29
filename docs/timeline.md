@@ -95,6 +95,22 @@ reelctl render --project edit.otio --out out.mp4
 
 What to look for, one per assumption in the spec: the command prints a `renderer="manimgx ..."` line (A4/A6); `edit.overlays/<id>.mp4` is `WxH` as printed, 4:3, with a magenta background (A1/A2); `out.mp4` shows the bars over the picture from 2 s to 6 s with no magenta box (keying) and a thin magenta fringe on text edges at worst; the chart draws in over about a second, or over the whole span if it is shorter (A3). If `add-chart` exits 1 with "key colour", the tool did not draw on `#ff00ff` (A1); with "within one frame", `self.wait` did not mean what the template assumes (A3); with a Python error, fix the template (`crates/scenes/src/scene_template.py`) and record the result in [status](status.md). To keep the scene file `add-chart` writes (its scratch directory is removed afterwards), give `--manimgx` a small wrapper script that copies the file named by its second argument before it runs the real tool.
 
+## The Smelter backend
+
+`render --backend smelter` renders the same project with [Smelter](https://github.com/software-mansion/smelter) instead of one ffmpeg filter graph. The spec is [specs/smelter-backend.md](specs/smelter-backend.md) and the decision [ADR-023](decisions/ADR-023-drive-smelter-as-a-separate-process-over-its-http-api.md). The translation is `crates/timeline/src/smelter.rs` (pure: a project in, an ordered list of HTTP requests out); the process, the HTTP client and the checks are `crates/reelctl/src/smelter_backend.rs` and `smelter_client.rs`.
+
+| Project | Smelter request |
+|---|---|
+| A stretch of footage (video clips that play on from each other are one) | an `mp4` input with `seek_ms` (source), `offset_ms` (timeline), unregistered a quarter frame before its end. The audio shares the input when it plays the same stretch, else has its own |
+| A cut | a scheduled output update half a frame before the new frame, swapping the scene and the mixer's inputs |
+| `--size`, fill and crop | a `rescaler` in `fill` mode over the input |
+| Punch-in | one scheduled update per frame of each ramp: a view holding an oversized, centred rescaler, sized by the same formula as the ffmpeg `zoompan` |
+| Gap | a black view, no audio |
+| Bridge card | the PNG `reelctl` draws, registered as an image |
+| End | a looped "clock" input unregistered four frames after the end, then the file is trimmed to the exact frame count |
+
+It differs from the ffmpeg render in what is listed in [cli.md](cli.md) (scene changes within one or two frames, no audio dip, colour of untagged sources) and does not draw chart overlays: a project with an overlay track is refused (exit 2) with a message naming `--backend ffmpeg`. It needs a Smelter the user installs; `reelctl` starts nothing else. Every request `reelctl` sends is to `127.0.0.1`, but the server it starts listens on every network interface until the render ends (see [ADR-023](decisions/ADR-023-drive-smelter-as-a-separate-process-over-its-http-api.md)).
+
 ## Checking a project with the reference library
 
 `crates/timeline/tests/otio_check.py` loads a project with the python `opentimelineio` package and prints the tracks and every clip's range; it exits 1 if the library cannot read the file, the tracks differ, or the timeline duration is not the sum of the clips. It is run by hand, because the package is not a dependency of the repository:
@@ -118,3 +134,4 @@ reelctl timeline init --input take.mp4 --dna take.edit_dna.json --out edit.otio
 - The card font is capitals and a few symbols; no emoji, no non-Latin text, no QR code.
 - Overlays: three chart kinds, one non-overlapping track, drawn once for the span, keyed on `#ff00ff` (no alpha), and added last: `cut-silence`, `punch-in` and `attach-bridge` refuse a project with overlays.
 - The media must start at time zero (`trim` is by frame number from the start).
+- The Smelter backend reads H.264 and AAC media only, is not frame-exact at scene changes and does not apply the audio dip (see above); ffmpeg remains the default.
