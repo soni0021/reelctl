@@ -139,7 +139,12 @@ pub fn dna_ref(timeline: &Timeline) -> Option<DnaRef> {
 /// `init` one (a file from another tool has no size to render with).
 pub fn media_info(timeline: &Timeline) -> Result<MediaInfo> {
     let path = crate::tracks::single_media(timeline)?.to_string();
-    for track in &timeline.tracks.children {
+    for track in timeline
+        .tracks
+        .children
+        .iter()
+        .filter(|track| !track.is_overlay())
+    {
         for item in &track.children {
             let Item::Clip(clip) = item else { continue };
             let Ok(MediaReference::External(external)) = clip.active_reference() else {

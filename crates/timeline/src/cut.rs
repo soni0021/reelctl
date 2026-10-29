@@ -313,6 +313,7 @@ pub fn cut_silence(
     dna: &EditDna,
     options: &CutOptions,
 ) -> Result<CutReport> {
+    crate::overlay::refuse_overlays(timeline)?;
     let rate = check_editable(timeline)?;
     check_dna_length(timeline, dna.duration_ms)?;
 

@@ -336,7 +336,20 @@ pub struct Track {
     pub extra: Map<String, Value>,
 }
 
+/// The key under `metadata.reelctl` of a track that holds overlays. The marker, not
+/// the track's name, says it is one.
+pub const OVERLAYS_MARKER: &str = "overlays";
+
 impl Track {
+    /// Whether this is the track `overlay add-chart` keeps its overlays on. Every
+    /// function that looks for "the" video or audio track skips it.
+    pub fn is_overlay(&self) -> bool {
+        reelctl(&self.metadata)
+            .and_then(|map| map.get(OVERLAYS_MARKER))
+            .and_then(Value::as_bool)
+            == Some(true)
+    }
+
     pub fn new(name: &str, kind: &str) -> Self {
         Self {
             schema: TRACK_SCHEMA.to_string(),
@@ -418,16 +431,19 @@ impl Timeline {
         Ok(text)
     }
 
-    /// The first track of a kind.
+    /// The first track of a kind, not counting the overlay track.
     pub fn track(&self, kind: &str) -> Option<&Track> {
-        self.tracks.children.iter().find(|track| track.kind == kind)
+        self.tracks
+            .children
+            .iter()
+            .find(|track| track.kind == kind && !track.is_overlay())
     }
 
     pub fn track_mut(&mut self, kind: &str) -> Option<&mut Track> {
         self.tracks
             .children
             .iter_mut()
-            .find(|track| track.kind == kind)
+            .find(|track| track.kind == kind && !track.is_overlay())
     }
 }
 
