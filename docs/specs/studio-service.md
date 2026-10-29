@@ -1,6 +1,6 @@
 # Spec: The studio service (`reelctl serve`)
 
-Status: **draft, waiting for the user's approval** (2026-10-29). Asked for on 2026-10-29. The user wanted to "shift to request/response model API and producer consumer model and add local filesystem and database which checkpoints and things can be reverted". They chose a Rust daemon, a Unix socket, and a checkpoint for every job's outputs. It is milestone M1 of the ReelStudio plan: the native SwiftUI Mac app (M2 and on) is a thin client of this service. Branch: `claude/keen-clarke-1a8w5h`.
+Status: **approved 2026-10-29** by the user ("Approve, start coding"), with the answers in Resolved Questions. Asked for on 2026-10-29. The user wanted to "shift to request/response model API and producer consumer model and add local filesystem and database which checkpoints and things can be reverted". They chose a Rust daemon, a Unix socket, and a checkpoint for every job's outputs. It is milestone M1 of the ReelStudio plan: the native SwiftUI Mac app (M2 and on) is a thin client of this service. Branch: `claude/keen-clarke-1a8w5h`.
 
 ## Objective
 
@@ -212,9 +212,9 @@ On SIGTERM or SIGINT, `reelctl` stops its own children (ffmpeg, the whisper work
 5. The key is in no file of the workspace, and no live call is possible without an approved plan.
 6. `reelctl` without `--progress` behaves byte for byte as before: stdout, stderr and exit codes.
 
-## Open Questions (recommended answer first)
+## Resolved Questions
 
-1. **Default workspace:** `~/Movies/ReelStudio` on macOS and `~/ReelStudio` on Linux (**recommended**), or required on every start.
-2. **Idle exit:** `serve` keeps running until it is told to stop, or the app quits it when no job is queued (**recommended**: the app's choice, through `shutdown`), or it exits itself after 30 idle minutes.
-3. **Event retention:** keep every progress event (**recommended** for now, since they are small), or thin finished jobs' progress to every tenth event.
-4. **One workspace per `serve`** (**recommended**), or one `serve` for many workspaces.
+1. **Default workspace:** `~/Movies/ReelStudio` on macOS and `~/ReelStudio` on Linux, when `--workspace` is not given (the user's choice).
+2. **Stopping:** `serve` runs until it is told to stop. The app sends `shutdown` when it quits with no job queued (the user's choice). There is no idle timer.
+3. **Event retention:** every progress event is kept (the recommended answer, taken as the default).
+4. **Workspaces:** one per `serve` (the recommended answer, taken as the default).

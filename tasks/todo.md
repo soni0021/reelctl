@@ -3,7 +3,7 @@
 Plan: [plan.md](plan.md). Spec: [docs/specs/studio-service.md](../docs/specs/studio-service.md). Tick each box in the commit that completes it. Stage explicit paths; never `git add -A` (`.env` holds a key).
 
 ## Task 0: Spec
-- [ ] User approves the spec, ADR-028 and ADR-029, and the open questions
+- [x] User approves the spec, ADR-028 and ADR-029 (2026-10-29; workspace ~/Movies/ReelStudio, stops when the app says)
 
 ## Task 1: Progress and cancel
 - [ ] `--progress json` events from every long loop; the result event equals the stdout line

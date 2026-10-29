@@ -1,7 +1,7 @@
 # ADR-029: A SQLite catalogue, a content-addressed store, and append-only checkpoints
 
 ## Status
-Proposed (with [studio-service](../specs/studio-service.md), waiting for the user's approval)
+Accepted (with [studio-service](../specs/studio-service.md), 2026-10-29)
 
 ## Date
 2026-10-29

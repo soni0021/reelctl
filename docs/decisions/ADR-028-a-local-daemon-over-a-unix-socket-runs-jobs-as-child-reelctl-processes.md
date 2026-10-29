@@ -1,7 +1,7 @@
 # ADR-028: A local daemon over a Unix socket runs jobs as child reelctl processes
 
 ## Status
-Proposed (with [studio-service](../specs/studio-service.md), waiting for the user's approval)
+Accepted (with [studio-service](../specs/studio-service.md), 2026-10-29)
 
 ## Date
 2026-10-29

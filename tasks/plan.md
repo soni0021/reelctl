@@ -1,6 +1,6 @@
 # Plan: studio-service (M1)
 
-Spec: [docs/specs/studio-service.md](../docs/specs/studio-service.md) (draft, waiting for approval). ADRs: [ADR-028](../docs/decisions/ADR-028-a-local-daemon-over-a-unix-socket-runs-jobs-as-child-reelctl-processes.md) and [ADR-029](../docs/decisions/ADR-029-a-sqlite-catalogue-a-content-addressed-store-and-append-only-checkpoints.md). Branch: `claude/keen-clarke-1a8w5h`. Built in a cloud session, where every part of this milestone can be built and tested.
+Spec: [docs/specs/studio-service.md](../docs/specs/studio-service.md) (approved 2026-10-29). ADRs: [ADR-028](../docs/decisions/ADR-028-a-local-daemon-over-a-unix-socket-runs-jobs-as-child-reelctl-processes.md) and [ADR-029](../docs/decisions/ADR-029-a-sqlite-catalogue-a-content-addressed-store-and-append-only-checkpoints.md). Branch: `claude/keen-clarke-1a8w5h`. Built in a cloud session, where every part of this milestone can be built and tested.
 
 The previous plan is archived in `tasks/archive/make-reels/`. Its one open item is a real-lecture run on the Mac.
 
