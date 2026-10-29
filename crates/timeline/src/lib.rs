@@ -8,6 +8,7 @@
 mod bridge;
 mod cut;
 mod error;
+mod from_clip;
 mod init;
 mod otio;
 mod overlay;
@@ -25,6 +26,7 @@ pub use bridge::{
 };
 pub use cut::{check_dna_length, cut_silence, CutOptions, CutReport, RemovedSpan, CUTS_KEY};
 pub use error::{Result, TimelineError};
+pub use from_clip::{clip_record, from_clip, ClipPick, ClipRecord, CLIP_KEY, MIN_CLIP_FRAMES};
 pub use init::{
     dna_ref, init, media_info, set_dna_ref, DnaRef, InitSpec, MediaInfo, DNA_KEY, MEDIA_KEY,
 };
