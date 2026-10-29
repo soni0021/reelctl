@@ -237,6 +237,7 @@ pub const COMMANDS: &[CommandSpec] = &[
                 ArgKind::Choice(&["low", "medium", "high"]),
             ),
             must("max_cost_usd", "--max-cost-usd", ArgKind::Float),
+            arg("max_output_tokens", "--max-output-tokens", ArgKind::Int),
             arg("dry_run", "--dry-run", ArgKind::Bool),
             arg("decoder", "--decoder", DECODER),
         ],

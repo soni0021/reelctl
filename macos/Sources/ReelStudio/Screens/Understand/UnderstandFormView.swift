@@ -34,6 +34,7 @@ struct UnderstandFormView: View {
                     Text("Medium").tag("medium")
                     Text("High").tag("high")
                 }
+                Stepper("Output limit \(form.maxOutputTokens) tokens", value: $form.maxOutputTokens, in: 4_000...64_000, step: 4_000)
                 TextField("Refuse a bound over (USD)", value: $form.capUsd, format: .number)
             }
 

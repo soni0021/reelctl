@@ -97,6 +97,10 @@ struct UnderstandForm: Equatable {
     var sheet = "auto"
     /// `none` (the model's default), `low`, `medium` or `high`.
     var effort = "none"
+    /// The most tokens the model may write (`max_output_tokens`). A model that
+    /// reasons at length can spend the default before it finishes; raise it, or
+    /// set Effort to Low.
+    var maxOutputTokens = 16_000
     /// The dry run refuses a bound over this (`max_cost_usd`, exit 4).
     var capUsd = 0.50
 
@@ -116,6 +120,7 @@ struct UnderstandForm: Equatable {
             "max_cost_usd": .double(capUsd),
         ]
         if effort != "none" { options["effort"] = .string(effort) }
+        if maxOutputTokens != 16_000 { options["max_output_tokens"] = .int(Int64(maxOutputTokens)) }
         return options
     }
 }

@@ -31,9 +31,14 @@ fn reelctl() -> Command {
     command
 }
 
-/// A short folder: the socket path must stay under about 100 bytes.
+/// A short folder: the socket path must stay under about 100 bytes, and a macOS
+/// temp directory is already about 48, so the test's name is hashed, not used.
 fn scratch(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("rs-{name}-{}", std::process::id()));
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    name.hash(&mut hasher);
+    let short = hasher.finish() as u16;
+    let dir = std::env::temp_dir().join(format!("rs-{short:04x}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("temp dir");
     dir

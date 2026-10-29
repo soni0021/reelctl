@@ -6,6 +6,8 @@ Notable changes to `reelctl`. Add an entry under Unreleased in the same commit a
 
 ### Added
 
+- The `serve` integration tests named their temporary workspace after the test, which put the Unix socket path over 100 bytes in a macOS temp directory and failed four of them; the name is now a short hash.
+- `reelctl understand --max-output-tokens` (default 16000, 1,000 to 65,536; the Mac app's Understand form has an Output limit stepper). A reply cut off at the output limit now says how many tokens it wrote, how many were reasoning, how much JSON arrived and what the call cost, and advises `--effort low` when most went on reasoning. Found when Qwen3.5-9B was cut off at 16,000 tokens on a 22-minute Hinglish video (303 frames, 326 segments).
 - The Mac app fills in the whisper model setting from `~/models/whisper/ggml-apex-hinglish-q8_0.bin` the first time, when that file exists and the setting was never touched, so decompile and make-reels no longer start with "No whisper model in Settings". Clear in Settings still leaves it empty.
 - `reelctl serve` gains `pipelines.make_reels` (make-reels as checkpointed jobs, in three calls: decompile, the paid-call plan, the reels) and `jobs.argv` (a job as `reelctl` arguments). Jobs run in their own process group, so a cancel reaches their ffmpeg and whisper children; a stopped model call is marked as possibly billed; `render` with the Smelter backend is refused, since it would listen on the network.
 - The Mac app, ReelStudio (`macos/`): a SwiftUI client of `reelctl serve` with every feature, packaged by `make -C macos dmg`. Not yet compiled (see `tasks/mac-todo.md`).

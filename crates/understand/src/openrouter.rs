@@ -192,12 +192,55 @@ pub(crate) fn read_stream(reader: impl BufRead) -> Result<Streamed, BackendError
     Ok(streamed)
 }
 
+/// Why a reply that stopped at the token limit stopped, from what the call
+/// reported: the tokens it wrote and how many of them were reasoning, the JSON it
+/// got out, and what it cost (a cut-off call is billed). A model that spent its
+/// limit on reasoning needs `--effort low` more than a bigger limit.
+fn cut_off_message(streamed: &Streamed) -> String {
+    let usage = streamed.usage.as_ref();
+    let number = |pointer: &str| {
+        usage
+            .and_then(|usage| usage.pointer(pointer))
+            .and_then(Value::as_u64)
+    };
+    let written = number("/completion_tokens");
+    let reasoning =
+        number("/completion_tokens_details/reasoning_tokens").filter(|tokens| *tokens > 0);
+    let mut text = String::from("the reply was cut off at max_tokens");
+    let mut facts = Vec::new();
+    if let Some(written) = written {
+        facts.push(format!("{written} output tokens"));
+    }
+    if let Some(reasoning) = reasoning {
+        facts.push(format!("{reasoning} of them reasoning"));
+    }
+    facts.push(format!(
+        "{} characters of JSON received",
+        streamed.content.len()
+    ));
+    if let Some(cost) = usage
+        .and_then(|usage| usage.get("cost"))
+        .and_then(Value::as_f64)
+    {
+        facts.push(format!("cost ${cost:.4}"));
+    }
+    text.push_str(&format!(" ({})", facts.join(", ")));
+    if reasoning.is_some_and(|reasoning| written.is_some_and(|written| reasoning * 2 > written)) {
+        text.push_str(
+            ": most of it went on reasoning; try --effort low, or raise --max-output-tokens",
+        );
+    } else {
+        text.push_str(
+            ": raise --max-output-tokens, or lower the image count with a larger --every-s",
+        );
+    }
+    text
+}
+
 /// The reply, parsed, with what the call used.
 pub(crate) fn reply_from(streamed: Streamed, elapsed_ms: u64) -> Result<VlmReply, BackendError> {
     if streamed.finish_reason.as_deref() == Some("length") {
-        return Err(BackendError::BadReply(
-            "the reply was cut off at max_tokens; raise it or lower the image count".to_string(),
-        ));
+        return Err(BackendError::BadReply(cut_off_message(&streamed)));
     }
     let reply: RawReply = serde_json::from_str(streamed.content.trim()).map_err(|err| {
         BackendError::BadReply(format!(
@@ -529,6 +572,48 @@ mod tests {
             reply_from(prose, 1),
             Err(BackendError::BadReply(_))
         ));
+    }
+
+    #[test]
+    fn a_cut_off_reply_says_what_it_used_and_what_to_do() {
+        // Most of the 16,000 output tokens went on reasoning: say so, and point at
+        // --effort and --max-output-tokens.
+        let usage = json!({
+            "completion_tokens": 16_000,
+            "completion_tokens_details": {"reasoning_tokens": 15_200},
+            "cost": 0.0123,
+        });
+        let cut = Streamed {
+            content: "{\"clips\": [".to_string(),
+            usage: Some(usage),
+            provider: None,
+            finish_reason: Some("length".to_string()),
+        };
+        let text = reply_from(cut, 1).expect_err("cut off").to_string();
+        assert!(text.contains("16000 output tokens"), "{text}");
+        assert!(text.contains("15200 of them reasoning"), "{text}");
+        assert!(text.contains("11 characters"), "{text}");
+        assert!(text.contains("$0.0123"), "{text}");
+        assert!(text.contains("--effort low"), "{text}");
+        assert!(text.contains("--max-output-tokens"), "{text}");
+
+        // Without reasoning tokens the advice is the limit, and no usage still reads.
+        let plain = Streamed {
+            content: String::new(),
+            usage: Some(json!({"completion_tokens": 16_000})),
+            provider: None,
+            finish_reason: Some("length".to_string()),
+        };
+        let text = reply_from(plain, 1).expect_err("cut off").to_string();
+        assert!(!text.contains("of them reasoning"), "{text}");
+        assert!(!text.contains("--effort low"), "{text}");
+        assert!(text.contains("--max-output-tokens"), "{text}");
+        let bare = Streamed {
+            finish_reason: Some("length".to_string()),
+            ..Streamed::default()
+        };
+        let text = reply_from(bare, 1).expect_err("cut off").to_string();
+        assert!(text.contains("max_tokens"), "{text}");
     }
 
     #[test]

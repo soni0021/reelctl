@@ -212,6 +212,7 @@ reelctl understand --input talk.mp4 --dna talk.edit_dna.json --out talk.understa
 | `--every-s <n>` | `5` | Seconds between sampled frames. A frame is also taken 300 ms before and after every cut |
 | `--sheet <auto\|1\|2\|3>` | `auto` | Single frames, or tiles of 2×2 or 3×3. `auto` tiles only when the request would not fit the model's context (the 28.6-minute lecture: 346 frames in 87 sheets of 2×2) |
 | `--effort <low\|medium\|high>` | none | Reasoning effort, for models that take one |
+| `--max-output-tokens <n>` | `16000` | The most tokens the model may write, 1,000 to 65,536. The cost upper bound prices all of them. A model that reasons at length can spend the default before it finishes the JSON: the call then fails with `the reply was cut off at max_tokens (…)`, naming the tokens written, how many were reasoning, the JSON received and the cost (a cut-off call is still billed), and advising `--effort low` when most went on reasoning, otherwise a larger limit or `--every-s` |
 | `--max-cost-usd <n>` | `0.50` | Refuse, with exit code 4, when the cost upper bound is over this |
 | `--dry-run` | off | Plan only: print the plan and the bound, and do not call the model. It needs no API key, but fetches the model's public price listing |
 | `--decoder <auto\|software>` | `auto` | As for `decompile` |

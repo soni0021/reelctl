@@ -109,6 +109,11 @@ pub struct UnderstandArgs {
     /// Reasoning effort, for models that take one.
     #[arg(long, value_enum)]
     effort: Option<EffortArg>,
+    /// The most tokens the model may write. A model that reasons at length can spend
+    /// the default before it finishes the JSON; the call is then an error and still
+    /// billed. The cost upper bound prices every one of these tokens.
+    #[arg(long, default_value_t = DEFAULT_MAX_TOKENS, value_parser = clap::value_parser!(u32).range(1_000..=65_536))]
+    max_output_tokens: u32,
     /// Refuse (exit 4) when the cost upper bound is over this many US dollars.
     #[arg(long, default_value_t = 0.50)]
     max_cost_usd: f64,
@@ -213,7 +218,7 @@ fn plan(args: &UnderstandArgs, dna: &EditDna, catalog: &dyn ModelCatalog) -> Res
         args.sheet.mode(),
         times_ms.len(),
         text_tokens,
-        DEFAULT_MAX_TOKENS,
+        args.max_output_tokens,
         context_tokens,
     );
     let images = match layout {
@@ -222,7 +227,7 @@ fn plan(args: &UnderstandArgs, dna: &EditDna, catalog: &dyn ModelCatalog) -> Res
     };
     let input_tokens = estimate_input_tokens(images, &prompt, &segment_text);
     let refs: Vec<&EndpointInfo> = endpoints.iter().collect();
-    let bound_usd = cost_upper_bound(input_tokens, DEFAULT_MAX_TOKENS, &refs);
+    let bound_usd = cost_upper_bound(input_tokens, args.max_output_tokens, &refs);
     Ok(Plan {
         segments,
         times_ms,
@@ -297,7 +302,7 @@ fn build_request(
         system: system_prompt(segments),
         parts: build_parts(images, segments),
         schema: response_schema(),
-        max_tokens: DEFAULT_MAX_TOKENS,
+        max_tokens: args.max_output_tokens,
         effort: args.effort.map(|effort| effort.as_str().to_string()),
         quantizations: args.quant.clone(),
     }
@@ -469,6 +474,7 @@ mod tests {
             sheet: SheetArg::Auto,
             effort: Some(EffortArg::High),
             max_cost_usd: 0.50,
+            max_output_tokens: DEFAULT_MAX_TOKENS,
             dry_run: false,
             decoder: DecoderArg::Auto,
             replay: None,
@@ -510,9 +516,40 @@ mod tests {
         assert_eq!(request.quantizations, vec!["fp8".to_string()]);
         assert_eq!(request.effort.as_deref(), Some("high"));
         assert_eq!(request.max_tokens, DEFAULT_MAX_TOKENS);
+        let mut more = args();
+        more.max_output_tokens = 24_000;
+        assert_eq!(
+            build_request(&more, &four_second_segments(), &[]).max_tokens,
+            24_000
+        );
         assert!(request
             .parts
             .iter()
             .any(|part| matches!(part, Part::Text(text) if text.contains("G100"))));
+    }
+
+    #[test]
+    fn the_output_limit_defaults_to_the_constant_and_has_a_range() {
+        use clap::FromArgMatches;
+        let parse = |extra: &[&str]| {
+            let command = <UnderstandArgs as clap::Args>::augment_args(clap::Command::new("u"));
+            let mut argv = vec![
+                "u", "--input", "a.mp4", "--dna", "d.json", "--out", "o.json",
+            ];
+            argv.extend_from_slice(extra);
+            command
+                .try_get_matches_from(argv)
+                .map(|matches| UnderstandArgs::from_arg_matches(&matches).expect("args"))
+        };
+        assert_eq!(
+            parse(&[]).expect("default").max_output_tokens,
+            DEFAULT_MAX_TOKENS
+        );
+        let set = parse(&["--max-output-tokens", "32000"]).expect("set");
+        assert_eq!(set.max_output_tokens, 32_000);
+        assert!(parse(&["--max-output-tokens", "999"]).is_err());
+        assert!(parse(&["--max-output-tokens", "65537"]).is_err());
+        assert!(parse(&["--max-output-tokens", "1000"]).is_ok());
+        assert!(parse(&["--max-output-tokens", "65536"]).is_ok());
     }
 }

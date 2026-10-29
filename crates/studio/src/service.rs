@@ -620,7 +620,15 @@ impl Service {
             inputs.insert(role.to_string(), input);
         }
         let mut args = serde_json::Map::new();
-        for key in ["model", "quant", "every_s", "sheet", "effort", "decoder"] {
+        for key in [
+            "model",
+            "quant",
+            "every_s",
+            "sheet",
+            "effort",
+            "max_output_tokens",
+            "decoder",
+        ] {
             if let Some(value) = params.get(key).filter(|value| !value.is_null()) {
                 args.insert(key.to_string(), value.clone());
             }
@@ -809,6 +817,7 @@ impl Service {
                 "quant",
                 "sheet",
                 "effort",
+                "max_output_tokens",
                 "decoder",
             ] {
                 if let Some(value) = params.get(key).filter(|value| !value.is_null()) {
@@ -1150,7 +1159,7 @@ mod tests {
         let plan = call(
             &service,
             "understand.plan",
-            json!({"subject": subject, "input": {"asset": video}, "dna": {"asset": dna}, "every_s": 5}),
+            json!({"subject": subject, "input": {"asset": video}, "dna": {"asset": dna}, "every_s": 5, "max_output_tokens": 24000}),
         );
         // 0.0123 printed: shown rounded up past it.
         assert_eq!(plan["cost_upper_bound_usd"], json!(0.0124));
@@ -1187,6 +1196,8 @@ mod tests {
         let job = finish(&service, run["job"].as_i64().unwrap());
         assert_eq!(job.status, JobStatus::Succeeded);
         assert_eq!(job.args["max_cost_usd"], json!(0.0124));
+        // The output limit chosen at plan time is the one the run uses.
+        assert_eq!(job.args["max_output_tokens"], json!(24000));
         assert_eq!(job.args.get("dry_run"), None);
         assert_eq!(job.env_names, vec![KEY_NAME.to_string()]);
         assert_eq!(*fake.keys_seen.lock().unwrap(), vec![Some(key.to_string())]);

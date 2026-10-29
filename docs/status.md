@@ -2,6 +2,8 @@
 
 Last updated 2026-10-29 (the RVM presenter section was added then). Update this page in the same commit as any change that affects it.
 
+Known issue, 2026-10-30: a live `understand` on the 22-minute NEET video (Qwen3.5-9B, 76 sheets, about 121k input tokens, 326 segments) was cut off at the 16,000 output-token limit and failed with exit 1 (the call is billed). The cause is unconfirmed: the message did not say how the tokens were spent. It now does, and `--max-output-tokens` and the app's Output limit stepper raise the limit; `--effort low` is the first thing to try. A re-run needs the user's yes.
+
 `cargo test --workspace` on `main` after the RVM, P3, manimgx and Smelter merges (2026-10-29, Apple M3 MacBook Air): 1116 passed, 0 failed, 2 ignored (the whisper model tests).
 
 ## Summary
