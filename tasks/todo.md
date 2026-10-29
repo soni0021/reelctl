@@ -1,0 +1,32 @@
+# Todo: make-reels
+
+Plan: [plan.md](plan.md). Spec: [docs/specs/make-reels.md](../docs/specs/make-reels.md). Tick each box in the commit that completes it. Stage explicit paths; never `git add -A` (`.env` holds a key).
+
+## Task 0: Spec
+- [ ] User approves `docs/specs/make-reels.md` and ADR-025 (and the open questions)
+
+## Task 1: Edits on a trimmed clip
+- [ ] `timeline from-clip` (refusals, metadata, frame snapping)
+- [ ] Every edit and the render tested on a clip that starts after 0
+
+## Task 2: Bridge
+- [ ] `attach-bridge --append`; old records still read
+
+## Task 3: Auto punch-in
+- [ ] Windows through the edits, scale and curve from the outliers, idempotent
+
+## Task 4: Reframe
+- [ ] Compositor alpha-only entry (fake model test)
+- [ ] Pure plan: centroid, dead zone, speed, ease, cuts, edges, thinning
+- [ ] Render crop expression checked against ffmpeg; Smelter refuses
+- [ ] `--follow centre`; fail-closed messages
+
+## Task 5: Captions
+- [ ] Mapping, grouping, escaping, font lookup; other edits refuse; `overlay remove --captions`
+
+## Task 6: make-reels
+- [ ] Child steps with a minimal environment, cost gate and prompt, `make_reels.json`, exit codes
+- [ ] `lecture90` fixture, DNA sidecar, `--replay` reply, end-to-end test
+
+## Mac (user)
+- [ ] Real lecture run; reframe ms per frame and the presenter-in-frame check recorded in status.md
