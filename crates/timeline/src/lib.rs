@@ -14,6 +14,7 @@ mod init;
 mod otio;
 mod overlay;
 mod punch;
+mod reframe;
 mod render;
 mod smelter;
 mod tracks;
@@ -47,6 +48,10 @@ pub use overlay::{
     OVERLAY_KEY, OVERLAY_TRACK_NAME,
 };
 pub use punch::{punch_in, PunchReport, PunchRequest, MAX_SCALE, RAMP_FRAMES};
+pub use reframe::{
+    centre_keyframes, crop_size, crop_x_expression, footage_span, plan_path, reframe_of,
+    set_reframe, x_at, Aspect, Follow, Keyframe, ReframeSpec, REFRAME_KEY,
+};
 pub use render::{
     build_render_plan, frame_rate_arg, CardSpec, OverlayInput, RenderPlan, RenderSize,
     AUDIO_SAMPLE_RATE, MAX_PIXELS, MAX_SIDE,

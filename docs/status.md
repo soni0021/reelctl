@@ -489,7 +489,8 @@ Spec: [make-reels](specs/make-reels.md). Built in a Claude Code cloud session (L
 - The compositor's alpha-only pass (`measure_centroids`) runs with a fake model.
 - `cargo test --workspace --no-fail-fast` in that container: every test passes except five that also fail on the commit before these changes (1d2e97e), so they come from the environment, not this work. Three `overlay_fixture.rs` tests check chart pixels that come out differently with the distribution's ffmpeg 6.1 (`top row 100: [31, 63, 32]`). Two `scenes::worker` tests use a fake worker script and failed under load; one of them passes when run alone. On the Mac (ffmpeg 8.1) they passed at the last merge.
 - `fixtures/generate.sh` used BSD `mktemp -t name`, which GNU `mktemp` refuses ("too few X's"), so `motion12` and the other temp-dir fixtures could not be made on Linux. It now uses `mktemp "${TMPDIR:-/tmp}/name.XXXXXX"`, which works on both.
-- Not yet: `transform reframe`, `overlay captions`, `reelctl make-reels`. `diff` on a rendered reel was not checked for static windows: the punch-ins zoom into flat colour, which the visual-event detector cannot see.
+- `transform reframe`: the plan is tested on synthetic centroids (a walking presenter stays within the middle 40% of the window on every frame, the pan never exceeds its limit, the window jumps at a cut), and the render's moving crop on a left-to-right gradient: at frames 0, 45, 90 and 110 the left column's luma is within 6 of what the keyframes say, read back through real ffmpeg. `--follow presenter` with the real RVM model has **not been run** (no weights or ONNX Runtime here): its ms per frame and whether the window keeps a real presenter in frame are open, for the Mac.
+- Not yet: `overlay captions`, `reelctl make-reels`. `diff` on a rendered reel was not checked for static windows: the punch-ins zoom into flat colour, which the visual-event detector cannot see.
 
 ## Gaps
 

@@ -448,3 +448,154 @@ fn the_clip_steps_chain_and_render() {
     let frames: f64 = stream["nb_read_frames"].as_str().unwrap().parse().unwrap();
     assert_eq!(frames, after);
 }
+
+/// A 4 s, 640x360 clip whose luma rises from left to right (0 at x=0, 255 at
+/// x=640), so a crop's left edge can be read from its first column.
+fn gradient(path: &Path) {
+    let output = Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=640x360:r=30:d=4,format=yuv420p,geq=lum='X*255/W':cb=128:cr=128",
+            "-c:v",
+            "libx264",
+            "-qp",
+            "0",
+            "-pix_fmt",
+            "yuv420p",
+        ])
+        .arg(path)
+        .output()
+        .expect("spawn ffmpeg");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// The luma of column 2, row 180, of frame `index` of `video`.
+fn left_luma(video: &Path, index: u32) -> f64 {
+    let output = Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "error", "-i"])
+        .arg(video)
+        .args([
+            "-vf",
+            &format!("select=eq(n\\,{index}),format=gray,crop=1:1:2:180"),
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "pipe:1",
+        ])
+        .output()
+        .expect("spawn ffmpeg");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    f64::from(output.stdout[0])
+}
+
+#[test]
+fn reframe_centre_renders_a_vertical_window_and_presenter_needs_the_model() {
+    let lecture = lecture();
+    let root = scratch("reframe");
+    let clip = root.join("clip.otio");
+    assert!(from_clip(lecture, &clip, &["--clip", "1"]).status.success());
+
+    // Without weights the presenter cannot be followed: exit 2, nothing written.
+    let refused = root.join("refused.otio");
+    exits_2(
+        &[
+            "transform",
+            "reframe",
+            "--project",
+            &s(&clip),
+            "--follow",
+            "presenter",
+            "--out",
+            &s(&refused),
+        ],
+        "weights",
+    );
+    assert!(!refused.exists());
+
+    let centred = root.join("centred.otio");
+    let stdout = ok(&[
+        "transform",
+        "reframe",
+        "--project",
+        &s(&clip),
+        "--follow",
+        "centre",
+        "--out",
+        &s(&centred),
+    ]);
+    assert!(
+        stdout.contains("aspect=9:16 follow=centre keyframes=1"),
+        "{stdout}"
+    );
+    let record = &read_json(&centred)["metadata"]["reelctl"]["reframe"];
+    // 360 * 9 / 16 = 202.5, made even.
+    assert_eq!(
+        (
+            record["crop_width"].as_u64(),
+            record["crop_height"].as_u64()
+        ),
+        (Some(202), Some(360))
+    );
+
+    // (The Smelter backend's refusal of a reframed project is a unit test in
+    // `timeline::smelter`: `render` looks for the Smelter program first.)
+}
+
+#[test]
+fn ffmpeg_moves_the_window_along_the_keyframes() {
+    let root = scratch("moving-crop");
+    let media = root.join("gradient.mp4");
+    gradient(&media);
+    let project = root.join("gradient.otio");
+    ok(&[
+        "timeline",
+        "init",
+        "--input",
+        &s(&media),
+        "--out",
+        &s(&project),
+    ]);
+    ok(&[
+        "transform",
+        "reframe",
+        "--project",
+        &s(&project),
+        "--follow",
+        "centre",
+        "--out",
+        &s(&project),
+    ]);
+    // Move the window's left edge from 0 to 0.6 of the width over frames 0..90,
+    // then hold it.
+    let mut json = read_json(&project);
+    json["metadata"]["reelctl"]["reframe"]["keyframes"] =
+        json!([{"source_frame": 0, "x": 0.0}, {"source_frame": 90, "x": 0.6}]);
+    fs::write(&project, serde_json::to_vec_pretty(&json).unwrap()).unwrap();
+    let video = root.join("moving.mp4");
+    ok(&["render", "--project", &s(&project), "--out", &s(&video)]);
+    for (frame, x) in [(0u32, 0.0), (45, 0.3), (90, 0.6), (110, 0.6)] {
+        // The clip's luma is written as limited range; `format=gray` expands it.
+        let luma: f64 = (x * 640.0 + 2.0) * 255.0 / 640.0;
+        let want = ((luma - 16.0) * 255.0 / 219.0).clamp(0.0, 255.0);
+        let got = left_luma(&video, frame);
+        assert!(
+            (got - want).abs() <= 6.0,
+            "frame {frame}: luma {got}, expected about {want}"
+        );
+    }
+}

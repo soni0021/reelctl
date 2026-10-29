@@ -246,9 +246,17 @@ pub(crate) fn continues(previous: &Item, next: &Item, rate: f64) -> Result<bool>
 pub fn build_render_plan(timeline: &Timeline, size: Option<RenderSize>) -> Result<RenderPlan> {
     let rate = check_editable(timeline)?;
     let info = media_info(timeline)?;
-    let size = size.unwrap_or(RenderSize {
-        width: info.width,
-        height: info.height,
+    let reframe = crate::reframe::reframe_of(timeline)?;
+    // A reframed project renders at its window's size unless told otherwise.
+    let size = size.unwrap_or(match &reframe {
+        Some(spec) => RenderSize {
+            width: spec.crop_width,
+            height: spec.crop_height,
+        },
+        None => RenderSize {
+            width: info.width,
+            height: info.height,
+        },
     });
     if size.width == 0
         || size.height == 0
@@ -337,8 +345,24 @@ pub fn build_render_plan(timeline: &Timeline, size: Option<RenderSize>) -> Resul
             MediaReference::External(external) => {
                 let index = media_index(&mut media, &external.target_url);
                 let tap = video_taps.label(index);
+                // The reframe's window comes first, in source pixels; `fit` then
+                // scales it to the output.
+                let window = match &reframe {
+                    Some(spec) => format!(
+                        "crop=w={}:h={}:x='{}':y=0,",
+                        spec.crop_width,
+                        spec.crop_height,
+                        crate::reframe::crop_x_expression(
+                            &spec.keyframes,
+                            start,
+                            duration,
+                            info.width
+                        )
+                    ),
+                    None => String::new(),
+                };
                 let mut chain = format!(
-                    "[{tap}]trim=start_frame={start}:end_frame={},setpts=PTS-STARTPTS,{fit}",
+                    "[{tap}]trim=start_frame={start}:end_frame={},setpts=PTS-STARTPTS,{window}{fit}",
                     start + duration
                 );
                 // `zoompan` goes last but for the pixel format: a `fps` after it
@@ -959,5 +983,58 @@ mod tests {
             .filter_graph;
         // 33 % of 1080 is 356.4: the nearest even number is 356.
         assert!(graph.contains("scale=356:-2[ov0]"), "{graph}");
+    }
+
+    #[test]
+    fn a_reframed_project_crops_each_piece_on_its_own_frames_then_fits() {
+        use crate::reframe::{set_reframe, Aspect, Follow, Keyframe, ReframeSpec};
+        // 640x360 at 30 fps; a 9:16 window is 202x360.
+        let mut timeline = project(30.0, 300);
+        let keyframes = vec![
+            Keyframe {
+                source_frame: 0,
+                x: 0.1,
+            },
+            Keyframe {
+                source_frame: 150,
+                x: 0.5,
+            },
+        ];
+        set_reframe(
+            &mut timeline,
+            &ReframeSpec {
+                aspect: Aspect::parse("9:16").unwrap(),
+                follow: Follow::Presenter,
+                crop_width: 202,
+                crop_height: 360,
+                keyframes: keyframes.clone(),
+                note: String::new(),
+            },
+        );
+        let plan = build_render_plan(&timeline, None).expect("plan");
+        // Without --size the output is the window's size.
+        assert_eq!((plan.size.width, plan.size.height), (202, 360));
+        let expression = crate::reframe::crop_x_expression(&keyframes, 0, 300, 640);
+        assert!(
+            plan.filter_graph.contains(&format!(
+                "setpts=PTS-STARTPTS,crop=w=202:h=360:x='{expression}':y=0,scale=202:360"
+            )),
+            "{}",
+            plan.filter_graph
+        );
+        // With --size it is scaled up from the window.
+        let plan = build_render_plan(
+            &timeline,
+            Some(RenderSize {
+                width: 1080,
+                height: 1920,
+            }),
+        )
+        .expect("plan");
+        assert!(
+            plan.filter_graph.contains(":y=0,scale=1080:1920"),
+            "{}",
+            plan.filter_graph
+        );
     }
 }

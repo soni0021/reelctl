@@ -75,6 +75,8 @@ enum TransformSub {
     /// Add punch-ins wherever the picture would stay still longer than `diff` allows,
     /// at the outliers' zoom scale.
     AutoPunchIn(AutoPunchInArgs),
+    /// Crop to a narrower frame (9:16) that follows the presenter or stays centred.
+    Reframe(ReframeArgs),
 }
 
 #[derive(Args)]
@@ -185,6 +187,39 @@ struct AutoPunchInArgs {
     out: PathBuf,
 }
 
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+enum FollowArg {
+    /// Follow the presenter, found with RobustVideoMatting (needs --weights and
+    /// ORT_DYLIB_PATH).
+    Presenter,
+    /// A fixed window in the middle.
+    Centre,
+}
+
+#[derive(Args)]
+struct ReframeArgs {
+    #[arg(long)]
+    project: PathBuf,
+    /// The output's aspect ratio, width:height.
+    #[arg(long, default_value = "9:16")]
+    aspect: String,
+    #[arg(long, value_enum)]
+    follow: FollowArg,
+    /// RobustVideoMatting ONNX weights, for --follow presenter. ONNX Runtime comes
+    /// from the ORT_DYLIB_PATH environment variable.
+    #[arg(long, env = "REELCTL_RVM_WEIGHTS")]
+    weights: Option<PathBuf>,
+    /// The model's downsample ratio, above 0 and at most 1.
+    #[arg(long)]
+    downsample_ratio: Option<f32>,
+    /// The edit DNA whose cuts the window jumps at. Defaults to the one the project
+    /// recorded.
+    #[arg(long)]
+    dna: Option<PathBuf>,
+    #[arg(long)]
+    out: PathBuf,
+}
+
 #[derive(Args)]
 struct AttachBridgeArgs {
     #[arg(long)]
@@ -275,6 +310,7 @@ pub fn transform(command: TransformCommand) -> Result<()> {
     match command.command {
         TransformSub::PunchIn(args) => punch_in_cmd(args),
         TransformSub::AutoPunchIn(args) => auto_punch_in_cmd(args),
+        TransformSub::Reframe(args) => reframe_cmd(args),
     }
 }
 
@@ -761,6 +797,100 @@ fn auto_punch_in_cmd(args: AutoPunchInArgs) -> Result<()> {
         } else {
             "default"
         }
+    );
+    Ok(())
+}
+
+fn reframe_cmd(args: ReframeArgs) -> Result<()> {
+    use timeline::{
+        centre_keyframes, crop_size, footage_span, plan_path, set_reframe, Aspect, Follow,
+        ReframeSpec,
+    };
+    let mut project = load_project(&args.project)?;
+    let aspect = Aspect::parse(&args.aspect).map_err(invalid)?;
+    let info = media_info(&project).map_err(invalid)?;
+    let media = local_media_file(&info.path)
+        .map_err(|error| usage(format!("{}: {error}", args.project.display())))?;
+    let (first, end) = footage_span(&project).map_err(invalid)?;
+    let follow = match args.follow {
+        FollowArg::Presenter => Follow::Presenter,
+        FollowArg::Centre => Follow::Centre,
+    };
+    let Some((crop_width, crop_height)) = crop_size(info.width, info.height, aspect) else {
+        save_project(&project, &args.out)?;
+        println!(
+            "reframe: out={} aspect={} follow={} keyframes=0 frames_measured=0 ms_per_frame=0 unchanged=true",
+            args.out.display(),
+            aspect.label(),
+            follow.as_str()
+        );
+        return Ok(());
+    };
+    let (keyframes, measured, ms_per_frame) = match follow {
+        Follow::Centre => (centre_keyframes(first, info.width, crop_width), 0, 0.0),
+        Follow::Presenter => {
+            let dna_path = match (&args.dna, dna_ref(&project)) {
+                (Some(path), _) => Some(path.clone()),
+                (None, Some(recorded)) => Some(PathBuf::from(recorded.path)),
+                (None, None) => None,
+            };
+            let cuts: Vec<i64> = match dna_path {
+                Some(path) => {
+                    let dna = load_dna(&path)?;
+                    check_project_dna(&project, dna.duration_ms)
+                        .map_err(|error| usage(format!("{}: {error}", path.display())))?;
+                    dna.cuts
+                        .iter()
+                        .map(|cut| timeline::round_frame(cut.time_ms, info.fps))
+                        .collect()
+                }
+                None => Vec::new(),
+            };
+            // The media and span are checked before the weights are opened, and
+            // the weights before the first frame is decoded.
+            let prepared = compositor::prepare_measure(&compositor::MeasureRequest {
+                input: media,
+                start_frame: first,
+                end_frame: end,
+                ratio: args.downsample_ratio,
+            })
+            .map_err(crate::compositor_cmd::exit_for)?;
+            let mut model = compositor::RvmModel::open(args.weights.as_deref())
+                .map_err(crate::compositor_cmd::exit_for)?;
+            let report = prepared
+                .run(&mut model)
+                .map_err(crate::compositor_cmd::exit_for)?;
+            let keyframes = plan_path(
+                &report.centroids,
+                first,
+                &cuts,
+                info.fps,
+                info.width,
+                crop_width,
+            )
+            .map_err(invalid)?;
+            let ms = report.model_time.as_secs_f64() * 1000.0 / report.frames.max(1) as f64;
+            (keyframes, report.frames, ms)
+        }
+    };
+    let count = keyframes.len();
+    set_reframe(
+        &mut project,
+        &ReframeSpec {
+            aspect,
+            follow,
+            crop_width,
+            crop_height,
+            keyframes,
+            note: String::new(),
+        },
+    );
+    save_project(&project, &args.out)?;
+    println!(
+        "reframe: out={} aspect={} follow={} keyframes={count} frames_measured={measured} ms_per_frame={ms_per_frame:.1} unchanged=false",
+        args.out.display(),
+        aspect.label(),
+        follow.as_str()
     );
     Ok(())
 }

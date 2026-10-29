@@ -86,7 +86,7 @@ pub fn compositor(command: CompositorCommand) -> Result<()> {
 }
 
 /// A setup error exits with code 2; a failure while running with 1.
-fn exit_for(error: CompositorError) -> anyhow::Error {
+pub(crate) fn exit_for(error: CompositorError) -> anyhow::Error {
     match error {
         CompositorError::Setup(message) => anyhow::Error::new(ExitWith { code: 2, message }),
         CompositorError::Run(message) => anyhow::anyhow!(message),

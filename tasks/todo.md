@@ -17,9 +17,9 @@ Plan: [plan.md](plan.md). Spec: [docs/specs/make-reels.md](../docs/specs/make-re
 
 ## Task 4: Reframe
 - [x] Compositor alpha-only entry (fake model test)
-- [ ] Pure plan: centroid, dead zone, speed, ease, cuts, edges, thinning
-- [ ] Render crop expression checked against ffmpeg; Smelter refuses
-- [ ] `--follow centre`; fail-closed messages
+- [x] Pure plan: centroid, dead zone, speed, ease, cuts, edges, thinning
+- [x] Render crop expression checked against ffmpeg; Smelter refuses
+- [x] `--follow centre`; fail-closed messages
 
 ## Task 5: Captions
 - [ ] Mapping, grouping, escaping, font lookup; other edits refuse; `overlay remove --captions`
