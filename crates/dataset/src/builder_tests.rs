@@ -811,3 +811,46 @@ fn a_jsonl_file_has_one_record_per_line() {
     assert!(output.train_jsonl.ends_with('\n'));
     assert_eq!(output.train_jsonl.lines().count(), 3);
 }
+
+#[test]
+fn a_trainable_task_on_one_side_of_the_split_only_is_warned_about() {
+    // "lecture" has bucket 78, so it is train at every allowed --val-percent.
+    let (dna, run) = lecture_inputs();
+    let output = build(&[dna], &[run], &options(50)).expect("build");
+    let warnings = &output.manifest.warnings;
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.starts_with("clip_picks has 1 records in train and none in val")),
+        "{warnings:?}"
+    );
+    // The eval-only tasks are not held to it.
+    assert!(
+        !warnings.iter().any(|w| w.starts_with("pacing")),
+        "{warnings:?}"
+    );
+}
+
+#[test]
+fn a_trainable_task_in_both_splits_gives_no_such_warning() {
+    // draft12 (bucket 37) is val at 38 and lecture (bucket 78) is train.
+    let (lecture, run) = lecture_inputs();
+    let draft = dna_file("draft12", &lecture_dna(40));
+    let run2 = file(
+        "d.json",
+        &understanding("draft12.mp4", 40, &[pick(1, 3, 13)]),
+    );
+    let output = build(&[lecture, draft], &[run, run2], &options(38)).expect("build");
+    assert!(
+        output.manifest.warnings.is_empty(),
+        "{:?}",
+        output.manifest.warnings
+    );
+    // No clip_picks at all is not a one-sided task.
+    let none = build(&[dna_file("reel-a", &reel_dna())], &[], &options(50)).expect("build");
+    assert!(!none
+        .manifest
+        .warnings
+        .iter()
+        .any(|w| w.starts_with("clip_picks")));
+}

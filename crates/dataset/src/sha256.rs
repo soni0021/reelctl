@@ -69,23 +69,16 @@ impl Sha256 {
 
     pub fn finish(mut self) -> [u8; 32] {
         let bits = self.length_bytes.wrapping_mul(8);
-        self.update_padding(&[0x80]);
+        self.update(&[0x80]);
         while self.filled != 56 {
-            self.update_padding(&[0]);
+            self.update(&[0]);
         }
-        self.update_padding(&bits.to_be_bytes());
+        self.update(&bits.to_be_bytes());
         let mut out = [0u8; 32];
         for (word, bytes) in self.state.iter().zip(out.chunks_exact_mut(4)) {
             bytes.copy_from_slice(&word.to_be_bytes());
         }
         out
-    }
-
-    /// Feed padding without counting it in the message length.
-    fn update_padding(&mut self, data: &[u8]) {
-        let length = self.length_bytes;
-        self.update(data);
-        self.length_bytes = length;
     }
 }
 

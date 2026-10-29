@@ -553,6 +553,22 @@ fn assemble(
             ));
         }
     }
+    // A task a model can be trained on needs records on both sides of the split, or the
+    // comparison of a base model with a fine-tune has nothing to score.
+    for task in Task::ALL.into_iter().filter(|task| task.trainable()) {
+        let found = counts.get(task.as_str()).copied().unwrap_or_default();
+        for (found_n, other_n, found_in, missing_in) in [
+            (found.train, found.val, "train", "val"),
+            (found.val, found.train, "val", "train"),
+        ] {
+            if found_n > 0 && other_n == 0 {
+                warnings.push(format!(
+                    "{} has {found_n} records in {found_in} and none in {missing_in}: it cannot be scored there (try another --salt or more reels)",
+                    task.as_str()
+                ));
+            }
+        }
+    }
     let mut skipped = skips.list;
     skipped.sort();
 

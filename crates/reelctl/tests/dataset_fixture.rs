@@ -611,6 +611,17 @@ fn an_empty_split_is_reported_when_building_and_refused_when_scoring() {
     assert!(output.status.success(), "{}", stderr(&output));
     assert_eq!(report["answered"], 0);
     assert_eq!(report["missing"], 9);
+
+    // One .jsonl file is scored whole, whatever `--split` says (its default is val).
+    let (output, report) = eval_json(&[
+        &arg("--truth"),
+        &arg(&out.join("train.jsonl")),
+        &arg("--answers"),
+        &arg(&answers),
+    ]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(report["split"], "file");
+    assert_eq!(report["records"], 9);
 }
 
 #[test]

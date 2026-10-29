@@ -283,17 +283,18 @@ pub fn run_eval(args: EvalArgs) -> Result<()> {
     let report: EvalReport = if args.truth.is_dir()
         || args.truth.extension().is_some_and(|ext| ext == "jsonl")
     {
-        let records: Vec<_> = dataset_records(&args.truth)?
-            .into_iter()
-            .filter(|record| args.split.keeps(record.split))
-            .collect();
-        eval_dataset(
-            &records,
-            &read_text(&args.answers)?,
-            args.split.name(),
-            &tolerances,
-        )
-        .map_err(library)?
+        // A directory holds both splits and `--split` picks; one .jsonl file is
+        // scored whole, whatever the records say.
+        let (records, label) = if args.truth.is_dir() {
+            let kept: Vec<_> = dataset_records(&args.truth)?
+                .into_iter()
+                .filter(|record| args.split.keeps(record.split))
+                .collect();
+            (kept, args.split.name())
+        } else {
+            (dataset_records(&args.truth)?, "file")
+        };
+        eval_dataset(&records, &read_text(&args.answers)?, label, &tolerances).map_err(library)?
     } else {
         let Some(dna_path) = &args.dna else {
             return Err(usage(
