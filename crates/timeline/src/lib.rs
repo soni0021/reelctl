@@ -10,6 +10,7 @@ mod cut;
 mod error;
 mod init;
 mod otio;
+mod overlay;
 mod punch;
 mod render;
 mod tracks;
@@ -31,10 +32,16 @@ pub use otio::{
     MediaReference, RationalTime, Stack, TimeRange, Timeline, Track, AUDIO_KIND, REELCTL_KEY,
     VIDEO_KIND,
 };
+pub use overlay::{
+    add_overlay, has_overlays, overlays, plan_overlay, refuse_overlays, remove_overlay, Overlay,
+    OverlayAsset, OverlayPosition, OverlayReport, OverlayRequest, Slot, EDGE_MARGIN, KEY_BLEND,
+    KEY_COLOR, KEY_SIMILARITY, MAX_OVERLAY_MS, MAX_WIDTH_PCT, MIN_OVERLAY_MS, MIN_WIDTH_PCT,
+    OVERLAY_KEY, OVERLAY_TRACK_NAME,
+};
 pub use punch::{punch_in, PunchReport, PunchRequest, MAX_SCALE, RAMP_FRAMES};
 pub use render::{
-    build_render_plan, frame_rate_arg, CardSpec, RenderPlan, RenderSize, AUDIO_SAMPLE_RATE,
-    MAX_PIXELS, MAX_SIDE,
+    build_render_plan, frame_rate_arg, CardSpec, OverlayInput, RenderPlan, RenderSize,
+    AUDIO_SAMPLE_RATE, MAX_PIXELS, MAX_SIDE,
 };
 pub use tracks::{
     ceil_frame, check_editable, floor_frame, frame_ms, project_rate, round_frame, single_media,

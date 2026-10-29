@@ -132,7 +132,12 @@ pub fn check_editable(timeline: &Timeline) -> Result<f64> {
     let rate = project_rate(timeline)?;
     let mut videos = 0;
     let mut audios = 0;
-    for track in &timeline.tracks.children {
+    for track in timeline
+        .tracks
+        .children
+        .iter()
+        .filter(|track| !track.is_overlay())
+    {
         match track.kind.as_str() {
             VIDEO_KIND => videos += 1,
             AUDIO_KIND => audios += 1,
@@ -248,7 +253,12 @@ pub(crate) fn external_url(clip: &Clip) -> Option<&str> {
 /// are none or several.
 pub fn single_media(timeline: &Timeline) -> Result<&str> {
     let mut found: Option<&str> = None;
-    for track in &timeline.tracks.children {
+    for track in timeline
+        .tracks
+        .children
+        .iter()
+        .filter(|track| !track.is_overlay())
+    {
         for item in &track.children {
             if let Item::Clip(clip) = item {
                 if let Some(url) = external_url(clip) {

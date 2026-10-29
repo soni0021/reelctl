@@ -328,6 +328,38 @@ Scores a model's answers against measured truth; reads files only, never calls a
 - **Report:** JSON by default, or `--format text`. `eval_schema_version`, `truth_kind`, `split`, `records`, `answered`, `missing`, `unparseable`, `extra_answers`, `problems`, `tolerances`, then `clip_picks`, `edit_events` and `pacing` where the truth has them. `clip_picks` has `valid_rate` and `rule_pass_rate` (about the answer alone), then agreement with the named teacher: `hook`, `payoff_given_hook`, `cutoff_given_hook` and `interval` (IoU at least 0.5). `edit_events` has `cuts` and `visual_events` (precision, recall, F1, timing error), `scale` and `zoom_curves` errors. `pacing` has mean absolute error and exact rate per field and the payoff accuracy. A score that cannot be computed (nothing to score) is `null`, never 0 or NaN. Two reports are compared by diffing them; nothing in them is a pass mark.
 - `--cut-tolerance-ms` and `--event-tolerance-ms`: times this close (inclusive) are the same cut, or the same event of one kind.
 - Exit 2: an `understanding.json` without `--dna`. Exit 1: an unreadable or malformed file, an unknown schema version, a duration mismatch, an empty split, a duplicate answer id.
+## Chart overlays: overlay
+
+Draws a chart with `manimgx`, a separately installed program ([ADR-022](decisions/ADR-022-draw-chart-overlays-with-a-separately-installed-manimgx-and-key-them-over-the-video.md)), and lays it over the video for a span. `render` composites it. It needs `ffmpeg`, `ffprobe` and manimgx (`uv tool install --python 3.14 manimgx`); no network and no model of ours, and the worker's environment has `OPENROUTER_API_KEY` removed. How it works, the track and the filters are in [timeline.md](timeline.md#chart-overlays-overlay-add-chart).
+
+```
+reelctl overlay add-chart --project edit.otio --spec chart.json --out edit.otio [--assets-dir DIR] [--manimgx PATH] [--skip-inspect] [--timeout-s 300]
+reelctl overlay remove --project edit.otio --id ID --out edit.otio
+```
+
+| Command | Stdout line |
+|---|---|
+| `overlay add-chart` | `overlay add-chart: out= id= frames=a..b asset= unchanged= renderer="..."` (`renderer` is missing when `unchanged=true`) |
+| `overlay remove` | `overlay remove: out= id= removed=true` (exit 2 if the project has no overlay with that id) |
+
+The spec is a JSON object, at most 64 KiB, and unknown fields are refused:
+
+| Field | |
+|---|---|
+| `kind` | `bar` (1 to 8 points), `line` (2 to 24) or `number-callout` (exactly 1) |
+| `title` | 1 to 60 characters, not only spaces |
+| `series` | `[{"label": 1 to 24 characters (not only spaces), "value": number}]`; 0 to 1e12 for bars and lines, magnitude at most 1e12 for the callout |
+| `unit` | optional, 1 to 8 characters, shown after every value |
+| `start_ms`, `end_ms` | the span on the edited timeline, 500 to 30000 ms, inside the timeline, rounded to the nearest frame |
+| `position` | `top`, `center` (default) or `bottom` |
+| `width_pct` | 20 to 100 (default 90): the overlay's width as a share of the output width |
+
+Text may hold any characters except control and text-direction ones. It reaches the scene as data, never as code, and never the worker's command line or an ffmpeg filter ([ADR-022](decisions/ADR-022-draw-chart-overlays-with-a-separately-installed-manimgx-and-key-them-over-the-video.md)).
+
+- The worker is `--manimgx`, else `$MANIMGX_BIN`, else `manimgx` on `PATH`; it is started without a shell, in a scratch directory, and stopped after `--timeout-s` (1 to 3600). It must answer `--version`. `manimgx inspect` runs first unless `--skip-inspect`.
+- The rendered video is kept at `<assets-dir>/<id>.mp4` (default `<project name>.overlays/` beside the project) and is not removed by `overlay remove`. The id is 16 hex digits made from the spec, so the same spec is the same overlay: a second `add-chart` changes nothing and does not start the worker. A different overlay on frames another one holds is refused.
+- `cut-silence`, `punch-in` and `attach-bridge` refuse a project with overlays (exit 2). Add overlays last.
+- Exit 2: a bad spec or argument, a `://` in a path, a span outside the timeline or on another overlay, `manimgx inspect` reporting layout problems (the annotated PNG is kept as `<id>.inspect.png`), a project with overlays given to an edit that moves the tracks. Exit 1: the worker is missing (the message gives the install command), does not answer `--version`, fails, times out, or writes a video that is not as asked (wrong size, wrong length, no key-colour background); `ffmpeg` fails. The project is written last and only on success.
 
 ## Exit codes
 

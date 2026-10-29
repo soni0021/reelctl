@@ -14,6 +14,7 @@ use crate::otio::{
     reelctl, Clip, GeneratorReference, Item, MediaReference, Timeline, Track, AUDIO_KIND,
     VIDEO_KIND,
 };
+use crate::overlay::{overlays, Overlay, KEY_BLEND, KEY_COLOR, KEY_SIMILARITY};
 use crate::tracks::{check_editable, external_url, item_range, FADE_KEY, PUNCH_IN_KEY};
 
 /// Sample rate of the rendered audio. Every segment is resampled to it.
@@ -24,6 +25,8 @@ pub const MAX_SIDE: u32 = 8192;
 pub const MAX_PIXELS: u64 = 7680 * 4320;
 /// Label of the video the graph produces.
 pub const VIDEO_LABEL: &str = "vout";
+/// Label of the concatenated video before overlays go on it.
+const BASE_LABEL: &str = "vbase";
 /// Label of the audio the graph produces, when the project has an audio track.
 pub const AUDIO_LABEL: &str = "aout";
 
@@ -43,6 +46,15 @@ pub struct CardSpec {
     pub frames: i64,
 }
 
+/// A rendered overlay video to composite: an input of the render, over `start_frame`
+/// to `end_frame` (exclusive) of the timeline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OverlayInput {
+    pub path: String,
+    pub start_frame: i64,
+    pub end_frame: i64,
+}
+
 /// Everything needed to run ffmpeg for a project.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RenderPlan {
@@ -50,6 +62,8 @@ pub struct RenderPlan {
     pub media: Vec<String>,
     /// Card images, as inputs `media.len()..`, in order.
     pub cards: Vec<CardSpec>,
+    /// Overlay videos, as inputs `media.len() + cards.len()..`, in time order.
+    pub overlays: Vec<OverlayInput>,
     pub filter_graph: String,
     pub video_label: String,
     pub audio_label: Option<String>,
@@ -360,10 +374,24 @@ pub fn build_render_plan(timeline: &Timeline, size: Option<RenderSize>) -> Resul
         }
         video_labels.push_str(&format!("[{label}]"));
     }
+    let overlay_list = overlays(timeline)?;
+    let concat_label = if overlay_list.is_empty() {
+        VIDEO_LABEL
+    } else {
+        BASE_LABEL
+    };
     parts.push(format!(
-        "{video_labels}concat=n={}:v=1:a=0[{VIDEO_LABEL}]",
+        "{video_labels}concat=n={}:v=1:a=0[{concat_label}]",
         video.children.len()
     ));
+    let first_overlay_input = media.len() + cards.len();
+    let overlay_inputs = overlay_chains(
+        &overlay_list,
+        first_overlay_input,
+        &frame_rate,
+        size.width,
+        &mut parts,
+    );
 
     let audio_label = match audio {
         Some(track) => {
@@ -380,6 +408,7 @@ pub fn build_render_plan(timeline: &Timeline, size: Option<RenderSize>) -> Resul
     Ok(RenderPlan {
         media,
         cards,
+        overlays: overlay_inputs,
         filter_graph: parts.join(";"),
         video_label: VIDEO_LABEL.to_string(),
         audio_label,
@@ -388,6 +417,62 @@ pub fn build_render_plan(timeline: &Timeline, size: Option<RenderSize>) -> Resul
         size,
         frames: crate::tracks::track_frames(video, rate)?,
     })
+}
+
+/// The time base of a frame rate as an ffmpeg expression: `1/30`, `1001/30000`.
+fn time_base_expr(frame_rate: &str) -> String {
+    match frame_rate.split_once('/') {
+        Some((numerator, denominator)) => format!("{denominator}/{numerator}"),
+        None => format!("1/{frame_rate}"),
+    }
+}
+
+/// The filters that key each overlay's video and lay it over the base video for
+/// its frames. Each overlay is its own input, from `first_input`. The video is put on
+/// the project's frame grid (`fps`, then `settb` and `setpts=N+START`, so its
+/// timestamps are whole frames, exactly the main video's), the key colour is made
+/// transparent, and it is scaled to `width_pct` of the output width. `enable` counts
+/// the main video's frames, so the overlay is on for exactly `START..END`. No text
+/// of the chart is in the graph.
+fn overlay_chains(
+    list: &[Overlay],
+    first_input: usize,
+    frame_rate: &str,
+    output_width: u32,
+    parts: &mut Vec<String>,
+) -> Vec<OverlayInput> {
+    let key = KEY_COLOR.replacen('#', "0x", 1);
+    let time_base = time_base_expr(frame_rate);
+    let mut inputs = Vec::with_capacity(list.len());
+    let mut current = BASE_LABEL.to_string();
+    for (k, overlay) in list.iter().enumerate() {
+        let input = first_input + k;
+        let width = (f64::from(output_width) * f64::from(overlay.width_pct) / 100.0 / 2.0).round()
+            as u32
+            * 2;
+        parts.push(format!(
+            "[{input}:v]fps={frame_rate},settb=expr={time_base},setpts=N+{start},colorkey={key}:{KEY_SIMILARITY}:{KEY_BLEND},scale={width}:-2[ov{k}]",
+            start = overlay.start_frame
+        ));
+        let next = if k + 1 == list.len() {
+            VIDEO_LABEL.to_string()
+        } else {
+            format!("vo{k}")
+        };
+        parts.push(format!(
+            "[{current}][ov{k}]overlay=x=(main_w-overlay_w)/2:y={y}:eof_action=repeat:enable='between(n,{start},{last})'[{next}]",
+            y = overlay.position.y_expression(),
+            start = overlay.start_frame,
+            last = overlay.end_frame - 1
+        ));
+        current = next;
+        inputs.push(OverlayInput {
+            path: overlay.asset.path.clone(),
+            start_frame: overlay.start_frame,
+            end_frame: overlay.end_frame,
+        });
+    }
+    inputs
 }
 
 /// `zoompan` that scales by 1 to `scale` and back: up over `ramp_frames` frames from
@@ -708,5 +793,171 @@ mod tests {
         }
         let error = build_render_plan(&timeline, None).expect_err("empty");
         assert!(error.to_string().contains("no frames"), "{error}");
+    }
+
+    use crate::overlay::{add_overlay, OverlayAsset, OverlayPosition, OverlayRequest};
+
+    fn overlay_request(
+        id: &str,
+        start_ms: u64,
+        end_ms: u64,
+        position: OverlayPosition,
+    ) -> OverlayRequest {
+        OverlayRequest {
+            id: id.to_string(),
+            spec: serde_json::json!({"title": "Ignore; drawtext='x'"}),
+            start_ms,
+            end_ms,
+            position,
+            width_pct: 90,
+            asset: OverlayAsset {
+                path: format!("/assets/{id}.mp4"),
+                width: 576,
+                height: 432,
+                frames: 120,
+                fps: 30.0,
+            },
+            renderer: "manimgx 0".to_string(),
+        }
+    }
+
+    #[test]
+    fn an_overlay_is_keyed_scaled_and_laid_over_the_base_for_its_frames() {
+        let mut timeline = project(30.0, 300);
+        add_overlay(
+            &mut timeline,
+            &overlay_request("a", 2_000, 6_000, OverlayPosition::Center),
+        )
+        .expect("a");
+        add_overlay(
+            &mut timeline,
+            &overlay_request("b", 7_000, 8_000, OverlayPosition::Top),
+        )
+        .expect("b");
+        let plan = build_render_plan(&timeline, None).expect("plan");
+        let plain = build_render_plan(&project(30.0, 300), None).expect("plain");
+        let overlay_parts = [
+            "[1:v]fps=30,settb=expr=1/30,setpts=N+60,colorkey=0xff00ff:0.2:0.1,scale=576:-2[ov0]",
+            "[vbase][ov0]overlay=x=(main_w-overlay_w)/2:y=(main_h-overlay_h)/2:eof_action=repeat:enable='between(n,60,179)'[vo0]",
+            "[2:v]fps=30,settb=expr=1/30,setpts=N+210,colorkey=0xff00ff:0.2:0.1,scale=576:-2[ov1]",
+            "[vo0][ov1]overlay=x=(main_w-overlay_w)/2:y=main_h*0.08:eof_action=repeat:enable='between(n,210,239)'[vout]",
+        ];
+        // The graph is the plain one with its video output renamed and the four
+        // overlay filters added right after the concat; nothing else moves.
+        let mut remaining = plan.filter_graph.clone();
+        let joined = format!("{};", overlay_parts.join(";"));
+        assert!(remaining.contains(&joined), "{remaining}");
+        remaining = remaining.replacen(&joined, "", 1);
+        assert_eq!(remaining.replace("[vbase]", "[vout]"), plain.filter_graph);
+        assert!(plan
+            .filter_graph
+            .contains("concat=n=1:v=1:a=0[vbase];[1:v]"));
+        assert_eq!(
+            plan.overlays,
+            vec![
+                OverlayInput {
+                    path: "/assets/a.mp4".to_string(),
+                    start_frame: 60,
+                    end_frame: 180
+                },
+                OverlayInput {
+                    path: "/assets/b.mp4".to_string(),
+                    start_frame: 210,
+                    end_frame: 240
+                },
+            ]
+        );
+        assert_eq!(plan.video_label, "vout");
+        assert_eq!(plan.frames, 300);
+    }
+
+    #[test]
+    fn chart_text_is_never_in_the_graph() {
+        let mut timeline = project(30.0, 300);
+        add_overlay(
+            &mut timeline,
+            &overlay_request("a", 2_000, 6_000, OverlayPosition::Center),
+        )
+        .expect("a");
+        let graph = build_render_plan(&timeline, None)
+            .expect("plan")
+            .filter_graph;
+        assert!(
+            !graph.contains("drawtext") && !graph.contains("Ignore"),
+            "{graph}"
+        );
+    }
+
+    #[test]
+    fn a_project_without_overlays_has_the_graph_it_always_had() {
+        let plan = build_render_plan(&project(30.0, 300), None).expect("plan");
+        assert!(plan.overlays.is_empty());
+        assert!(!plan.filter_graph.contains("vbase"));
+        assert!(!plan.filter_graph.contains("overlay"));
+        assert!(plan.filter_graph.contains("concat=n=1:v=1:a=0[vout]"));
+    }
+
+    #[test]
+    fn overlay_inputs_come_after_the_media_and_the_cards() {
+        let mut timeline = project(30.0, 300);
+        let bridge = BridgeRequest {
+            target_url: "example.com/go".to_string(),
+            cutoff_pct: 0.72,
+            card_ms: 2_500,
+        };
+        attach_bridge(&mut timeline, &bridge, &[]).expect("bridge");
+        let total = crate::tracks::timeline_frames(&timeline).expect("frames");
+        assert!(total > 100);
+        // The overlay goes on after the bridge; the bridge is refused afterwards.
+        add_overlay(
+            &mut timeline,
+            &overlay_request("a", 1_000, 3_000, OverlayPosition::Bottom),
+        )
+        .expect("a");
+        let plan = build_render_plan(&timeline, None).expect("plan");
+        // Input 0 is the media, input 1 the card, input 2 the overlay.
+        assert!(
+            plan.filter_graph.contains("[2:v]fps=30,"),
+            "{}",
+            plan.filter_graph
+        );
+        assert!(
+            plan.filter_graph.contains("y=main_h-overlay_h-main_h*0.08"),
+            "{}",
+            plan.filter_graph
+        );
+    }
+
+    #[test]
+    fn ntsc_rates_give_an_exact_time_base() {
+        assert_eq!(time_base_expr("30"), "1/30");
+        assert_eq!(time_base_expr("30000/1001"), "1001/30000");
+        assert_eq!(time_base_expr("12.5"), "1/12.5");
+        let mut timeline = project(30000.0 / 1001.0, 300);
+        add_overlay(
+            &mut timeline,
+            &overlay_request("a", 2_000, 6_000, OverlayPosition::Center),
+        )
+        .expect("a");
+        let graph = build_render_plan(&timeline, None)
+            .expect("plan")
+            .filter_graph;
+        assert!(
+            graph.contains("fps=30000/1001,settb=expr=1001/30000,setpts=N+60,"),
+            "{graph}"
+        );
+    }
+
+    #[test]
+    fn the_overlay_width_follows_the_output_size_and_stays_even() {
+        let mut timeline = project(30.0, 300);
+        let mut request = overlay_request("a", 2_000, 6_000, OverlayPosition::Center);
+        request.width_pct = 33;
+        add_overlay(&mut timeline, &request).expect("a");
+        let graph = build_render_plan(&timeline, size(1080, 1920))
+            .expect("plan")
+            .filter_graph;
+        // 33 % of 1080 is 356.4: the nearest even number is 356.
+        assert!(graph.contains("scale=356:-2[ov0]"), "{graph}");
     }
 }

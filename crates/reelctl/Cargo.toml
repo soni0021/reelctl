@@ -21,6 +21,7 @@ edit-dna = { path = "../edit-dna" }
 filmstrip = { path = "../filmstrip" }
 image.workspace = true
 look = { path = "../look" }
+scenes = { path = "../scenes" }
 serde.workspace = true
 serde_json.workspace = true
 timeline = { path = "../timeline" }

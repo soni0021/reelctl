@@ -211,6 +211,7 @@ pub fn attach_bridge(
     request: &BridgeRequest,
     pauses: &[(u64, u64)],
 ) -> Result<BridgeReport> {
+    crate::overlay::refuse_overlays(timeline)?;
     let rate = check_editable(timeline)?;
     if request.target_url.trim().is_empty() {
         return Err(TimelineError::invalid("--target-url is empty"));

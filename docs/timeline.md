@@ -26,6 +26,9 @@ The edit commands need the video and audio items to match one for one in duratio
 | `Clip` | `punch_in` | `{scale, ramp_frames, start, end}`; `start` and `end` are `RationalTime`s in frames **of this clip** (a punch-in over several clips has the same span in each clip's own time, so `start` can be negative and `end` can be past the clip's end). |
 | `Clip` (card) | `bridge` | `{url, card_ms}`. |
 
+| `Track` (overlay) | `overlays` | `true`: marks the track `overlay add-chart` keeps its overlays on. |
+| `Clip` (overlay) | `overlay` | `{id, spec, position, width_pct, key_color, renderer, asset: {path, width, height, frames, fps}}`: the chart's id, its validated spec, where it sits, the key colour, the worker's version line and the measured chart video. |
+
 The bridge card is a `GeneratorReference.1` with `generator_kind` `reelctl.card` and `parameters` `{text, background, foreground}` (`#rrggbb`), plus a clip of `reelctl.silence` on the audio track.
 
 ## Commands
@@ -54,6 +57,44 @@ All of them read one project and write one, atomically (a temporary file in the 
 
 **`qa inspect-boundaries`** writes one `timeline_view` PNG (the `crates/filmstrip` layout) per join between neighbouring video items into `--out-dir`: two frames before the join and two after, decoded in process with `decompile`'s frame sampler; the audio waveform for 400 ms on each side, decoded with `ffmpeg` (16 kHz mono); and, when the DNA is readable, its word ticks placed on the edited timeline. A side that is the card is a dark frame and silence. The waveform is the source audio as it is in the media, before the render's fade.
 
+## Chart overlays (`overlay add-chart`)
+
+The spec is [specs/manimgx-scenes.md](specs/manimgx-scenes.md) and the decision [ADR-022](decisions/ADR-022-draw-chart-overlays-with-a-separately-installed-manimgx-and-key-them-over-the-video.md). A chart (bar, line or number callout) is drawn by `manimgx`, a separately installed program, and laid over the video for a span. The code is `crates/timeline/src/overlay.rs` (the track), `crates/timeline/src/render.rs` (the filters), `crates/scenes` (the spec, the scene file and the worker) and `crates/reelctl/src/overlay_cmd.rs` (the command).
+
+**The track.** A second `Track.1` of kind `Video` named `reelctl overlays` and marked `metadata.reelctl.overlays: true` (the marker, not the name, identifies it). Its children are `Gap.1` and `Clip.2` in time order; each clip's `source_range` is the overlay's span in whole frames, and its `ExternalReference.1` is the chart video (`<project name>.overlays/<id>.mp4`, `available_range` from the probe). Overlays may not overlap. The track is rebuilt from the list on every change; removing the last overlay removes the track, so the project is byte-for-byte what it was. `Timeline::track`, `check_editable`, `single_media` and `media_info` skip it, so every other command sees the project it always saw. **`cut-silence`, `punch-in` and `attach-bridge` refuse a project with overlays** (exit 2): they split and move the main tracks, and an overlay is placed in timeline time. Make those edits first, then add overlays (or `overlay remove` and add again).
+
+**`overlay add-chart --project --spec --out [--assets-dir] [--manimgx PATH] [--skip-inspect] [--timeout-s 300]`** reads a chart spec (JSON, at most 64 KiB, unknown fields refused: `kind`, `title`, `series`, optional `unit`, `start_ms`, `end_ms`, `position` `top|center|bottom`, `width_pct` 20 to 100), checks the span against the timeline and the other overlays **before** anything is drawn, finds the worker (`--manimgx`, then `MANIMGX_BIN`, then `PATH`; exit 1 with `uv tool install --python 3.14 manimgx` if there is none), asks `--version`, writes the scene file, runs `manimgx inspect ... -t end` (exit 1 of the tool, layout problems, is exit 2 here, and the annotated PNG is kept as `<id>.inspect.png`), runs `manimgx render ... -o x.mp4 -r WxH --fps N` in a scratch directory, and checks the video with `ffprobe` and `ffmpeg` (size as asked, length within one frame of the span, at most 256 MiB, top-left pixel the key colour). Only then is the video copied to the assets directory and the project written. The same spec twice gives one overlay and the same project bytes, and the second run does not start the worker. A project whose chart video has been deleted draws it again.
+
+**`overlay remove --project --id --out`** takes an overlay off by the id `add-chart` printed. The chart video stays in the assets directory.
+
+**Render.** With overlays, the concatenated video is `[vbase]` and each overlay adds two filters; the rest of the graph is unchanged, and a project without overlays renders with the graph it always had:
+
+```
+[K:v]fps=R,settb=expr=1/R,setpts=N+START,colorkey=0xff00ff:0.2:0.1,scale=W:-2[ovN]
+[prev][ovN]overlay=x=(main_w-overlay_w)/2:y=Y:eof_action=repeat:enable='between(n,START,LAST)'[next]
+```
+
+Each overlay is its own ffmpeg input (after the media and the card images, opened with `-protocol_whitelist file`). `START` and `LAST` are the first and last frame of the span, so the overlay is on for exactly those frames (`enable` counts the main video's frames; it does not use float seconds). `setpts=N+START` after `settb=expr=1/R` puts the chart's frames on whole project frames. `W` is `width_pct` of the output width, rounded to an even number. `Y` is `main_h*0.08` (top), `(main_h-overlay_h)/2` (centre) or `main_h-overlay_h-main_h*0.08` (bottom). The chart's last frame is held to the end of the span. No chart text is in the graph.
+
+**The key colour.** The scene is drawn on `#ff00ff` and `colorkey` makes it transparent. manimgx documents only x264 MP4 output (no alpha), so this is how the chart gets onto the picture. Antialiased edges of text carry a faint fringe of the key colour, and a scene cannot use that colour.
+
+### Checking an overlay with the real manimgx
+
+Everything above is tested against a fake `manimgx` script. The real tool was not installed or run when this was written. To check it by hand (the install is the documented one; it downloads a package, so do it where you accept that):
+
+```
+uv tool install --python 3.14 manimgx && manimgx --version
+reelctl timeline init --input take.mp4 --out edit.otio
+cat > chart.json <<'EOF'
+{"kind":"bar","title":"Views per post","series":[{"label":"A","value":3},{"label":"B","value":5.5}],
+ "start_ms":2000,"end_ms":6000,"width_pct":80}
+EOF
+reelctl overlay add-chart --project edit.otio --spec chart.json --out edit.otio
+reelctl render --project edit.otio --out out.mp4
+```
+
+What to look for, one per assumption in the spec: the command prints a `renderer="manimgx ..."` line (A4/A6); `edit.overlays/<id>.mp4` is `WxH` as printed, 4:3, with a magenta background (A1/A2); `out.mp4` shows the bars over the picture from 2 s to 6 s with no magenta box (keying) and a thin magenta fringe on text edges at worst; the chart draws in over about a second, or over the whole span if it is shorter (A3). If `add-chart` exits 1 with "key colour", the tool did not draw on `#ff00ff` (A1); with "within one frame", `self.wait` did not mean what the template assumes (A3); with a Python error, fix the template (`crates/scenes/src/scene_template.py`) and record the result in [status](status.md). To keep the scene file `add-chart` writes (its scratch directory is removed afterwards), give `--manimgx` a small wrapper script that copies the file named by its second argument before it runs the real tool.
+
 ## Checking a project with the reference library
 
 `crates/timeline/tests/otio_check.py` loads a project with the python `opentimelineio` package and prints the tracks and every clip's range; it exits 1 if the library cannot read the file, the tracks differ, or the timeline duration is not the sum of the clips. It is run by hand, because the package is not a dependency of the repository:
@@ -75,4 +116,5 @@ reelctl timeline init --input take.mp4 --dna take.edit_dna.json --out edit.otio
 - The audio fade is a dip at joins, not an overlapping crossfade.
 - Filler removal needs whisper words in the DNA. Without a model the DNA has voiced bursts, and fillers are skipped.
 - The card font is capitals and a few symbols; no emoji, no non-Latin text, no QR code.
+- Overlays: three chart kinds, one non-overlapping track, drawn once for the span, keyed on `#ff00ff` (no alpha), and added last: `cut-silence`, `punch-in` and `attach-bridge` refuse a project with overlays.
 - The media must start at time zero (`trim` is by frame number from the start).

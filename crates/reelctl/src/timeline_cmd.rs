@@ -232,7 +232,7 @@ pub fn qa(command: QaCommand) -> Result<()> {
 }
 
 /// An error that exits with code 2.
-fn usage(message: impl Into<String>) -> anyhow::Error {
+pub(crate) fn usage(message: impl Into<String>) -> anyhow::Error {
     anyhow::Error::new(ExitWith {
         code: 2,
         message: message.into(),
@@ -240,11 +240,11 @@ fn usage(message: impl Into<String>) -> anyhow::Error {
 }
 
 /// A timeline-crate error: the project or an argument is unusable (exit 2).
-fn invalid(error: TimelineError) -> anyhow::Error {
+pub(crate) fn invalid(error: TimelineError) -> anyhow::Error {
     usage(error.to_string())
 }
 
-fn load_project(path: &Path) -> Result<Timeline> {
+pub(crate) fn load_project(path: &Path) -> Result<Timeline> {
     let text = fs::read_to_string(path)
         .map_err(|error| usage(format!("cannot read project {}: {error}", path.display())))?;
     Timeline::from_json(&text).map_err(|error| usage(format!("{}: {error}", path.display())))
@@ -257,7 +257,7 @@ fn load_dna(path: &Path) -> Result<EditDna> {
         .map_err(|error| usage(format!("{}: not an edit_dna.json: {error}", path.display())))
 }
 
-fn absolute(path: &Path, what: &str) -> Result<PathBuf> {
+pub(crate) fn absolute(path: &Path, what: &str) -> Result<PathBuf> {
     fs::canonicalize(path)
         .map_err(|error| usage(format!("cannot find {what} {}: {error}", path.display())))
 }
@@ -267,7 +267,7 @@ fn absolute(path: &Path, what: &str) -> Result<PathBuf> {
 /// and a device all exit 2, so `ffmpeg` is never handed anything but a file (and the
 /// absolute path cannot be read as a protocol or an option, even if it began with a
 /// dash).
-fn local_media_file(media: &str) -> Result<PathBuf> {
+pub(crate) fn local_media_file(media: &str) -> Result<PathBuf> {
     if media.contains("://") {
         return Err(usage(format!(
             "\"{media}\" is a URL; reelctl reads local files only"
@@ -283,7 +283,7 @@ fn local_media_file(media: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn utf8(path: &Path) -> Result<String> {
+pub(crate) fn utf8(path: &Path) -> Result<String> {
     path.to_str()
         .map(str::to_string)
         .ok_or_else(|| usage(format!("{} is not valid UTF-8", path.display())))
@@ -291,13 +291,13 @@ fn utf8(path: &Path) -> Result<String> {
 
 /// A file that is removed when the guard drops, unless it was disarmed: a failed
 /// write, rename or ffmpeg run leaves nothing behind.
-struct TempFile {
-    path: PathBuf,
+pub(crate) struct TempFile {
+    pub(crate) path: PathBuf,
     armed: bool,
 }
 
 impl TempFile {
-    fn new(path: PathBuf) -> Self {
+    pub(crate) fn new(path: PathBuf) -> Self {
         Self { path, armed: true }
     }
 
@@ -315,14 +315,14 @@ impl Drop for TempFile {
 }
 
 /// Move `temporary` over `path`; on failure the temporary file is removed.
-fn replace_file(mut temporary: TempFile, path: &Path) -> Result<()> {
+pub(crate) fn replace_file(mut temporary: TempFile, path: &Path) -> Result<()> {
     fs::rename(&temporary.path, path).with_context(|| format!("replace {}", path.display()))?;
     temporary.disarm();
     Ok(())
 }
 
 /// Write `bytes` to `path` through a temporary file in the same directory.
-fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let dir = match path.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
         _ => PathBuf::from("."),
@@ -338,19 +338,19 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     replace_file(temporary, path)
 }
 
-fn save_project(timeline: &Timeline, out: &Path) -> Result<()> {
+pub(crate) fn save_project(timeline: &Timeline, out: &Path) -> Result<()> {
     let text = timeline.to_json().map_err(invalid)?;
     write_atomic(out, text.as_bytes())
 }
 
 /// What `ffprobe` says about the first video stream and the audio.
 #[derive(Debug, PartialEq)]
-struct Probe {
-    fps: f64,
-    frames: i64,
-    width: u32,
-    height: u32,
-    has_audio: bool,
+pub(crate) struct Probe {
+    pub(crate) fps: f64,
+    pub(crate) frames: i64,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) has_audio: bool,
 }
 
 fn parse_rate(text: &str) -> Option<f64> {
@@ -426,7 +426,7 @@ fn parse_probe(json: &Value, path: &Path) -> Result<Probe> {
 
 /// A command that cannot start because the tool is missing is exit 1 with a message
 /// that names it.
-fn spawn_error(tool: &str, error: std::io::Error) -> anyhow::Error {
+pub(crate) fn spawn_error(tool: &str, error: std::io::Error) -> anyhow::Error {
     if error.kind() == std::io::ErrorKind::NotFound {
         anyhow!("{tool} was not found on PATH; install ffmpeg (macOS: `brew install ffmpeg`), which provides ffmpeg and ffprobe")
     } else {
@@ -434,7 +434,7 @@ fn spawn_error(tool: &str, error: std::io::Error) -> anyhow::Error {
     }
 }
 
-fn probe_media(path: &Path) -> Result<Probe> {
+pub(crate) fn probe_media(path: &Path) -> Result<Probe> {
     let output = Command::new("ffprobe")
         .args([
             "-v",
@@ -630,10 +630,10 @@ fn attach_bridge_cmd(args: AttachBridgeArgs) -> Result<()> {
 }
 
 /// Removes its directory when dropped.
-struct TempDir(PathBuf);
+pub(crate) struct TempDir(pub(crate) PathBuf);
 
 impl TempDir {
-    fn create() -> Result<Self> {
+    pub(crate) fn create() -> Result<Self> {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|elapsed| elapsed.subsec_nanos())
@@ -661,6 +661,7 @@ fn ffmpeg_args(
     plan: &RenderPlan,
     media: &[PathBuf],
     card_paths: &[PathBuf],
+    overlay_paths: &[PathBuf],
     output: &Path,
 ) -> Vec<std::ffi::OsString> {
     let mut args: Vec<std::ffi::OsString> =
@@ -686,6 +687,13 @@ fn ffmpeg_args(
             seconds(card.frames, plan.fps).as_str(),
             "-i",
         ] {
+            args.push(part.into());
+        }
+        args.push(path.into());
+    }
+    // Overlay videos: inputs after the cards, opened like the media.
+    for path in overlay_paths {
+        for part in ["-protocol_whitelist", PROTOCOLS, "-i"] {
             args.push(part.into());
         }
         args.push(path.into());
@@ -742,6 +750,15 @@ pub fn render(args: RenderArgs) -> Result<()> {
                 .map_err(|error| usage(format!("{}: {error}", args.project.display())))?,
         );
     }
+    // The overlay videos are rendered files named by the project; they are held to
+    // the same rule as the media.
+    let mut overlay_paths = Vec::with_capacity(plan.overlays.len());
+    for overlay in &plan.overlays {
+        overlay_paths.push(
+            local_media_file(&overlay.path)
+                .map_err(|error| usage(format!("{}: {error}", args.project.display())))?,
+        );
+    }
     // The output is checked before anything is made.
     if args.out.is_dir() {
         return Err(usage(format!(
@@ -790,7 +807,13 @@ pub fn render(args: RenderArgs) -> Result<()> {
 
     let started = Instant::now();
     let output = Command::new("ffmpeg")
-        .args(ffmpeg_args(&plan, &media, &card_paths, &temporary.path))
+        .args(ffmpeg_args(
+            &plan,
+            &media,
+            &card_paths,
+            &overlay_paths,
+            &temporary.path,
+        ))
         .stdin(Stdio::null())
         .output()
         .map_err(|error| spawn_error("ffmpeg", error))?;

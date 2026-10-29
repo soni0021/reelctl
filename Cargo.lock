@@ -989,6 +989,7 @@ dependencies = [
  "filmstrip",
  "image",
  "look",
+ "scenes",
  "serde",
  "serde_json",
  "timeline",
@@ -1097,6 +1098,16 @@ dependencies = [
  "ring",
  "rustls-pki-types",
  "untrusted",
+]
+
+[[package]]
+name = "scenes"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+ "timeline",
 ]
 
 [[package]]

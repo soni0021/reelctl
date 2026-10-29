@@ -9,13 +9,15 @@
 - `reelctl timeline`, `transform punch-in`, `funnel attach-bridge`, `render` and `qa inspect-boundaries` edit an OpenTimelineIO project deterministically (cut silence and filler words, punch-in zoom, a long-form bridge card) and render it with `ffmpeg`. See [docs/timeline.md](docs/timeline.md) and [docs/cli.md](docs/cli.md).
 - `reelctl compositor isolate-presenter` cuts a presenter out of a video with RobustVideoMatting (an ONNX model you supply, run through `ort` and an ONNX Runtime library named in `ORT_DYLIB_PATH`) and writes them over a colour, image or video background, or writes the alpha matte, or ProRes 4444 with alpha. SDR input only; on a CPU it is not real time. See [docs/cli.md](docs/cli.md) and [docs/specs/rvm-presenter.md](docs/specs/rvm-presenter.md).
 
+- `reelctl overlay add-chart` draws a bar, line or number-callout chart with `manimgx` (a separately installed program; `uv tool install --python 3.14 manimgx`) and lays it over the video for a span; `render` composites it. The worker is run without a shell, checked after every run, and fails closed; chart text is data in a fixed scene file, never code. The real manimgx was not run when this was written: it is tested against a fake. See [docs/timeline.md](docs/timeline.md#chart-overlays-overlay-add-chart) and [docs/cli.md](docs/cli.md).
+
 - `watchtower/` is a separate Go module (not part of the Cargo workspace) that ranks a niche's creators by outlier multiplier and growth velocity, runs `reelctl decompile` on their breakout Reels, compares the last five breakouts with the baseline posts on measured fields, and writes a digest. It reads recorded JSON files; the live Virlo client is not built. See [docs/watchtower.md](docs/watchtower.md).
 
 - `reelctl understand` takes a 20–60 minute video and its whisper-timed `edit_dna.json`, sends sampled frames and numbered transcript segments to a hosted vision-language model (OpenRouter; needs `OPENROUTER_API_KEY`), and writes `understanding.json`: Reel-sized clips picked by segment ID and checked by code (hook, cliffhanger, length; a clip that breaks a rule is kept with a flag naming it), and a label for what each cut really was. Every quote is whisper's text and every time is measured. See [docs/understanding.md](docs/understanding.md).
 
 - `reelctl dataset build` turns `edit_dna.json` files and `understanding.json` runs into JSONL instruction-tuning records whose targets are measured facts or rule-checked segment IDs (never model prose), split by reel; `reelctl eval` scores a model's answers against them, or against one `understanding.json`, so a base model and a later fine-tune can be compared. Both are offline and deterministic. Training itself is not built. See [docs/finetune.md](docs/finetune.md).
 
-This repository is P0 of the plan in [planer.md](planer.md). P1 has a first slice (the Go watchtower, reading recorded data) and P2 has a first slice (OpenTimelineIO edits and an ffmpeg render) and RobustVideoMatting presenter cut-out (`reelctl compositor isolate-presenter`); the rest of P2 (Smelter, manimgx, reframe, captions, voice) and P3 (a fine-tuned vision-language model, deferred by the user) are specified there and not built. Current state, measurements, and known gaps are in [docs/status.md](docs/status.md). Its offline half is built: `reelctl dataset build` and `reelctl eval` (training is not).
+This repository is P0 of the plan in [planer.md](planer.md). P1 has a first slice (the Go watchtower, reading recorded data) and P2 has a first slice (OpenTimelineIO edits and an ffmpeg render) and RobustVideoMatting presenter cut-out (`reelctl compositor isolate-presenter`); the rest of P2 (Smelter, reframe, captions, voice; manimgx chart overlays have a first slice, `reelctl overlay add-chart`) and P3 (a fine-tuned vision-language model, deferred by the user) are specified there and not built. Current state, measurements, and known gaps are in [docs/status.md](docs/status.md). Its offline half is built: `reelctl dataset build` and `reelctl eval` (training is not).
 
 ## Quick start
 
@@ -78,6 +80,7 @@ The Cargo workspace has these crates (the Go watchtower is a separate module in 
 | `timeline` | The OpenTimelineIO subset, edit operations and the ffmpeg filter-graph builder (pure) |
 | `compositor` | `reelctl compositor isolate-presenter`: RobustVideoMatting presenter cut-out. A pure core (downsample ratio, recurrent state, alpha, compositing, frame pipeline) behind a `MattingModel` trait, the `ort` session, and the `ffprobe`/`ffmpeg` edges; no `unsafe` |
 | `dataset` | `reelctl dataset` and `reelctl eval`: record builder, JSONL and manifest, split by reel, and the scoring metrics (pure; takes bytes, returns bytes) |
+| `scenes` | Chart specs, the fixed manimgx scene template and the fail-closed worker runner for `reelctl overlay` |
 | `reelctl` | The command-line tool |
 
 ```

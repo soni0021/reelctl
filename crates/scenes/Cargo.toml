@@ -1,0 +1,13 @@
+[package]
+name = "scenes"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Chart specs, the fixed manimgx scene template, and the fail-closed process runner for the manimgx worker"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+timeline = { path = "../timeline" }

@@ -41,6 +41,7 @@ pub struct PunchReport {
 /// earlier one ends (or, past the new span, starts) cleanly at the new span's edge:
 /// it ramps back to 1.0 there, so the zoom never jumps.
 pub fn punch_in(timeline: &mut Timeline, request: &PunchRequest) -> Result<PunchReport> {
+    crate::overlay::refuse_overlays(timeline)?;
     let rate = check_editable(timeline)?;
     if !request.scale.is_finite() || request.scale <= 1.0 || request.scale > MAX_SCALE {
         return Err(TimelineError::invalid(format!(

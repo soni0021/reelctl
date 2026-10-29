@@ -8,7 +8,9 @@ Run by hand (the package is not a dependency of this repository):
 
 Prints the track and clip counts and every clip's source range, and exits 1 if the
 library cannot read the file, a video and an audio track differ in clip count or
-duration, or the timeline duration is not the sum of the clips.
+duration, the timeline duration is not the sum of the clips, or an overlay track
+(`metadata.reelctl.overlays`, written by `reelctl overlay add-chart`) is longer than
+the video. Overlay tracks are listed apart: a project with them has a second Video track.
 """
 
 import sys
@@ -18,7 +20,11 @@ import opentimelineio as otio
 
 def main(path):
     timeline = otio.adapters.read_from_file(path)
-    tracks = {track.kind: track for track in timeline.tracks}
+    def is_overlay(track):
+        return bool(track.metadata.get("reelctl", {}).get("overlays"))
+
+    overlays = [track for track in timeline.tracks if is_overlay(track)]
+    tracks = {track.kind: track for track in timeline.tracks if not is_overlay(track)}
     print(f"opentimelineio {otio.__version__}: {path}")
     print(f"tracks: {[(track.name, track.kind, len(track)) for track in timeline.tracks]}")
     for kind, track in tracks.items():
@@ -48,6 +54,21 @@ def main(path):
         summed = sum(item.source_range.duration.value for item in video)
         print(f"timeline.duration() = {duration:.0f} frames, sum of video clips = {summed:.0f}")
         ok = ok and duration == summed
+    for track in overlays:
+        total = sum(item.source_range.duration.value for item in track)
+        clips = [item for item in track if hasattr(item, "media_reference")]
+        print(f"overlay track {track.name!r}: {len(clips)} clips, {total:.0f} frames")
+        for item in clips:
+            reference = item.media_reference
+            print(
+                f"  overlay {item.name} duration={item.source_range.duration.value:.0f} "
+                f"url={getattr(reference, 'target_url', None)}"
+            )
+        if video is not None:
+            video_total = sum(item.source_range.duration.value for item in video)
+            if total > video_total:
+                print("MISMATCH: an overlay track is longer than the video")
+                ok = False
     sys.exit(0 if ok else 1)
 
 
