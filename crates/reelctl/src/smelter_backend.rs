@@ -266,6 +266,9 @@ impl SmelterBackend {
         };
         let sink = File::create(log).with_context(|| format!("create {}", log.display()))?;
         let child = Command::new(binary)
+            .env_remove("OPENROUTER_API_KEY")
+            .env_remove("REELCTL_WHISPER_MODEL")
+            .env_remove("REELCTL_TRANSNET_WEIGHTS")
             .env("SMELTER_API_PORT", port.to_string())
             .env("SMELTER_OUTPUT_FRAMERATE", &plan.frame_rate)
             .env("SMELTER_OFFLINE_PROCESSING_ENABLE", "true")

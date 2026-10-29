@@ -24,7 +24,7 @@ What Smelter is, checked on 2026-10-29 from its repository, its releases, smelte
 ## Decision
 Option (a).
 
-- `crates/timeline` gains `smelter.rs`: a pure translation from a project to an ordered list of Smelter API requests (`build_smelter_plan`, `SmelterPlan::requests`), tested without a server. `crates/reelctl` gains `render_backend.rs` (the `RenderBackend` trait, `FfmpegBackend`), `smelter_backend.rs` (resolve the binary, start one server per render on a free port, send the requests, wait for `OUTPUT_DONE`, read the log, trim, check), and `smelter_client.rs` (about 250 lines of HTTP and WebSocket over `std::net`, loopback only).
+- `crates/timeline` gains `smelter.rs`: a pure translation from a project to an ordered list of Smelter API requests (`build_smelter_plan`, `SmelterPlan::requests`), tested without a server. `crates/reelctl` gains `render_backend.rs` (the `RenderBackend` trait, `FfmpegBackend`), `smelter_backend.rs` (resolve the binary, start one server per render on a free port, send the requests, wait for `OUTPUT_DONE`, read the log, trim, check), and `smelter_client.rs` (about 250 lines of HTTP and WebSocket over `std::net`, plus its tests; loopback only).
 - `reelctl render --backend ffmpeg|smelter` (default `ffmpeg`, unchanged) and `--smelter <path>` / `SMELTER_BIN`, else `smelter` on `PATH`. No Smelter: exit 1, naming both ways to point at one and `--backend ffmpeg`. Media Smelter cannot read: exit 2 with the one-line `ffmpeg` fix.
 - No new Cargo dependency, no download, nothing vendored.
 
@@ -42,4 +42,6 @@ The facts that shaped the translation, all measured (spec: [smelter-backend](../
 - **FFmpeg coupling:** an FFmpeg upgrade that changes the libavcodec major version breaks Smelter 0.6.0 until it is rebuilt or updated; the error text from the server's log is shown with a hint.
 - **API drift:** the request shapes are those of 0.6.0 (`deny_unknown_fields` on every type, so a changed field name fails loudly at registration). Re-run `fixtures/smelter_agreement.sh` after a Smelter upgrade.
 - The overlay track does not exist in the project format on `main`; when one is added the Smelter backend must learn it or refuse the project.
-- Reversible: removing the backend is deleting three files and the `--backend` flag.
+- Reversible: removing the backend is deleting `smelter.rs`, `render_backend.rs`, `smelter_backend.rs`, `smelter_client.rs`, `smelter_fake.rs`, the CLI test and the fixture script, and the `--backend` flag.
+- **Environment:** the server is started with the parent's environment minus `OPENROUTER_API_KEY` and the `REELCTL_*` model paths. Other variables (a shell profile's secrets) are still inherited by a third-party binary; run it from a clean environment if that matters.
+- **Not verified:** the written file's sound. The backend counts video frames only; the audio check is at registration (Smelter heard audio in each input), not on the output.

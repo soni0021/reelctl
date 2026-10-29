@@ -68,7 +68,7 @@ All of them read one project and write one, atomically (a temporary file in the 
 | Bridge card | the PNG `reelctl` draws, registered as an image |
 | End | a looped "clock" input unregistered four frames after the end, then the file is trimmed to the exact frame count |
 
-It differs from the ffmpeg render in what is listed in [cli.md](cli.md) (scene changes within one or two frames, no audio dip, colour of untagged sources) and has no overlay track (the project format has none yet). It needs a Smelter the user installs and starts nothing else; every request is on `127.0.0.1`.
+It differs from the ffmpeg render in what is listed in [cli.md](cli.md) (scene changes within one or two frames, no audio dip, colour of untagged sources) and has no overlay track (the project format has none yet). It needs a Smelter the user installs; `reelctl` starts nothing else. Every request `reelctl` sends is to `127.0.0.1`, but the server it starts listens on every network interface until the render ends (see [ADR-023](decisions/ADR-023-drive-smelter-as-a-separate-process-over-its-http-api.md)).
 
 ## Checking a project with the reference library
 

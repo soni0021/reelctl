@@ -19,7 +19,7 @@ use crate::tracks::{check_editable, item_range, track_frames};
 
 /// Id of the output in every request.
 pub const OUTPUT_ID: &str = "out";
-/// Id of the extra input that ends an output whose last item has no input.
+/// Id of the extra input that ends every output (it outlasts the timeline; the CLI trims the surplus).
 pub const CLOCK_ID: &str = "clock";
 /// How many frames before a frame a scheduled scene update is scheduled. Smelter
 /// applies an update to the frames after its time, so one scheduled at a frame's own

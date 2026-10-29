@@ -15,4 +15,4 @@ Spec: [smelter-backend](smelter-backend.md). Written 2026-10-29; kept in `docs/s
 - [x] **7. Real run.** `fixtures/smelter_agreement.sh`; measure on `draft12` and `textured_cuts12`; many-input stress; record the numbers in status.
 - [x] **8. Mutation pass** on the pure translation; fix survivors; list the rest.
 - [x] **9. Docs:** ADR-023, README, status, cli, CHANGELOG, AGENTS.md, timeline.md, p0-capability-map.md.
-- [ ] **10. Full `cargo test --workspace` once, audit commit, final report.**
+- [x] **10. Full `cargo test --workspace` once, audit commit, final report.**
