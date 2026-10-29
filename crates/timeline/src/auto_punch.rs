@@ -2,7 +2,7 @@
 //! picture longer than `reelctl diff` allows (a static window), at the outliers'
 //! zoom scale.
 
-use edit_dna::{EditDna, VisualEventKind};
+use edit_dna::{AsrBackend, EditDna, VisualEventKind};
 
 use crate::error::{Result, TimelineError};
 use crate::otio::{reelctl, Item, Timeline, VIDEO_KIND};
@@ -16,9 +16,9 @@ use crate::tracks::{
 pub const STATIC_WINDOW_MS: u64 = 2_500;
 /// A punch-in starts this long after the start of a window, or after the last one.
 pub const LEAD_MS: u64 = 1_000;
-/// And lasts this long. With the lead, every piece a window is split into is at
-/// most 1.5 s, well inside the limit even if a detector places the move's event a
-/// few frames late.
+/// And lasts this long. Punch-ins are placed until what is left of the window is
+/// at most this long, so every piece is at most 1.5 s, well inside the limit even
+/// if a detector places the move's event a few frames late.
 pub const PUNCH_MS: u64 = 1_500;
 /// A punch-in moves to a word that starts this soon after its planned start.
 pub const WORD_SNAP_MS: u64 = 300;
@@ -87,7 +87,8 @@ fn boundaries(timeline: &Timeline, dna: &EditDna, rate: f64) -> Result<Vec<i64>>
         } else {
             for &ms in &source_times {
                 let frame = round_frame(ms, rate);
-                if frame > start && frame < start + duration {
+                // A cut on a piece's first frame is a cut at the splice.
+                if frame >= start && frame < start + duration {
                     found.push(position + frame - start);
                 }
             }
@@ -120,7 +121,10 @@ fn static_windows(timeline: &Timeline, dna: &EditDna, rate: f64) -> Result<Vec<(
         .windows(2)
         .map(|pair| (pair[0], pair[1]))
         .filter(|&(start, end)| frame_ms(end - start, rate) > STATIC_WINDOW_MS)
-        .filter(|&(start, end)| footage_only(timeline, start, end, rate).unwrap_or(false))
+        .map(|window| Ok((window, footage_only(timeline, window.0, window.1, rate)?)))
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .filter_map(|(window, footage)| footage.then_some(window))
         .collect())
 }
 
@@ -147,7 +151,7 @@ fn footage_only(timeline: &Timeline, start: i64, end: i64, rate: f64) -> Result<
 fn plan_window(start_ms: u64, end_ms: u64, word_starts: &[u64], min_ms: u64) -> Vec<(u64, u64)> {
     let mut planned = Vec::new();
     let mut last = start_ms;
-    while end_ms.saturating_sub(last) > STATIC_WINDOW_MS {
+    while end_ms.saturating_sub(last) > PUNCH_MS {
         let mut from = last + LEAD_MS;
         if let Some(&word) = word_starts
             .iter()
@@ -176,10 +180,15 @@ pub fn auto_punch_in(
 ) -> Result<Vec<(u64, u64)>> {
     let rate = check_editable(timeline)?;
     let windows = static_windows(timeline, dna, rate)?;
-    let word_starts: Vec<u64> = crate::words_on_timeline(timeline, &dna.words)?
-        .iter()
-        .map(|word| word.start_ms)
-        .collect();
+    // Only whisper's words: the fallback estimator's voiced bursts are not words.
+    let word_starts: Vec<u64> = if dna.asr_backend == AsrBackend::WhisperCpp {
+        crate::words_on_timeline(timeline, &dna.words)?
+            .iter()
+            .map(|word| word.start_ms)
+            .collect()
+    } else {
+        Vec::new()
+    };
     let min_ms = frame_ms(2 * RAMP_FRAMES, rate) + 1;
     let mut added = Vec::new();
     for (start, end) in windows {
@@ -275,10 +284,18 @@ mod tests {
         assert_eq!(report.windows, vec![(0, 10_000)]);
         assert_eq!(
             report.punches,
-            vec![(1_000, 2_500), (3_500, 5_000), (6_000, 7_500)]
+            vec![
+                (1_000, 2_500),
+                (3_500, 5_000),
+                (6_000, 7_500),
+                (8_500, 10_000)
+            ]
         );
         assert_eq!((report.scale, report.measured), (DEFAULT_SCALE, false));
-        assert_eq!(punches(&timeline), vec![(100, 250), (350, 500), (600, 750)]);
+        assert_eq!(
+            punches(&timeline),
+            vec![(100, 250), (350, 500), (600, 750), (850, 1000)]
+        );
         let rate = check_editable(&timeline).unwrap();
         assert!(static_windows(&timeline, &media, rate).unwrap().is_empty());
     }
@@ -317,7 +334,10 @@ mod tests {
         let report = auto_punch_in_like(&mut timeline, &media, &[]).unwrap();
         // Timeline: 0..1 s, cut, 1..8 s (media 1..3 s and 5..10 s).
         assert_eq!(report.windows, vec![(1_000, 8_000)]);
-        assert_eq!(report.punches, vec![(2_000, 3_500), (4_500, 6_000)]);
+        assert_eq!(
+            report.punches,
+            vec![(2_000, 3_500), (4_500, 6_000), (7_000, 8_000)]
+        );
     }
 
     #[test]
@@ -331,6 +351,82 @@ mod tests {
         // 1.2 s is within 300 ms of 1.0 s; 4.1 s is more than 300 ms after 3.7 s.
         assert_eq!(report.punches[0], (1_200, 2_700));
         assert_eq!(report.punches[1], (3_700, 5_200));
+    }
+
+    #[test]
+    fn no_piece_of_a_window_is_left_longer_than_a_punch() {
+        // 5.0 s: 1.0..2.5 s leaves 2.5 s, so a second punch goes in at 3.5 s.
+        let mut timeline = project(100.0, 500);
+        let media = dna(5_000, 100.0, &[]);
+        let report = auto_punch_in_like(&mut timeline, &media, &[]).unwrap();
+        assert_eq!(report.punches, vec![(1_000, 2_500), (3_500, 5_000)]);
+        for length in [2_600u64, 4_100, 5_900, 7_300, 12_000] {
+            let planned = plan_window(0, length, &[], 130);
+            let mut last = 0;
+            for &(from, to) in &planned {
+                assert!(
+                    from - last <= PUNCH_MS && to > from,
+                    "{length}: {planned:?}"
+                );
+                last = to;
+            }
+            assert!(length - last <= PUNCH_MS, "{length}: {planned:?}");
+        }
+    }
+
+    #[test]
+    fn voiced_bursts_are_not_words_to_snap_to() {
+        let mut timeline = project(100.0, 1000);
+        let mut media = with_words(dna(10_000, 100.0, &[]), &[("burst-1", 1_200, 1_500)]);
+        media.asr_backend = edit_dna::AsrBackend::SilenceBursts;
+        let report = auto_punch_in_like(&mut timeline, &media, &[]).unwrap();
+        assert_eq!(report.punches[0], (1_000, 2_500));
+    }
+
+    #[test]
+    fn on_a_trimmed_clip_cuts_and_punches_are_placed_by_the_clip_start() {
+        // Media frames 300..800 at 100 fps (3..8 s); a cut at 5.5 s is timeline
+        // 2.5 s, splitting the 5 s clip into 2.5 s and 2.5 s: no window.
+        let spec = crate::InitSpec {
+            media_path: "/media/take.mp4".to_string(),
+            fps: 100.0,
+            frames: 1000,
+            width: 640,
+            height: 360,
+            has_audio: true,
+            dna: None,
+        };
+        let pick = crate::ClipPick {
+            understanding_path: "/u.json".to_string(),
+            index: 1,
+            start_ms: 3_000,
+            end_ms: 8_000,
+            hook_id: 0,
+            last_id: 0,
+        };
+        let mut timeline = crate::from_clip(&spec, &pick).unwrap();
+        let mut media = dna(10_000, 100.0, &[]);
+        media.cuts = vec![cut_at(5_500)];
+        let report = auto_punch_in_like(&mut timeline, &media, &[]).unwrap();
+        assert!(report.windows.is_empty(), "{:?}", report.windows);
+        // A cut at media 1 s (before the clip) does not count: one 5 s window.
+        let mut timeline = crate::from_clip(&spec, &pick).unwrap();
+        media.cuts = vec![cut_at(1_000)];
+        let report = auto_punch_in_like(&mut timeline, &media, &[]).unwrap();
+        assert_eq!(report.windows, vec![(0, 5_000)]);
+        assert_eq!(punches(&timeline)[0], (100, 250));
+    }
+
+    #[test]
+    fn a_cut_on_the_first_frame_after_a_splice_ends_the_window() {
+        // A silence 3..5 s is cut out and the shot changes at 5 s, right at the
+        // splice: the 3 s before and 5 s after are two windows, not one of 8 s.
+        let mut timeline = project(100.0, 1000);
+        let mut media = dna(10_000, 100.0, &[(3_000, 5_000)]);
+        media.cuts = vec![cut_at(5_000)];
+        cut_silence(&mut timeline, &media, &CutOptions::default()).unwrap();
+        let report = auto_punch_in_like(&mut timeline, &media, &[]).unwrap();
+        assert_eq!(report.windows, vec![(0, 3_000), (3_000, 8_000)]);
     }
 
     #[test]

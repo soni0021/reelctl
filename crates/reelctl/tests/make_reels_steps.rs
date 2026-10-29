@@ -313,8 +313,10 @@ fn from_clip_refuses_a_missing_or_flagged_clip_and_another_video() {
     other["source"]["path"] = json!("/elsewhere/another.mp4");
     let other_path = root.join("other.json");
     fs::write(&other_path, serde_json::to_vec(&other).unwrap()).unwrap();
+    fs::remove_file(&out).unwrap();
     call(args(&["--clip", "1"], &other_path), "another.mp4");
-    assert!(!out.exists() || fs::read(&out).is_ok());
+    // A refused run writes nothing.
+    assert!(!out.exists());
 }
 
 #[test]

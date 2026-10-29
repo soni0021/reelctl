@@ -7,7 +7,7 @@ Plan: [plan.md](plan.md). Spec: [docs/specs/make-reels.md](../docs/specs/make-re
 
 ## Task 1: Edits on a trimmed clip
 - [x] `timeline from-clip` (refusals, metadata, frame snapping)
-- [x] Every edit and the render tested on a clip that starts after 0
+- [x] Every edit and the render tested on a clip that starts after 0 (auto-punch-in since the audit fix)
 
 ## Task 2: Bridge
 - [x] `attach-bridge --append`; old records still read
