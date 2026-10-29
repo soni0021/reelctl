@@ -175,7 +175,11 @@ named {name} (it has {names:?})"
         .into_iter()
         .chain(OUTPUT_STATES)
     {
-        find(&ports.outputs, name, "output")?;
+        if find(&ports.outputs, name, "output")? != expected {
+            return Err(format!(
+                "The model's {name} output is not the same type as the {INPUT_FRAME} input"
+            ));
+        }
     }
     Ok(precision)
 }
@@ -437,6 +441,16 @@ mod tests {
         assert!(check_signature(&ports)
             .unwrap_err()
             .contains("float32 or float16"));
+        // An output of another type than the input (fgr, then a state).
+        for name in ["fgr", "r3o"] {
+            let mut ports = rvm_ports(TensorElementType::Float16);
+            let at = ports.outputs.iter().position(|p| p.name == name).unwrap();
+            ports.outputs[at] = port(name, TensorElementType::Float32);
+            assert!(
+                check_signature(&ports).unwrap_err().contains(name),
+                "{name}"
+            );
+        }
         // The ratio must be float32 even in the float16 file.
         let mut ports = rvm_ports(TensorElementType::Float16);
         let last = ports.inputs.len() - 1;

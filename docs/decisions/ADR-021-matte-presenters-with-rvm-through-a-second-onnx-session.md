@@ -21,7 +21,7 @@ planer.md's P2 wants presenters cut out cleanly over diagrams and screen recordi
 
 ## Consequences
 - A command that needs both TransNetV2 and RVM in one process cannot have it: `ort` builds one environment per process for good. A future pipeline command would need a shared environment (a small crate both depend on); until then they are separate commands.
-- The pipeline is serial because the state depends on the previous frame, so it is as fast as one model call per frame. On the Apple M3 CPU, 720p at the automatic ratio took tens of milliseconds per frame (see [status](../status.md#rvm-presenter-2026-10-29)), well under the planer's GPU figure, and `fp16` was slower than `fp32` because the CPU provider converts rather than computes in half precision. Neither is a real-time rate here.
+- The pipeline is serial because the state depends on the previous frame, so it is as fast as one model call per frame. On the Apple M3 CPU, 720p at the automatic ratio took about 80 to 180 milliseconds per 720p frame under load (see [status](../status.md#rvm-presenter-2026-10-29)), well under the planer's GPU figure, and `fp16` was slower than `fp32` because the CPU provider converts rather than computes in half precision. Neither is a real-time rate here.
 - ProRes 4444 with alpha is large (about 22 MB per second at 720p).
 - The ONNX adapter's tensor code (layout, state order, `float16` conversion) cannot run in the test suite, which has no model. It is checked by a manual comparison against the official Python path, and a mistake there would pass the offline tests.
 - The matte is the model's: a cluttered scene, a second person, or a moving camera gives what RVM gives; there is no refinement.

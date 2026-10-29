@@ -52,7 +52,7 @@ Update the docs in the same commit as every change, without waiting to be asked;
 
 ## P2 gaps (documented)
 
-- `reelctl compositor isolate-presenter` runs RobustVideoMatting (`rvm_mobilenetv3_fp32.onnx` or `_fp16.onnx`, which the user supplies; never vendored or committed) on the CPU through `ort` and an ONNX Runtime library named by an absolute `ORT_DYLIB_PATH`. It is not real time here (tens of milliseconds per 720p frame; the planer's 172 FPS is a GPU figure), reads SDR video only (HDR is refused), and has no OpenTimelineIO integration. Tests never use a real model: the pipeline runs with a fake `MattingModel`, and the real-model checks are the manual commands in [docs/status.md](docs/status.md#rvm-presenter-2026-10-29). Real clips for a manual run come from `Reels/` and are never copied into the repo.
+- `reelctl compositor isolate-presenter` runs RobustVideoMatting (`rvm_mobilenetv3_fp32.onnx` or `_fp16.onnx`, which the user supplies; never vendored or committed) on the CPU through `ort` and an ONNX Runtime library named by an absolute `ORT_DYLIB_PATH`. It is not real time here (about 80 to 180 milliseconds per 720p frame under load; the planer's 172 FPS is a GPU figure), reads SDR video only (HDR is refused), and has no OpenTimelineIO integration. Tests never use a real model: the pipeline runs with a fake `MattingModel`, and the real-model checks are the manual commands in [docs/status.md](docs/status.md#rvm-presenter-2026-10-29). Real clips for a manual run come from `Reels/` and are never copied into the repo.
 
 ## Learned User Preferences
 

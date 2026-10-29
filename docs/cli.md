@@ -289,7 +289,7 @@ Cuts the presenter out of a video with RobustVideoMatting (RVM, a recurrent matt
 | `--input` | The video with the presenter. SDR only: HDR (HLG or PQ) input exits 2 with a hint to convert it first |
 | `--background` | `#rrggbb` for a colour (the `#` is required), or the path of an image or video. A file is scaled to cover the frame and cropped at the centre, never stretched, and a video loops until the input ends. Required for `--mode composite`, refused for the other modes |
 | `--weights` | The RVM ONNX file; also `REELCTL_RVM_WEIGHTS` |
-| `--out` | Where to write. The file is made beside it under a temporary name and renamed when the whole run succeeds; a failed run leaves nothing |
+| `--out` | Where to write. The file is made beside it under a temporary name and renamed when the whole run succeeds; a failed run leaves nothing (unless `reelctl` is killed, which can leave the temporary file) |
 | `--mode` | `composite` (default, mp4: the presenter over `--background`), `matte` (mp4: the alpha as a grey video, limited range, so 16 is transparent and 235 opaque after decoding, no audio) or `rgba` (the presenter with straight alpha, ProRes 4444 in a `.mov`, which `--out` must be) |
 | `--downsample-ratio` | The model's downsample ratio, above 0 and at most 1. Default: 512 divided by the longest side, at most 1 (0.4 for 720p, 0.2667 for 1080p, 1 up to 512 pixels). A lower ratio is faster and sees less detail |
 

@@ -5,7 +5,7 @@
 //! official Python path and compares the two.
 //!
 //! ```text
-//! ffmpeg -i clip.mp4 -vf scale=1280:720,format=rgb24 -f rawvideo clip.rgb
+//! ffmpeg -i clip.mp4 -vf "fps=30000/1001,scale=in_color_matrix=auto:out_range=full,format=rgb24" -f rawvideo clip.rgb
 //! ORT_DYLIB_PATH=/abs/libonnxruntime.dylib cargo run --release -p compositor \
 //!   --example rvm_dump -- <rvm.onnx> <width> <height> <ratio> < clip.rgb > pha.f32
 //! ```

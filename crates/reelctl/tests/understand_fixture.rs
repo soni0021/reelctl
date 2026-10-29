@@ -22,6 +22,7 @@ fn reelctl() -> Command {
     command
         .env_remove("REELCTL_WHISPER_MODEL")
         .env_remove("REELCTL_TRANSNET_WEIGHTS")
+        .env_remove("REELCTL_RVM_WEIGHTS")
         .env_remove("ORT_DYLIB_PATH")
         .env_remove("OPENROUTER_API_KEY");
     command
