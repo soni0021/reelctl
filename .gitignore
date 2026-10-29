@@ -20,3 +20,7 @@
 
 # reelctl serve workspaces
 .reelstudio/
+
+# Mac app build output
+/macos/.build/
+/macos/dist/
