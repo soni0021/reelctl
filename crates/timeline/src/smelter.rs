@@ -25,6 +25,17 @@ pub const CLOCK_ID: &str = "clock";
 /// applies an update to the frames after its time, so one scheduled at a frame's own
 /// time lands a frame late (measured, spec evidence 3).
 pub const UPDATE_LEAD_FRAMES: f64 = 0.5;
+/// How many frames before its end an input is unregistered. An unregister exactly on
+/// a frame's time is a coin toss (an extra frame was written when the time was not a
+/// whole number of milliseconds); a quarter frame early gave the exact count, and so
+/// did anything from a quarter frame early to half a frame late (spec evidence 4).
+pub const END_LEAD_FRAMES: f64 = 0.25;
+/// How many frames past the end of the timeline the clock input runs. The output
+/// ends when the last input is unregistered, and the frame count at that moment
+/// varied by a few frames from one run to the next (286 to 290 for 289, measured
+/// under load), so Smelter renders a few frames too many and the CLI trims to the
+/// exact count.
+pub const CLOCK_MARGIN_FRAMES: f64 = 4.0;
 
 /// One mp4 input Smelter registers: a range of one media file played from
 /// `offset_ms` of the output, until it is unregistered at `end_ms`.
@@ -88,6 +99,11 @@ pub struct SmelterRequest {
     pub path: String,
     pub body: Value,
 }
+
+/// Printed when the project changes what the output shows: Smelter applies a scheduled
+/// scene update to frames it has already queued, so a change lands on its frame in
+/// most runs and one or two frames early in others (spec evidence 3 and 5).
+pub const JITTER_NOTE: &str = "render: Smelter applies a scheduled scene change out of step with the frames it has queued, so cuts, zoom steps and the card can land one or two frames early (measured in about a third of runs); use --backend ffmpeg when frame accuracy matters";
 
 /// A stretch of one media file on the timeline: `frames` frames of `media` from
 /// source frame `source`, playing from timeline frame `start`.
@@ -349,16 +365,22 @@ fn fade_note(track: &Track, rate: f64) -> Result<Option<String>> {
         Item::Gap(_) => 0,
     };
     let (mut joins, mut longest) = (0, 0);
-    for pair in track.children.windows(2) {
-        let dip = fade(&pair[0]).max(fade(&pair[1]));
-        if dip > 0 && !continues(&pair[0], &pair[1], rate)? {
+    let mut playing: Vec<&Item> = Vec::new();
+    for item in &track.children {
+        if item_range(item, rate)?.1 > 0 {
+            playing.push(item);
+        }
+    }
+    for pair in playing.windows(2) {
+        let dip = fade(pair[0]).max(fade(pair[1]));
+        if dip > 0 && !continues(pair[0], pair[1], rate)? {
             joins += 1;
             longest = longest.max(dip);
         }
     }
     Ok((joins > 0).then(|| {
         format!(
-            "render: Smelter cannot fade audio, so the {longest} ms audio dip that the ffmpeg render makes at {joins} join{} is not applied; a cut through sound can click",
+            "render: Smelter cannot fade audio, so the {longest} ms audio dip that the ffmpeg render makes is not applied at {joins} join{}; a cut through sound can click",
             if joins == 1 { "" } else { "s" }
         )
     }))
@@ -425,27 +447,23 @@ pub fn build_smelter_plan(timeline: &Timeline, size: Option<RenderSize>) -> Resu
             None => audio_ids.push(input_of(seg, &mut inputs, false)),
         }
     }
-    let covered = video_segs
-        .iter()
-        .chain(&audio_segs)
-        .any(|seg| seg.end() == frames);
-    if !covered {
-        if media.is_empty() {
-            return Err(TimelineError::invalid(
-                "the project has no footage, so Smelter has no input to time the output by",
-            ));
-        }
-        inputs.push(SmelterInput {
-            id: CLOCK_ID.to_string(),
-            media: 0,
-            seek_ms: 0.0,
-            offset_ms: 0.0,
-            end_ms: ms(frames),
-            looped: true,
-            video: false,
-            audio: false,
-        });
+    // The clock: an input that outlasts the timeline by CLOCK_MARGIN_FRAMES and ends
+    // the output when it is unregistered. The CLI trims the surplus frames.
+    if media.is_empty() {
+        return Err(TimelineError::invalid(
+            "the project has no footage, so Smelter has no input to time the output by",
+        ));
     }
+    inputs.push(SmelterInput {
+        id: CLOCK_ID.to_string(),
+        media: 0,
+        seek_ms: 0.0,
+        offset_ms: 0.0,
+        end_ms: ms(frames),
+        looped: true,
+        video: false,
+        audio: false,
+    });
     let id_in = |segs: &[Seg], ids: &[usize], seg: &Seg| -> String {
         let at = segs.iter().position(|other| other.holds(seg)).unwrap_or(0);
         inputs[ids[at]].id.clone()
@@ -496,7 +514,7 @@ pub fn build_smelter_plan(timeline: &Timeline, size: Option<RenderSize>) -> Resu
         .collect();
     at.sort_unstable();
     at.dedup();
-    let steps = at
+    let steps: Vec<SceneStep> = at
         .into_iter()
         .map(|frame| SceneStep {
             frame,
@@ -513,10 +531,13 @@ pub fn build_smelter_plan(timeline: &Timeline, size: Option<RenderSize>) -> Resu
         })
         .collect();
 
-    let notes = match audio {
+    let mut notes: Vec<String> = match audio {
         Some(track) => fade_note(track, rate)?.into_iter().collect(),
         None => Vec::new(),
     };
+    if steps.len() > 1 {
+        notes.push(JITTER_NOTE.to_string());
+    }
     Ok(SmelterPlan {
         media,
         cards,
@@ -587,7 +608,7 @@ impl SmelterPlan {
                 "encoder": {
                     "type": "ffmpeg_h264",
                     "pixel_format": "yuv420p",
-                    "ffmpeg_options": {"preset": "veryfast", "crf": "18"}
+                    "ffmpeg_options": {"preset": "veryfast", "crf": "18", "bf": "0"}
                 },
                 "initial": {"root": first.video},
                 "send_eos_when": {"all_inputs": true}
@@ -614,10 +635,16 @@ impl SmelterPlan {
             }
             all.push(post(format!("/api/output/{OUTPUT_ID}/update"), body));
         }
+        let frame_ms = 1000.0 / self.fps;
         for input in &self.inputs {
+            let at = if input.id == CLOCK_ID {
+                input.end_ms + CLOCK_MARGIN_FRAMES * frame_ms
+            } else {
+                input.end_ms - END_LEAD_FRAMES * frame_ms
+            };
             all.push(post(
                 format!("/api/input/{}/unregister", input.id),
-                json!({"schedule_time_ms": input.end_ms}),
+                json!({"schedule_time_ms": at}),
             ));
         }
         all.push(post("/api/start".to_string(), json!({})));
@@ -709,7 +736,8 @@ mod tests {
     #[test]
     fn one_clip_is_one_input_and_one_scene() {
         let plan = plan(&project(30.0, 300));
-        assert_eq!(plan.inputs.len(), 1);
+        // The footage, and the clock that ends the output.
+        assert_eq!(plan.inputs.len(), 2);
         let input = &plan.inputs[0];
         assert_eq!(input.id, "i0");
         assert_eq!(
@@ -729,7 +757,7 @@ mod tests {
     fn a_cut_starts_a_second_input_at_its_timeline_time() {
         let plan = plan(&cut_only());
         assert_eq!(plan.frames, 285);
-        assert_eq!(plan.inputs.len(), 2);
+        assert_eq!(plan.inputs.len(), 3);
         let (first, second) = (&plan.inputs[0], &plan.inputs[1]);
         assert_eq!(
             (first.seek_ms, first.offset_ms, first.end_ms),
@@ -818,7 +846,7 @@ mod tests {
                     "encoder": {
                         "type": "ffmpeg_h264",
                         "pixel_format": "yuv420p",
-                        "ffmpeg_options": {"preset": "veryfast", "crf": "18"}
+                        "ffmpeg_options": {"preset": "veryfast", "crf": "18", "bf": "0"}
                     },
                     "initial": {"root": plain("i0")},
                     "send_eos_when": {"all_inputs": true}
@@ -849,7 +877,10 @@ mod tests {
             .iter()
             .find(|request| request.path == "/api/input/i1/unregister")
             .expect("unregister");
-        assert_eq!(unregister.body, json!({"schedule_time_ms": 9500.0}));
+        assert_eq!(
+            unregister.body,
+            json!({"schedule_time_ms": 9500.0 - 0.25 * 1000.0 / 30.0})
+        );
     }
 
     #[test]
@@ -895,7 +926,7 @@ mod tests {
     }
 
     #[test]
-    fn a_project_that_ends_on_a_card_gets_a_clock_input_to_end_the_output() {
+    fn the_clock_input_ends_the_output_and_outlasts_the_timeline() {
         let plan = plan(&edited());
         let clock = plan.inputs.last().expect("an input");
         assert_eq!(clock.id, "clock");
@@ -905,6 +936,16 @@ mod tests {
         );
         assert_eq!(clock.end_ms, plan.frames as f64 * 1000.0 / 30.0);
         assert!(!clock.video && !clock.audio);
+        // It is unregistered four frames after the timeline ends; the CLI trims the rest.
+        let unregister = requests(&plan)
+            .into_iter()
+            .find(|request| request.path == "/api/input/clock/unregister")
+            .expect("unregister");
+        let at = unregister.body["schedule_time_ms"].as_f64().expect("time");
+        assert!(
+            (at - (plan.frames as f64 + 4.0) * 1000.0 / 30.0).abs() < 1e-9,
+            "{at}"
+        );
         // It is registered with `loop`, so a short file cannot end the output early.
         let all = requests(&plan);
         let register = all
@@ -918,14 +959,6 @@ mod tests {
             .iter()
             .all(|step| !step.audio.contains(&"clock".to_string())
                 && !step.video.to_string().contains("clock")));
-    }
-
-    #[test]
-    fn a_project_that_ends_on_footage_has_no_clock_input() {
-        for timeline in [project(30.0, 300), cut_only()] {
-            let plan = plan(&timeline);
-            assert!(plan.inputs.iter().all(|input| input.id != "clock"));
-        }
     }
 
     #[test]
@@ -991,7 +1024,10 @@ mod tests {
         let plan = plan(&timeline);
         let hold = step_at(&plan, 30);
         assert_eq!(hold.frame, 30, "the new clip is a new input");
-        assert_ne!(plan.inputs.len(), 1);
+        assert!(
+            plan.inputs.len() >= 3,
+            "two stretches of footage and the clock"
+        );
         let width = hold.video["children"][0]["width"].as_f64().expect("width");
         assert!((width - round3(640.0 * 1.18)).abs() < 1e-9, "{width}");
     }
@@ -1098,7 +1134,7 @@ mod tests {
             .iter_mut()
             .for_each(|item| *item.source_range_mut() = Some(TimeRange::new(0.0, 297.0, 30.0)));
         let plan = plan(&timeline);
-        assert_eq!(plan.inputs.len(), 2);
+        assert_eq!(plan.inputs.len(), 3);
         assert!(plan.inputs[0].video && !plan.inputs[0].audio);
         assert!(!plan.inputs[1].video && plan.inputs[1].audio);
         assert_eq!(plan.inputs[1].seek_ms, 100.0);
@@ -1120,7 +1156,8 @@ mod tests {
         )
         .expect("punch");
         let plan = plan(&timeline);
-        assert_eq!(plan.inputs.len(), 1);
+        // One stretch of footage (not three pieces), and the clock.
+        assert_eq!(plan.inputs.len(), 2);
         assert_eq!(plan.inputs[0].end_ms, 10_000.0);
     }
 
@@ -1128,9 +1165,18 @@ mod tests {
     fn what_it_cannot_do_is_a_note() {
         assert!(plan(&project(30.0, 300)).notes.is_empty());
         let notes = plan(&cut_only()).notes;
-        assert_eq!(notes.len(), 1, "{notes:?}");
-        assert!(notes[0].contains("audio dip") && notes[0].contains("1 join"));
+        assert_eq!(notes.len(), 2, "{notes:?}");
+        assert!(
+            notes[0].contains("audio dip") && notes[0].contains("is not applied at 1 join;"),
+            "{}",
+            notes[0]
+        );
+        // The cut and the card are two joins; 30 ms is the longest dip.
+        let two = plan(&edited()).notes;
+        assert!(two[0].contains("the 30 ms audio dip"), "{}", two[0]);
+        assert!(two[0].contains("is not applied at 2 joins;"), "{}", two[0]);
         assert!(notes[0].starts_with("render: "));
+        assert_eq!(notes[1], JITTER_NOTE);
     }
 
     #[test]
@@ -1143,7 +1189,12 @@ mod tests {
             width: 8194,
             height: 8192,
         });
-        for size in [odd, big] {
+        // Each side is allowed, but 8192 x 8192 is more pixels than 8K UHD.
+        let many = Some(RenderSize {
+            width: 8192,
+            height: 8192,
+        });
+        for size in [odd, big, many] {
             let ours = build_smelter_plan(&project(30.0, 300), size).expect_err("refused");
             let theirs = build_render_plan(&project(30.0, 300), size).expect_err("refused");
             assert_eq!(ours.to_string(), theirs.to_string());
@@ -1154,6 +1205,34 @@ mod tests {
         let ours = build_smelter_plan(&timeline, None).expect_err("empty");
         let theirs = build_render_plan(&timeline, None).expect_err("empty");
         assert_eq!(ours.to_string(), theirs.to_string());
+    }
+
+    #[test]
+    fn a_project_of_empty_items_has_no_frames_to_render() {
+        let mut timeline = project(30.0, 300);
+        for kind in [VIDEO_KIND, AUDIO_KIND] {
+            for item in &mut timeline.track_mut(kind).expect("track").children {
+                *item.source_range_mut() = Some(TimeRange::new(0.0, 0.0, 30.0));
+            }
+        }
+        let ours = build_smelter_plan(&timeline, None).expect_err("no frames");
+        let theirs = build_render_plan(&timeline, None).expect_err("no frames");
+        assert_eq!(ours.to_string(), theirs.to_string());
+        assert!(ours.to_string().contains("no frames"), "{ours}");
+    }
+
+    #[test]
+    fn an_item_of_no_length_adds_nothing() {
+        // A zero-length gap between two clips is not a scene, an input or a step.
+        let mut timeline = cut_only();
+        for kind in [VIDEO_KIND, AUDIO_KIND] {
+            timeline
+                .track_mut(kind)
+                .expect("track")
+                .children
+                .insert(1, Item::Gap(Gap::new(TimeRange::new(0.0, 0.0, 30.0))));
+        }
+        assert_eq!(plan(&timeline), plan(&cut_only()));
     }
 
     #[test]

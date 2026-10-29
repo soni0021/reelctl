@@ -28,6 +28,10 @@ use timeline::{
 };
 
 use crate::card::{draw_card, parse_color};
+use crate::render_backend::{
+    result_line, BackendChoice, FfmpegBackend, RenderBackend, RenderJob, RenderOutcome,
+};
+use crate::smelter_backend::SmelterBackend;
 use crate::understand_cmd::ExitWith;
 
 /// The DNA and the media may differ by this much in length (see `timeline::cut_silence`).
@@ -170,6 +174,14 @@ pub struct RenderArgs {
     /// source's size.
     #[arg(long, value_parser = parse_size)]
     size: Option<RenderSize>,
+    /// What renders the project. `smelter` drives a separately installed Smelter
+    /// server over its HTTP API and fails (exit 1) if it cannot find one.
+    #[arg(long, value_enum, default_value = "ffmpeg")]
+    backend: BackendChoice,
+    /// The Smelter server (`smelter` or `smelter_main`), for `--backend smelter`.
+    /// Without it, `smelter` on `PATH`.
+    #[arg(long, env = "SMELTER_BIN")]
+    smelter: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -232,7 +244,7 @@ pub fn qa(command: QaCommand) -> Result<()> {
 }
 
 /// An error that exits with code 2.
-fn usage(message: impl Into<String>) -> anyhow::Error {
+pub(crate) fn usage(message: impl Into<String>) -> anyhow::Error {
     anyhow::Error::new(ExitWith {
         code: 2,
         message: message.into(),
@@ -267,7 +279,7 @@ fn absolute(path: &Path, what: &str) -> Result<PathBuf> {
 /// and a device all exit 2, so `ffmpeg` is never handed anything but a file (and the
 /// absolute path cannot be read as a protocol or an option, even if it began with a
 /// dash).
-fn local_media_file(media: &str) -> Result<PathBuf> {
+pub(crate) fn local_media_file(media: &str) -> Result<PathBuf> {
     if media.contains("://") {
         return Err(usage(format!(
             "\"{media}\" is a URL; reelctl reads local files only"
@@ -283,7 +295,7 @@ fn local_media_file(media: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn utf8(path: &Path) -> Result<String> {
+pub(crate) fn utf8(path: &Path) -> Result<String> {
     path.to_str()
         .map(str::to_string)
         .ok_or_else(|| usage(format!("{} is not valid UTF-8", path.display())))
@@ -291,13 +303,13 @@ fn utf8(path: &Path) -> Result<String> {
 
 /// A file that is removed when the guard drops, unless it was disarmed: a failed
 /// write, rename or ffmpeg run leaves nothing behind.
-struct TempFile {
-    path: PathBuf,
+pub(crate) struct TempFile {
+    pub(crate) path: PathBuf,
     armed: bool,
 }
 
 impl TempFile {
-    fn new(path: PathBuf) -> Self {
+    pub(crate) fn new(path: PathBuf) -> Self {
         Self { path, armed: true }
     }
 
@@ -315,7 +327,7 @@ impl Drop for TempFile {
 }
 
 /// Move `temporary` over `path`; on failure the temporary file is removed.
-fn replace_file(mut temporary: TempFile, path: &Path) -> Result<()> {
+pub(crate) fn replace_file(mut temporary: TempFile, path: &Path) -> Result<()> {
     fs::rename(&temporary.path, path).with_context(|| format!("replace {}", path.display()))?;
     temporary.disarm();
     Ok(())
@@ -426,7 +438,7 @@ fn parse_probe(json: &Value, path: &Path) -> Result<Probe> {
 
 /// A command that cannot start because the tool is missing is exit 1 with a message
 /// that names it.
-fn spawn_error(tool: &str, error: std::io::Error) -> anyhow::Error {
+pub(crate) fn spawn_error(tool: &str, error: std::io::Error) -> anyhow::Error {
     if error.kind() == std::io::ErrorKind::NotFound {
         anyhow!("{tool} was not found on PATH; install ffmpeg (macOS: `brew install ffmpeg`), which provides ffmpeg and ffprobe")
     } else {
@@ -630,10 +642,10 @@ fn attach_bridge_cmd(args: AttachBridgeArgs) -> Result<()> {
 }
 
 /// Removes its directory when dropped.
-struct TempDir(PathBuf);
+pub(crate) struct TempDir(pub(crate) PathBuf);
 
 impl TempDir {
-    fn create() -> Result<Self> {
+    pub(crate) fn create() -> Result<Self> {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|elapsed| elapsed.subsec_nanos())
@@ -717,7 +729,7 @@ fn ffmpeg_args(
 /// The name of the temporary file `render` writes before it renames: the output's
 /// own name with the process id, and the extension last, because `ffmpeg` picks the
 /// container from it.
-fn render_temp_name(out: &Path) -> Result<String> {
+pub(crate) fn render_temp_name(out: &Path) -> Result<String> {
     let stem = out.file_stem().and_then(|name| name.to_str());
     let extension = out.extension().and_then(|ext| ext.to_str());
     match (stem, extension) {
@@ -733,23 +745,43 @@ fn render_temp_name(out: &Path) -> Result<String> {
 
 pub fn render(args: RenderArgs) -> Result<()> {
     let project = load_project(&args.project)?;
-    let plan = build_render_plan(&project, args.size)
-        .map_err(|error| usage(format!("{}: {error}", args.project.display())))?;
+    let job = RenderJob {
+        project_path: &args.project,
+        project: &project,
+        out: &args.out,
+        size: args.size,
+    };
+    let backend: Box<dyn RenderBackend> = match args.backend {
+        BackendChoice::Ffmpeg => Box::new(FfmpegBackend),
+        BackendChoice::Smelter => Box::new(SmelterBackend::new(args.smelter.clone())),
+    };
+    let outcome = backend.render(&job)?;
+    println!("{}", result_line(backend.name(), &args.out, &outcome));
+    for note in &outcome.notes {
+        println!("{note}");
+    }
+    Ok(())
+}
+
+/// The ffmpeg backend: one filter graph for the whole project.
+pub(crate) fn render_ffmpeg(job: &RenderJob<'_>) -> Result<RenderOutcome> {
+    let plan = build_render_plan(job.project, job.size)
+        .map_err(|error| usage(format!("{}: {error}", job.project_path.display())))?;
     let mut media = Vec::with_capacity(plan.media.len());
     for url in &plan.media {
         media.push(
             local_media_file(url)
-                .map_err(|error| usage(format!("{}: {error}", args.project.display())))?,
+                .map_err(|error| usage(format!("{}: {error}", job.project_path.display())))?,
         );
     }
     // The output is checked before anything is made.
-    if args.out.is_dir() {
+    if job.out.is_dir() {
         return Err(usage(format!(
             "--out {} is a directory; name the file to write",
-            args.out.display()
+            job.out.display()
         )));
     }
-    let temporary_name = render_temp_name(&args.out)?;
+    let temporary_name = render_temp_name(job.out)?;
 
     let scratch = TempDir::create()?;
     let mut card_paths = Vec::with_capacity(plan.cards.len());
@@ -780,7 +812,7 @@ pub fn render(args: RenderArgs) -> Result<()> {
     // Render beside the output, then rename. The temporary file is removed on every
     // way out but a kill, so a failed run leaves nothing behind. Its directory is
     // made absolute, so the path cannot be read as an option.
-    let dir = match args.out.parent() {
+    let dir = match job.out.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
         _ => PathBuf::from("."),
     };
@@ -800,24 +832,18 @@ pub fn render(args: RenderArgs) -> Result<()> {
         return Err(anyhow!(
             "ffmpeg failed ({}) rendering {}:\n{}",
             output.status,
-            args.project.display(),
+            job.project_path.display(),
             tail.into_iter().rev().collect::<Vec<_>>().join("\n")
         ));
     }
-    replace_file(temporary, &args.out)?;
-    println!(
-        "render: out={} frames={} duration_ms={} size={}x{} ffmpeg_ms={}",
-        args.out.display(),
-        plan.frames,
-        (plan.frames as f64 * 1000.0 / plan.fps).round() as u64,
-        plan.size.width,
-        plan.size.height,
-        started.elapsed().as_millis()
-    );
-    for note in notes {
-        println!("{note}");
-    }
-    Ok(())
+    replace_file(temporary, job.out)?;
+    Ok(RenderOutcome {
+        frames: plan.frames,
+        duration_ms: (plan.frames as f64 * 1000.0 / plan.fps).round() as u64,
+        size: plan.size,
+        backend_ms: started.elapsed().as_millis(),
+        notes,
+    })
 }
 
 /// Mono f32 audio of `media` from `from_ms` for `length_ms`, at `PCM_RATE`.

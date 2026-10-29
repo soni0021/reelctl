@@ -39,7 +39,7 @@ pub use render::{
 };
 pub use smelter::{
     build_smelter_plan, SceneStep, SmelterFiles, SmelterInput, SmelterPlan, SmelterRequest,
-    CLOCK_ID, OUTPUT_ID, UPDATE_LEAD_FRAMES,
+    CLOCK_ID, CLOCK_MARGIN_FRAMES, END_LEAD_FRAMES, JITTER_NOTE, OUTPUT_ID, UPDATE_LEAD_FRAMES,
 };
 pub use tracks::{
     ceil_frame, check_editable, floor_frame, frame_ms, project_rate, round_frame, single_media,

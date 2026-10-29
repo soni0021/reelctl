@@ -18,6 +18,11 @@ use edit_dna::EditDna;
 
 mod card;
 mod look_cmd;
+mod render_backend;
+mod smelter_backend;
+mod smelter_client;
+#[cfg(test)]
+mod smelter_fake;
 mod timeline_cmd;
 mod understand_cmd;
 
