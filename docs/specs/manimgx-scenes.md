@@ -82,7 +82,7 @@ Text (title, label, unit) may not contain control characters or bidirectional-fo
 
 The scene file is a **fixed template** with one hole. The hole holds the scene payload (derived from the canonical spec) **once**, as `json.loads("<the JSON text, encoded as a string>")`: the payload is serialised to JSON with every non-ASCII character as `\uXXXX`, and that text is serialised again as a string, which is a valid Python string literal. No other part of the file depends on user input, so a title that holds `"""`, `'`, `\`, a newline, `#`, `{}` or any non-ASCII text stays data. The template draws title and labels with `m.Text` only (never `Tex`, `MathTex` or `bar_names`, which typeset their input). Everything numeric the scene needs (`y_range`, the formatted value strings, the duration in seconds) is computed in Rust and carried in the same JSON. Canonical means a fixed field order and defaults filled in, so the same spec always gives the same text and the same overlay id.
 
-The scene sets `m.config.background_color` to the key colour `#ff00ff` and uses an explicit palette that has no colour near it. The scene class is `ReelctlChart`. Its length is `duration_s`: the animation (about 1 s) then `self.wait(duration_s - animation)`.
+The scene sets `m.config.background_color` to the key colour `#ff00ff` and uses an explicit palette that has no colour near it. The scene class is `ReelctlChart`. Its length is `duration_s`: the draw-in lasts min(1 s, `duration_s`) (a 500 to 999 ms span is all draw-in), then `self.wait(duration_s - draw-in)` if anything is left.
 
 ### Running the worker (fail closed)
 
