@@ -6,8 +6,8 @@ Plan: [plan.md](plan.md). Spec: [docs/specs/studio-service.md](../docs/specs/stu
 - [x] User approves the spec, ADR-028 and ADR-029 (2026-10-29; workspace ~/Movies/ReelStudio, stops when the app says)
 
 ## Task 1: Progress and cancel
-- [x] `--progress json` events from the decode, whisper, render, matte and measure loops and the make-reels steps; the result event equals the stdout line (TransNet windows and manimgx stages: not yet, the worker and model calls report as their stage)
-- [x] SIGTERM stops children and leaves no temporary file; without the flag, output is unchanged
+- [x] `--progress json` events from the decode, sample, TransNet, whisper, render, matte and measure loops and the make-reels steps; the result event equals the stdout line (manimgx stages: not yet, the worker reports as its stage)
+- [x] SIGTERM stops children, writes no further output and leaves no temporary file; without the flag, stdout and outputs are unchanged (audit fixes: ADR-030)
 
 ## Task 2: Store and catalogue
 - [x] Objects, trees, read-only files; schema version 1 and migrations; assets by reference

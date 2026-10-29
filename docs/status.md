@@ -524,8 +524,11 @@ Task 5 (`commands.rs`, 6 more tests, 37 in all): the command catalogue.
 - A render of the same clip reports `render` progress up to `total` 360.
 - A missing input gives an `error` event with code 2 and nothing else on stderr.
 - A SIGTERM sent while `bench60` (1080p, 60 s) renders exits 130 with an error event of code 130, and leaves nothing in the output folder (no `.tmp` file).
+- A SIGTERM sent while `look` samples `bench60` (400 frames) exits 130 and writes no `.cube`.
+- `timeline init` gives the same stdout and the same `.otio` bytes with and without the flag; its result event names `timeline init`.
+- Audit fixes: cancel is checked before every output write and before `understand`'s model call; `make-reels` stops and records `"status": "cancelled"`; a second signal or the 10 s grace forces the exit after removing the registered temporary paths ([ADR-030](decisions/ADR-030-cancel-with-a-flag-a-child-registry-and-a-forced-exit.md)); `render` no longer passes `-nostats`, so its error tail is ffmpeg's as before; result values with spaces parse whole.
 
-Not yet reported: TransNetV2's windows and manimgx's stages, which run inside their stage. Clap usage errors are still plain text.
+Not yet reported: manimgx's stages, which run inside their stage. Clap usage errors are still plain text. A forced exit while a model session runs on another thread can abort with 134 instead of 130 (ADR-030). The make-reels cancel path and the forced exit have no end-to-end test.
 
 ## make-reels steps (2026-10-29, in progress)
 

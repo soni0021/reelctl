@@ -155,6 +155,8 @@ fn os(path: &Path) -> OsString {
 
 /// Run `reelctl <args>` with a clean environment plus `env`.
 fn run(name: &str, args: Vec<OsString>, env: &[(&str, OsString)]) -> Result<Step> {
+    // After a stop is asked for, no further step starts.
+    crate::timeline_cmd::cancelled()?;
     let exe = std::env::current_exe().context("find the reelctl executable")?;
     let mut command = Command::new(exe);
     command.args(&args).env_clear().stdin(Stdio::null());
@@ -800,6 +802,9 @@ pub fn make_reels(args: MakeReelsArgs) -> Result<()> {
 
     let mut reels = Vec::new();
     for &index in &chosen {
+        if progress::cancel_requested() {
+            break;
+        }
         let reel = make_reel(
             &args,
             index,
@@ -869,6 +874,11 @@ pub fn make_reels(args: MakeReelsArgs) -> Result<()> {
         }
     };
     let failed = reels.len() - ok;
+    if progress::cancel_requested() {
+        // Reels not started are left out; main exits 130.
+        write_summary(&base_summary(Value::Array(reels), "cancelled"))?;
+        return Err(anyhow::anyhow!(progress::CANCELLED_MESSAGE));
+    }
     write_summary(&base_summary(
         Value::Array(reels),
         if ok > 0 { "ok" } else { "failed" },

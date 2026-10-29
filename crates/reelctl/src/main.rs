@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::error::ErrorKind;
-use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
+use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
 use decompile::{
     decompile_file, run_whisper_worker, CutDetectorChoice, DecoderSetting, DecompileRequest,
     WhisperRunner,
@@ -44,20 +44,32 @@ mod understand_cmd;
 /// How long a cancelled run may take to stop by itself before it is ended.
 const CANCEL_GRACE: Duration = Duration::from_secs(10);
 
-/// On SIGTERM, SIGINT or SIGHUP: set the cancel flag (loops stop, temporary files
-/// are removed by their guards) and pass SIGTERM on to the child processes. A run
-/// still going after [`CANCEL_GRACE`] is ended with exit 130.
+/// End the process now: children get SIGTERM, registered temporary files are
+/// deleted (their own guards will not run), and the exit code is 130.
+fn force_exit() -> ! {
+    progress::terminate_tracked();
+    progress::remove_temporaries();
+    progress::error(progress::CANCELLED_EXIT, "cancelled");
+    // As in main: drop the ONNX Runtime environments this thread can reach.
+    decompile::release_onnx_runtime();
+    compositor::release_runtime();
+    std::process::exit(progress::CANCELLED_EXIT);
+}
+
+/// On SIGTERM, SIGINT or SIGHUP: set the cancel flag (loops and steps stop, and no
+/// further output is written; temporary files are removed by their guards) and
+/// pass SIGTERM on to the child processes. A second signal, or a run still going
+/// after [`CANCEL_GRACE`], ends the process at once.
 fn install_cancel_handler() {
     let _ = ctrlc::set_handler(|| {
         if progress::cancel_requested() {
-            return;
+            force_exit();
         }
         progress::request_cancel();
         progress::terminate_tracked();
         std::thread::spawn(|| {
             std::thread::sleep(CANCEL_GRACE);
-            progress::terminate_tracked();
-            std::process::exit(progress::CANCELLED_EXIT);
+            force_exit();
         });
     });
 }
@@ -96,6 +108,18 @@ fn main() {
     }
 }
 
+/// The subcommand's name, for the `command` of a result event.
+/// The subcommand path of a parsed command line, such as `timeline init`.
+fn command_path(matches: &clap::ArgMatches) -> String {
+    let mut names = Vec::new();
+    let mut current = matches;
+    while let Some((name, next)) = current.subcommand() {
+        names.push(name);
+        current = next;
+    }
+    names.join(" ")
+}
+
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum ProgressArg {
     /// One JSON object per line on stderr (stage, progress, warning, result, error).
@@ -103,10 +127,12 @@ enum ProgressArg {
 }
 
 fn run() -> Result<()> {
-    let cli = Cli::parse();
+    let matches = Cli::command().get_matches();
+    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
     if cli.progress.is_some() {
         progress::enable_json();
     }
+    progress::set_command(&command_path(&matches));
     match cli.command {
         Command::Decompile(args) => decompile(args),
         Command::Diff(args) => diff(args),
@@ -317,6 +343,7 @@ fn decompile(args: DecompileArgs) -> Result<()> {
     };
     let output = decompile_file(&request).context("decompile")?;
     let dir = filmstrip_dir(&args.out, args.filmstrip_dir);
+    timeline_cmd::cancelled()?;
     let paths = filmstrip::write_boundary_views(&dir, &output.boundaries, &output.dna.words)
         .context("write timeline views")?;
     print_timing(&output);

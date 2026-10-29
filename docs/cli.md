@@ -395,7 +395,7 @@ reelctl make-reels --input long.mp4 --outlier outlier.edit_dna.json [--outlier .
    - With `--follow presenter` and no RVM weights or ONNX Runtime, the reframe falls back to a centred crop, and the reel's `notes` say why.
    - A failed step marks that reel failed (with the step, its exit code and stderr tail) and the next reel goes on.
 6. **Summary.** `DIR/make_reels.json`:
-   - `schema_version` (1), `status`, `source`, `dna`, `understanding`, `outliers`, `model`, `cost_usd`, `follow`, and the resolved caption `style`.
+   - `schema_version` (1), `status` (`ok`, `failed`, `picked`, or `cancelled` after a SIGTERM, when the reels not started are left out and the exit code is 130), `source`, `dna`, `understanding`, `outliers`, `model`, `cost_usd`, `follow`, and the resolved caption `style`.
    - The run-level `steps` (name, argv, exit code, ms).
    - `reels`: one per clip, each with `index`, `status`, `path`, `length_ms`, `hook`, `last`, `diff_flags`, `notes`, `failure` and its `steps`.
    - No argument list holds a key.
@@ -416,29 +416,33 @@ Stdout ends with `make-reels: out_dir= reels= ok= failed= cost_usd= follow=prese
 {"v":1,"event":"stage","name":"decode"}
 {"v":1,"event":"progress","stage":"decode","done":120,"total":1800}
 {"v":1,"event":"warning","message":"..."}
-{"v":1,"event":"result","command":"init","fields":{"frames":"300","fps":"30.000"}}
+{"v":1,"event":"result","command":"timeline init","fields":{"frames":"300","fps":"30.000"}}
 {"v":1,"event":"error","code":2,"message":"..."}
 ```
 
 - **Stages:**
   - `decode` (decompile, diff, and the decode inside other commands)
+  - `sample` (frames decoded at chosen times: `look`, `understand`'s frames)
+  - `transnet` (with `--cut-detector transnet`)
   - `whisper`
   - `render` (from ffmpeg's frame counter)
   - `matte` (`compositor isolate-presenter`)
   - `measure` (`transform reframe --follow presenter`)
   - one per `make-reels` step
 - **Rate:** progress is written at most 10 times a second per stage, and always when `done` reaches `total`.
-- **`result`:** its `fields` are the `key=value` pairs of the stdout line. `diff` and `eval`, which print JSON, give `"stdout": "json"` and no fields.
+- **`result`:** `command` is the subcommand path (`decompile`, `timeline init`, `overlay add-chart`). Its `fields` are the `key=value` pairs of the stdout line; a value runs to the next ` key=`, so a value with spaces stays whole. `diff` and `eval`, which print JSON, give `"stdout": "json"` and no fields.
 - **Errors:** an error is an `error` event with the exit code and message, and no plain `error:` line. Notes such as `dataset build`'s skipped lines become `warning` events.
 - **Clap usage errors:** an unknown flag or a missing argument is printed by clap as plain text, exit 2, before the flag is read.
 
-**Cancel.** SIGTERM, SIGINT or SIGHUP:
-- stops the decode and matting loops;
+**Cancel.** SIGTERM, SIGINT or SIGHUP ([ADR-030](decisions/ADR-030-cancel-with-a-flag-a-child-registry-and-a-forced-exit.md)):
+- stops the decode, sampling, TransNet and matting loops;
 - sends SIGTERM to `reelctl`'s child processes (ffmpeg, the whisper worker, manimgx, Smelter, `make-reels` steps);
+- writes no further output: every command checks before it writes its result file (`.otio`, `.mp4`, `.cube`, `understanding.json`, `edit_dna.json`, the filmstrip, dataset files), and `understand` checks before the model call;
 - removes the temporary outputs (`render`'s `.tmp` file, the compositor's, and the caption pictures);
+- `make-reels` starts no further step or reel and writes `make_reels.json` with `"status": "cancelled"`;
 - exits **130**, with an `error` event of code 130.
 
-A run that has not stopped 10 s after the signal is ended with 130.
+A second signal, or a run that has not stopped 10 s after the first, ends it at once: the children get SIGTERM, the registered temporary files and folders are removed, and it exits 130.
 
 ## Exit codes
 

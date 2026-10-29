@@ -392,8 +392,10 @@ pub fn understand(args: UnderstandArgs) -> Result<()> {
         (None, None) => return Err(exit_with(3, "no API key")),
     };
 
+    crate::timeline_cmd::cancelled()?;
     let (images, frame_times) = images_for(&args, &plan)?;
     let request = build_request(&args, &plan.segments, &images);
+    crate::timeline_cmd::cancelled()?;
     let mut reply = backend.analyze(&request).context("the model call failed")?;
     reply.quantization = plan
         .endpoints
@@ -432,6 +434,7 @@ pub fn understand(args: UnderstandArgs) -> Result<()> {
         }
     }
     let json = serde_json::to_string_pretty(&understanding).context("format understanding.json")?;
+    crate::timeline_cmd::cancelled()?;
     std::fs::write(&args.out, format!("{json}\n"))
         .with_context(|| format!("write {}", args.out.display()))?;
     out!(

@@ -189,6 +189,7 @@ fn write_file(path: &Path, contents: &str) -> Result<()> {
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
     let temp = path.with_file_name(format!(".{name}.tmp"));
+    crate::timeline_cmd::cancelled()?;
     fs::write(&temp, contents).with_context(|| format!("write {}", temp.display()))?;
     fs::rename(&temp, path).with_context(|| format!("write {}", path.display()))?;
     Ok(())

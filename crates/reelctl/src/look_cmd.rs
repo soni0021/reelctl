@@ -126,6 +126,7 @@ pub fn look(args: LookArgs) -> Result<()> {
         .mean_shift(&draft)
         .context("the draft gave no pixels")?;
 
+    crate::timeline_cmd::cancelled()?;
     fs::write(&args.out, cube.to_cube_string())
         .with_context(|| format!("write {}", args.out.display()))?;
     out!(

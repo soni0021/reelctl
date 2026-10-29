@@ -8,3 +8,6 @@ description = "Machine-readable progress events (NDJSON on stderr) and the cance
 
 [dependencies]
 serde_json.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+nix.workspace = true

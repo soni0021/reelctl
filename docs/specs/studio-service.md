@@ -151,7 +151,7 @@ With `--progress json`, `reelctl` writes NDJSON to **stderr**, one object per li
 
 ### 8. Clean cancel
 
-On SIGTERM, SIGINT or SIGHUP (through the `ctrlc` crate, whose API is safe; it is the one new dependency of this task), `reelctl` stops its own children (registered with `progress::track`) (ffmpeg, the whisper worker, manimgx and Smelter), removes its temporary outputs (render's and the compositor's `.tmp` files, and the caption sequence), and exits 130. Today a kill can leave the temporary file behind.
+On SIGTERM, SIGINT or SIGHUP (through the `ctrlc` crate, whose API is safe; it is the one new dependency of this task), `reelctl` stops its own children (registered with `progress::track`) (ffmpeg, the whisper worker, manimgx and Smelter), removes its temporary outputs (render's and the compositor's `.tmp` files, and the caption sequence), writes no further result file, and exits 130. A second signal, or 10 s without stopping, forces the exit after the same clean-up ([ADR-030](../decisions/ADR-030-cancel-with-a-flag-a-child-registry-and-a-forced-exit.md)).
 
 ### 9. Security
 

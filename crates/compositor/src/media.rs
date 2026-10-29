@@ -566,6 +566,8 @@ impl Process {
 struct TempFile {
     path: PathBuf,
     keep: bool,
+    /// Removed by a forced exit too, when this guard never gets to run.
+    _registered: progress::Temporary,
 }
 
 impl Drop for TempFile {
@@ -599,8 +601,10 @@ impl Prepared {
         let dir = fs::canonicalize(&dir).map_err(|error| {
             CompositorError::run(format!("cannot find {}: {error}", dir.display()))
         })?;
+        let path = dir.join(temporary_name(&request.out)?);
         let temporary = TempFile {
-            path: dir.join(temporary_name(&request.out)?),
+            _registered: progress::temporary(&path),
+            path,
             keep: false,
         };
 

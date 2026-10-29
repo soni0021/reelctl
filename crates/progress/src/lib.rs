@@ -31,6 +31,20 @@ pub const MAX_PER_SECOND: u32 = 10;
 pub const CANCELLED_EXIT: i32 = 130;
 
 static JSON: AtomicBool = AtomicBool::new(false);
+static COMMAND: OnceLock<String> = OnceLock::new();
+
+/// The subcommand being run (`look`, `timeline init`, ...): the `command` of a
+/// result line that does not name one.
+pub fn set_command(name: &str) {
+    let _ = COMMAND.set(name.to_string());
+}
+
+fn command_or(default_command: &str) -> String {
+    COMMAND
+        .get()
+        .cloned()
+        .unwrap_or_else(|| default_command.to_string())
+}
 static CANCELLED: AtomicBool = AtomicBool::new(false);
 
 struct Stage {
@@ -167,8 +181,10 @@ pub fn error(code: i32, message: &str) {
 }
 
 /// The `key=value` fields of a result line (`init: out=a.otio frames=300 ...`), and
-/// the command named before the colon. A value runs to the next space; a quoted
-/// value (`hook="..."`) runs to the closing quote.
+/// the command named before the colon. A value runs to the next ` key=` (a space,
+/// then a lower-case name of letters, digits and `_`, then `=`), so a path with a
+/// space in it stays whole; a quoted value (`hook="..."`) runs to the closing
+/// quote.
 pub fn parse_result_line(line: &str) -> (Option<String>, BTreeMap<String, String>) {
     let mut fields = BTreeMap::new();
     let (command, rest) = match line.split_once(": ") {
@@ -177,45 +193,49 @@ pub fn parse_result_line(line: &str) -> (Option<String>, BTreeMap<String, String
         }
         _ => (None, line),
     };
-    let mut chars = rest.chars().peekable();
-    loop {
-        while chars.peek().is_some_and(|c| *c == ' ') {
-            chars.next();
+    let bytes = rest.as_bytes();
+    let is_key_char = |b: u8| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_';
+    // The end of the `key` that starts at `at`, if a `key=` starts there.
+    let key_at = |at: usize| -> Option<usize> {
+        let mut end = at;
+        while end < bytes.len() && is_key_char(bytes[end]) {
+            end += 1;
         }
-        let mut key = String::new();
-        while let Some(&c) = chars.peek() {
-            if c == '=' || c == ' ' {
-                break;
+        (end > at && end < bytes.len() && bytes[end] == b'=' && bytes[at].is_ascii_lowercase())
+            .then_some(end)
+    };
+    let starts: Vec<usize> = (0..bytes.len())
+        .filter(|&at| (at == 0 || bytes[at - 1] == b' ') && key_at(at).is_some())
+        .collect();
+    let mut index = 0;
+    while index < starts.len() {
+        let at = starts[index];
+        let Some(eq) = key_at(at) else {
+            index += 1;
+            continue;
+        };
+        let key = rest[at..eq].to_string();
+        let value_start = eq + 1;
+        if bytes.get(value_start) == Some(&b'"') {
+            let close = rest[value_start + 1..]
+                .find('"')
+                .map_or(rest.len(), |i| value_start + 1 + i);
+            fields.insert(key, rest[value_start + 1..close].to_string());
+            index += 1;
+            // Key-like words inside the quotes are not keys.
+            while index < starts.len() && starts[index] <= close {
+                index += 1;
             }
-            key.push(c);
-            chars.next();
-        }
-        if key.is_empty() {
-            break;
-        }
-        if chars.peek() != Some(&'=') {
             continue;
         }
-        chars.next();
-        let mut value = String::new();
-        if chars.peek() == Some(&'"') {
-            chars.next();
-            for c in chars.by_ref() {
-                if c == '"' {
-                    break;
-                }
-                value.push(c);
-            }
-        } else {
-            while let Some(&c) = chars.peek() {
-                if c == ' ' {
-                    break;
-                }
-                value.push(c);
-                chars.next();
-            }
-        }
-        fields.insert(key, value);
+        let value_end = starts.get(index + 1).map_or(rest.len(), |next| next - 1);
+        fields.insert(
+            key,
+            rest[value_start..value_end.max(value_start)]
+                .trim_end()
+                .to_string(),
+        );
+        index += 1;
     }
     (command, fields)
 }
@@ -231,7 +251,7 @@ pub fn result_line(default_command: &str, line: &str) {
     if trimmed.starts_with('{') || trimmed.starts_with('[') {
         emit(object(vec![
             ("event", json!("result")),
-            ("command", json!(default_command)),
+            ("command", json!(command_or(default_command))),
             ("stdout", json!("json")),
             ("fields", json!({})),
         ]));
@@ -242,13 +262,67 @@ pub fn result_line(default_command: &str, line: &str) {
         ("event", json!("result")),
         (
             "command",
-            json!(command.unwrap_or_else(|| default_command.to_string())),
+            json!(COMMAND
+                .get()
+                .cloned()
+                .or(command)
+                .unwrap_or_else(|| default_command.to_string())),
         ),
         ("fields", json!(fields)),
     ]));
 }
 
-/// A stop was asked for (SIGTERM or SIGINT).
+fn temp_files() -> &'static Mutex<BTreeMap<std::path::PathBuf, ()>> {
+    static TEMP: OnceLock<Mutex<BTreeMap<std::path::PathBuf, ()>>> = OnceLock::new();
+    TEMP.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+/// A temporary output that must not outlive a cancel, even one that ends the
+/// process before its own guard runs: [`remove_temporaries`] deletes it.
+pub struct Temporary(std::path::PathBuf);
+
+impl Drop for Temporary {
+    fn drop(&mut self) {
+        if let Ok(mut map) = temp_files().lock() {
+            map.remove(&self.0);
+        }
+    }
+}
+
+/// Register a temporary file or folder.
+pub fn temporary(path: &std::path::Path) -> Temporary {
+    if let Ok(mut map) = temp_files().lock() {
+        map.insert(path.to_path_buf(), ());
+    }
+    Temporary(path.to_path_buf())
+}
+
+/// Delete every registered temporary (the last step before a forced exit).
+pub fn remove_temporaries() {
+    let paths: Vec<std::path::PathBuf> = temp_files()
+        .lock()
+        .map(|map| map.keys().cloned().collect())
+        .unwrap_or_default();
+    for path in paths {
+        if path.is_dir() {
+            let _ = std::fs::remove_dir_all(&path);
+        } else {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+}
+
+/// `Err(CANCELLED_MESSAGE)` once a stop was asked for: called before each long
+/// step and before an output is written, so a cancelled run writes nothing more.
+pub fn check() -> Result<(), &'static str> {
+    if cancel_requested() {
+        Err(CANCELLED_MESSAGE)
+    } else {
+        Ok(())
+    }
+}
+
+/// A stop was asked for (SIGTERM, SIGINT or SIGHUP).
 pub fn request_cancel() {
     CANCELLED.store(true, Ordering::SeqCst);
 }
@@ -280,6 +354,19 @@ pub fn track(pid: u32) -> Tracked {
     Tracked(pid)
 }
 
+/// Run `command` to completion like [`std::process::Command::output`], with the
+/// child registered while it runs, so a forced exit signals it too.
+pub fn tracked_output(
+    command: &mut std::process::Command,
+) -> std::io::Result<std::process::Output> {
+    let child = command
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+    let _tracked = track(child.id());
+    child.wait_with_output()
+}
+
 /// The children registered now.
 pub fn tracked() -> Vec<u32> {
     children()
@@ -288,19 +375,25 @@ pub fn tracked() -> Vec<u32> {
         .unwrap_or_default()
 }
 
-/// Send SIGTERM to every registered child, with the system's `kill` (no unsafe
-/// code here). Returns how many were signalled.
+/// Send SIGTERM to every registered child (with `kill(2)` through `nix`, a safe
+/// API; no `kill` process). Returns how many were signalled.
 pub fn terminate_tracked() -> usize {
-    let pids = tracked();
-    for pid in &pids {
-        let _ = std::process::Command::new("kill")
-            .args(["-TERM", &pid.to_string()])
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
+    let mut sent = 0;
+    for pid in tracked() {
+        #[cfg(unix)]
+        {
+            use nix::sys::signal::{kill, Signal};
+            let Ok(raw) = i32::try_from(pid) else {
+                continue;
+            };
+            if kill(nix::unistd::Pid::from_raw(raw), Signal::SIGTERM).is_ok() {
+                sent += 1;
+            }
+        }
+        #[cfg(not(unix))]
+        let _ = pid;
     }
-    pids.len()
+    sent
 }
 
 #[cfg(test)]
@@ -309,11 +402,12 @@ mod tests {
 
     #[test]
     fn a_result_line_splits_into_its_command_and_fields() {
-        let (command, fields) =
-            parse_result_line("init: out=/a b.otio frames=300 fps=30.000 size=640x360 audio=true");
+        let (command, fields) = parse_result_line(
+            "init: out=/my dir/a b.otio frames=300 fps=30.000 size=640x360 audio=true",
+        );
         assert_eq!(command.as_deref(), Some("init"));
         assert_eq!(fields["frames"], "300");
-        assert_eq!(fields["out"], "/a");
+        assert_eq!(fields["out"], "/my dir/a b.otio");
         assert_eq!(fields["size"], "640x360");
         let (command, fields) = parse_result_line(
             "make-reels: clip=1 tight_length_ms=31000 flags=0 hook=\"Sentence 1 is about topic.\"",
@@ -324,6 +418,14 @@ mod tests {
         let (command, fields) = parse_result_line("signal_ms=310 asr_ms=4 cuts=1");
         assert_eq!(command, None);
         assert_eq!(fields["cuts"], "1");
+        // A line with no fields at all.
+        let (_, fields) =
+            parse_result_line("wrote 4 records (3 train, 1 val) from 2 reels, 0 skipped, to /out");
+        assert!(fields.is_empty());
+        // A quoted value may hold `=` and spaces.
+        let (_, fields) = parse_result_line("clip=1 hook=\"a b=c\" flags=0");
+        assert_eq!(fields["hook"], "a b=c");
+        assert_eq!(fields["flags"], "0");
     }
 
     #[test]
@@ -337,10 +439,28 @@ mod tests {
     }
 
     #[test]
-    fn cancel_is_a_flag_anyone_can_read() {
-        assert!(!cancel_requested() || cancel_requested());
+    fn cancel_is_a_flag_and_check_turns_it_into_an_error() {
+        CANCELLED.store(false, Ordering::SeqCst);
+        assert_eq!(check(), Ok(()));
         request_cancel();
         assert!(cancel_requested());
+        assert_eq!(check(), Err(CANCELLED_MESSAGE));
         CANCELLED.store(false, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn registered_temporaries_are_removed_and_forgotten_by_their_guards() {
+        let dir = std::env::temp_dir().join(format!("progress-temp-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.tmp");
+        std::fs::write(&file, b"x").unwrap();
+        let guard = temporary(&file);
+        remove_temporaries();
+        assert!(!file.exists());
+        drop(guard);
+        std::fs::write(&file, b"x").unwrap();
+        remove_temporaries();
+        assert!(file.exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

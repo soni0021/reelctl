@@ -278,6 +278,10 @@ fn decode_planned(
             });
             match attempt {
                 Ok(reel) => Ok(reel),
+                // A cancel is not a reason to decode again in software.
+                Err(_) if progress::cancel_requested() => Err(DecompileError::Message(
+                    progress::CANCELLED_MESSAGE.to_string(),
+                )),
                 Err(reason) => decode_with(
                     path,
                     Decoder::Software(DecoderUsed::Fallback(reason)),

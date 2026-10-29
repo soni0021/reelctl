@@ -389,11 +389,24 @@ pub(crate) fn utf8(path: &Path) -> Result<String> {
 pub(crate) struct TempFile {
     pub(crate) path: PathBuf,
     armed: bool,
+    /// Removed by a forced exit too, when this guard never gets to run.
+    _registered: progress::Temporary,
+}
+
+/// An error once a stop was asked for: before each output is written, so a
+/// cancelled run writes nothing more.
+pub(crate) fn cancelled() -> Result<()> {
+    progress::check().map_err(|message| anyhow!(message))
 }
 
 impl TempFile {
     pub(crate) fn new(path: PathBuf) -> Self {
-        Self { path, armed: true }
+        let registered = progress::temporary(&path);
+        Self {
+            path,
+            armed: true,
+            _registered: registered,
+        }
     }
 
     fn disarm(&mut self) {
@@ -411,6 +424,7 @@ impl Drop for TempFile {
 
 /// Move `temporary` over `path`; on failure the temporary file is removed.
 pub(crate) fn replace_file(mut temporary: TempFile, path: &Path) -> Result<()> {
+    cancelled()?;
     fs::rename(&temporary.path, path).with_context(|| format!("replace {}", path.display()))?;
     temporary.disarm();
     Ok(())
@@ -961,7 +975,8 @@ fn attach_bridge_cmd(args: AttachBridgeArgs) -> Result<()> {
 }
 
 /// Removes its directory when dropped.
-pub(crate) struct TempDir(pub(crate) PathBuf);
+/// The second field keeps the folder registered for a forced exit.
+pub(crate) struct TempDir(pub(crate) PathBuf, #[allow(dead_code)] progress::Temporary);
 
 impl TempDir {
     pub(crate) fn create() -> Result<Self> {
@@ -972,7 +987,8 @@ impl TempDir {
         let path =
             std::env::temp_dir().join(format!("reelctl-render-{}-{nanos}", std::process::id()));
         fs::create_dir_all(&path).with_context(|| format!("create {}", path.display()))?;
-        Ok(Self(path))
+        let registered = progress::temporary(&path);
+        Ok(Self(path, registered))
     }
 }
 
@@ -1185,7 +1201,7 @@ pub(crate) fn render_ffmpeg(job: &RenderJob<'_>) -> Result<RenderOutcome> {
     // ffmpeg's `-progress pipe:1` gives `frame=N` lines on stdout: the render's
     // progress events, and nothing else uses its stdout.
     let mut child = Command::new("ffmpeg")
-        .args(["-progress", "pipe:1", "-nostats"])
+        .args(["-progress", "pipe:1"])
         .args(ffmpeg_args(
             &plan,
             &media,
@@ -1209,6 +1225,9 @@ pub(crate) fn render_ffmpeg(job: &RenderJob<'_>) -> Result<RenderOutcome> {
             text
         })
     });
+    if progress::cancel_requested() {
+        let _ = child.kill();
+    }
     if let Some(stdout) = child.stdout.take() {
         for line in std::io::BufRead::lines(std::io::BufReader::new(stdout)).map_while(Result::ok) {
             if let Some(frame) = line
@@ -1217,9 +1236,14 @@ pub(crate) fn render_ffmpeg(job: &RenderJob<'_>) -> Result<RenderOutcome> {
             {
                 progress::tick("render", frame);
             }
+            if progress::cancel_requested() {
+                let _ = child.kill();
+            }
         }
     }
     let status = child.wait().map_err(|error| spawn_error("ffmpeg", error))?;
+    cancelled()?;
+    progress::finish("render", plan.frames.max(0) as u64);
     let output = std::process::Output {
         status,
         stdout: Vec::new(),
@@ -1249,7 +1273,8 @@ pub(crate) fn render_ffmpeg(job: &RenderJob<'_>) -> Result<RenderOutcome> {
 
 /// Mono f32 audio of `media` from `from_ms` for `length_ms`, at `PCM_RATE`.
 fn decode_pcm(media: &Path, from_ms: u64, length_ms: u64) -> Result<Vec<f32>> {
-    let output = Command::new("ffmpeg")
+    let mut command = Command::new("ffmpeg");
+    command
         .args([
             "-v",
             "error",
@@ -1266,9 +1291,9 @@ fn decode_pcm(media: &Path, from_ms: u64, length_ms: u64) -> Result<Vec<f32>> {
         .args(["-vn", "-f", "f32le", "-ac", "1", "-ar"])
         .arg(PCM_RATE.to_string())
         .arg("-")
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|error| spawn_error("ffmpeg", error))?;
+        .stdin(Stdio::null());
+    let output =
+        progress::tracked_output(&mut command).map_err(|error| spawn_error("ffmpeg", error))?;
     if !output.status.success() {
         return Err(anyhow!(
             "ffmpeg cannot read the audio of {}: {}",

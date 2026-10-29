@@ -203,7 +203,7 @@ fn a_failure_is_an_error_event_with_the_exit_code() {
             "--input",
             "/no/such/file.mp4",
             "--out",
-            "/tmp/x.otio",
+            &s(&scratch("error").join("x.otio")),
         ])
         .output()
         .unwrap();
@@ -295,4 +295,88 @@ fn sigterm_during_a_render_exits_130_and_leaves_no_temporary_file() {
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     assert!(left.is_empty(), "left behind: {left:?}");
+}
+
+#[test]
+fn the_flag_leaves_stdout_and_the_output_byte_for_byte_the_same() {
+    let root = scratch("same");
+    let video = root.join("draft.mp4");
+    generate("draft12", &video);
+    let project = root.join("draft.otio");
+    let init = |progress: bool| {
+        let mut command = reelctl();
+        if progress {
+            command.args(["--progress", "json"]);
+        }
+        let output = command
+            .args([
+                "timeline",
+                "init",
+                "--input",
+                &s(&video),
+                "--out",
+                &s(&project),
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        (output.stdout, fs::read(&project).unwrap(), output.stderr)
+    };
+    let (plain_stdout, plain_project, plain_stderr) = init(false);
+    let (stdout, project_bytes, stderr) = init(true);
+    assert_eq!(plain_stdout, stdout);
+    assert_eq!(plain_project, project_bytes);
+    assert!(plain_stderr.is_empty());
+    let list = events(&String::from_utf8(stderr).unwrap());
+    let result = list.iter().find(|e| e["event"] == "result").unwrap();
+    assert_eq!(result["command"], "timeline init");
+}
+
+#[test]
+fn sigterm_during_look_exits_130_and_writes_no_cube() {
+    let root = scratch("look");
+    let draft = root.join("bench.mp4");
+    generate("bench60", &draft);
+    let cube = root.join("out.cube");
+    let mut child = reelctl()
+        .args([
+            "--progress",
+            "json",
+            "look",
+            "--draft",
+            &s(&draft),
+            "--outlier",
+            &s(&draft),
+            "--samples",
+            "400",
+            "--out",
+            &s(&cube),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut lines = BufReader::new(child.stderr.take().unwrap()).lines();
+    loop {
+        let line = lines
+            .next()
+            .expect("stderr ended before any sample progress")
+            .unwrap();
+        let event: Value = serde_json::from_str(&line).unwrap();
+        if event["event"] == "progress"
+            && event["stage"] == "sample"
+            && event["done"].as_u64().unwrap_or(0) > 0
+        {
+            break;
+        }
+    }
+    let killed = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(killed.success());
+    let rest: Vec<String> = lines.map_while(Result::ok).collect();
+    let status = child.wait().unwrap();
+    assert_eq!(status.code(), Some(130), "{rest:?}");
+    assert!(!cube.exists(), "a cancelled look wrote {}", cube.display());
 }

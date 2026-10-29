@@ -181,6 +181,7 @@ It runs each step as a child `reelctl` process from the same executable. Each ON
    A failed step marks that reel failed with the step and its stderr tail, and goes on to the next reel.
 6. **Summary.** It writes `<out-dir>/make_reels.json` with:
    - `schema_version: 1`
+   - `status`: `ok`, `failed`, `picked`, or `cancelled` (a SIGTERM stopped the run: no further step starts, the reels not started are left out, exit 130)
    - the source, the outliers, the model and `cost_usd`
    - each reel's `index`, `status`, `path`, `length_ms`, `hook` and `last` text, `diff_flags`, its `notes` (fallbacks and the flags it was allowed with), and `steps` (each step's argv without secrets, exit code and `ms`)
 7. **Result.** stdout: `make-reels: out_dir= reels= ok= failed= cost_usd= follow=presenter|centre`. The exit code is 0 if at least one reel rendered. It is 1 if none did or none was chosen; or, when none rendered and the first failing step refused its input, that step's code, 2 to 4. A run refused before any reel (an argument, the cap, the key, no yes) exits 2, 3 or 4. `--clips` with 0 or a clip named twice is refused before anything runs. A reused `understanding.json` must be of the same file name as `--input` (exit 2), and one made with another model is used with a note on stderr. `diff` of a rendered reel always flags the silent card at the end as dead air and a static window.

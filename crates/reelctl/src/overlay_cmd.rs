@@ -356,7 +356,8 @@ fn length_ok(video_frames: i64, video_fps: f64, expected_s: f64, project_fps: f6
 
 /// The top-left pixel of the first frame of `video`, as RGB.
 fn corner_pixel(video: &Path) -> Result<[u8; 3]> {
-    let output = Command::new("ffmpeg")
+    let mut command = Command::new("ffmpeg");
+    command
         .args([
             "-v",
             "error",
@@ -377,9 +378,9 @@ fn corner_pixel(video: &Path) -> Result<[u8; 3]> {
             "rgb24",
             "-",
         ])
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|error| spawn_error("ffmpeg", error))?;
+        .stdin(Stdio::null());
+    let output =
+        progress::tracked_output(&mut command).map_err(|error| spawn_error("ffmpeg", error))?;
     match output.stdout.as_slice() {
         [r, g, b] if output.status.success() => Ok([*r, *g, *b]),
         _ => Err(anyhow!(

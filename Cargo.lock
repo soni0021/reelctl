@@ -1131,6 +1131,7 @@ dependencies = [
 name = "progress"
 version = "0.1.0"
 dependencies = [
+ "nix",
  "serde_json",
 ]
 
