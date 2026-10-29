@@ -21,10 +21,11 @@ use decompile::{decode_frames_at, DecoderSetting};
 use edit_dna::{BoundaryView, EditDna};
 use serde_json::Value;
 use timeline::{
-    attach_bridge, bridge_of, build_render_plan, check_dna_length as check_project_dna,
-    cut_silence, dna_ref, init, joins, media_info, punch_in, set_dna_ref, single_media,
-    words_on_timeline, BridgeRequest, CutOptions, DnaRef, InitSpec, PunchRequest, RenderPlan,
-    RenderSize, Timeline, TimelineError, MAX_PIXELS, MAX_SIDE,
+    append_bridge, attach_bridge, auto_punch_in_like, bridge_of, build_render_plan,
+    check_dna_length as check_project_dna, cut_silence, dna_ref, from_clip, init, joins,
+    media_info, punch_in, set_dna_ref, single_media, words_on_timeline, BridgeRequest, ClipPick,
+    CutOptions, DnaRef, InitSpec, PunchRequest, RenderPlan, RenderSize, Timeline, TimelineError,
+    MAX_PIXELS, MAX_SIDE,
 };
 
 use crate::card::{draw_card, parse_color};
@@ -55,6 +56,8 @@ pub struct TimelineCommand {
 enum TimelineSub {
     /// Make a project (.otio) with one clip spanning a video.
     Init(InitArgs),
+    /// Make a project (.otio) trimmed to one clip pick of `understand`.
+    FromClip(FromClipArgs),
     /// Cut silence gaps (and filler words) out of a project, from its edit DNA.
     CutSilence(CutSilenceArgs),
 }
@@ -69,6 +72,11 @@ pub struct TransformCommand {
 enum TransformSub {
     /// Zoom into the centre of the picture over a span.
     PunchIn(PunchInArgs),
+    /// Add punch-ins wherever the picture would stay still longer than `diff` allows,
+    /// at the outliers' zoom scale.
+    AutoPunchIn(AutoPunchInArgs),
+    /// Crop to a narrower frame (9:16) that follows the presenter or stays centred.
+    Reframe(ReframeArgs),
 }
 
 #[derive(Args)]
@@ -104,6 +112,27 @@ struct InitArgs {
     #[arg(long)]
     dna: Option<PathBuf>,
     /// Where to write the project.
+    #[arg(long)]
+    out: PathBuf,
+}
+
+#[derive(Args)]
+struct FromClipArgs {
+    /// The long video the clip is cut from.
+    #[arg(long)]
+    input: PathBuf,
+    /// Its edit_dna.json from `decompile`.
+    #[arg(long)]
+    dna: PathBuf,
+    /// Its understanding.json from `understand`.
+    #[arg(long)]
+    understanding: PathBuf,
+    /// Which clip, counting from 1 in the file's `clips` order (the model's ranking).
+    #[arg(long)]
+    clip: usize,
+    /// Use a clip the clip rules flagged.
+    #[arg(long)]
+    allow_flagged: bool,
     #[arg(long)]
     out: PathBuf,
 }
@@ -145,6 +174,53 @@ struct PunchInArgs {
 }
 
 #[derive(Args)]
+struct AutoPunchInArgs {
+    #[arg(long)]
+    project: PathBuf,
+    /// The edit_dna.json of the project's video (its cuts, visual events and words).
+    #[arg(long)]
+    dna: PathBuf,
+    /// An outlier's edit_dna.json, for the zoom scale; repeat for up to three.
+    #[arg(long)]
+    outlier: Vec<PathBuf>,
+    #[arg(long)]
+    out: PathBuf,
+}
+
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+enum FollowArg {
+    /// Follow the presenter, found with RobustVideoMatting (needs --weights and
+    /// ORT_DYLIB_PATH).
+    Presenter,
+    /// A fixed window in the middle.
+    Centre,
+}
+
+#[derive(Args)]
+struct ReframeArgs {
+    #[arg(long)]
+    project: PathBuf,
+    /// The output's aspect ratio, width:height.
+    #[arg(long, default_value = "9:16")]
+    aspect: String,
+    #[arg(long, value_enum)]
+    follow: FollowArg,
+    /// RobustVideoMatting ONNX weights, for --follow presenter. ONNX Runtime comes
+    /// from the ORT_DYLIB_PATH environment variable.
+    #[arg(long, env = "REELCTL_RVM_WEIGHTS")]
+    weights: Option<PathBuf>,
+    /// The model's downsample ratio, above 0 and at most 1.
+    #[arg(long)]
+    downsample_ratio: Option<f32>,
+    /// The edit DNA whose cuts the window jumps at. Defaults to the one the project
+    /// recorded.
+    #[arg(long)]
+    dna: Option<PathBuf>,
+    #[arg(long)]
+    out: PathBuf,
+}
+
+#[derive(Args)]
 struct AttachBridgeArgs {
     #[arg(long)]
     project: PathBuf,
@@ -154,6 +230,10 @@ struct AttachBridgeArgs {
     /// Cut at this fraction of the timeline (0 to 1, exclusive).
     #[arg(long, default_value_t = 0.72, allow_negative_numbers = true)]
     cutoff_pct: f64,
+    /// Add the card after the last frame instead of cutting (for a clip that
+    /// already ends on its cliffhanger). Cannot be used with --cutoff-pct.
+    #[arg(long, conflicts_with = "cutoff_pct")]
+    append: bool,
     /// Length of the card.
     #[arg(long, default_value_t = 2500)]
     card_ms: u64,
@@ -221,6 +301,7 @@ fn parse_size(text: &str) -> std::result::Result<RenderSize, String> {
 pub fn timeline(command: TimelineCommand) -> Result<()> {
     match command.command {
         TimelineSub::Init(args) => init_cmd(args),
+        TimelineSub::FromClip(args) => from_clip_cmd(args),
         TimelineSub::CutSilence(args) => cut_silence_cmd(args),
     }
 }
@@ -228,6 +309,8 @@ pub fn timeline(command: TimelineCommand) -> Result<()> {
 pub fn transform(command: TransformCommand) -> Result<()> {
     match command.command {
         TransformSub::PunchIn(args) => punch_in_cmd(args),
+        TransformSub::AutoPunchIn(args) => auto_punch_in_cmd(args),
+        TransformSub::Reframe(args) => reframe_cmd(args),
     }
 }
 
@@ -262,7 +345,7 @@ pub(crate) fn load_project(path: &Path) -> Result<Timeline> {
     Timeline::from_json(&text).map_err(|error| usage(format!("{}: {error}", path.display())))
 }
 
-fn load_dna(path: &Path) -> Result<EditDna> {
+pub(crate) fn load_dna(path: &Path) -> Result<EditDna> {
     let text = fs::read_to_string(path)
         .map_err(|error| usage(format!("cannot read edit DNA {}: {error}", path.display())))?;
     serde_json::from_str(&text)
@@ -306,11 +389,24 @@ pub(crate) fn utf8(path: &Path) -> Result<String> {
 pub(crate) struct TempFile {
     pub(crate) path: PathBuf,
     armed: bool,
+    /// Removed by a forced exit too, when this guard never gets to run.
+    _registered: progress::Temporary,
+}
+
+/// An error once a stop was asked for: before each output is written, so a
+/// cancelled run writes nothing more.
+pub(crate) fn cancelled() -> Result<()> {
+    progress::check().map_err(|message| anyhow!(message))
 }
 
 impl TempFile {
     pub(crate) fn new(path: PathBuf) -> Self {
-        Self { path, armed: true }
+        let registered = progress::temporary(&path);
+        Self {
+            path,
+            armed: true,
+            _registered: registered,
+        }
     }
 
     fn disarm(&mut self) {
@@ -328,6 +424,7 @@ impl Drop for TempFile {
 
 /// Move `temporary` over `path`; on failure the temporary file is removed.
 pub(crate) fn replace_file(mut temporary: TempFile, path: &Path) -> Result<()> {
+    cancelled()?;
     fs::rename(&temporary.path, path).with_context(|| format!("replace {}", path.display()))?;
     temporary.disarm();
     Ok(())
@@ -510,7 +607,7 @@ fn init_cmd(args: InitArgs) -> Result<()> {
     })
     .map_err(invalid)?;
     save_project(&project, &args.out)?;
-    println!(
+    out!(
         "init: out={} frames={} fps={:.3} size={}x{} audio={}",
         args.out.display(),
         probe.frames,
@@ -518,6 +615,102 @@ fn init_cmd(args: InitArgs) -> Result<()> {
         probe.width,
         probe.height,
         probe.has_audio
+    );
+    Ok(())
+}
+
+fn load_understanding(path: &Path) -> Result<understand::Understanding> {
+    let text = fs::read_to_string(path).map_err(|error| {
+        usage(format!(
+            "cannot read understanding {}: {error}",
+            path.display()
+        ))
+    })?;
+    serde_json::from_str(&text).map_err(|error| {
+        usage(format!(
+            "{}: not an understanding.json: {error}",
+            path.display()
+        ))
+    })
+}
+
+fn from_clip_cmd(args: FromClipArgs) -> Result<()> {
+    let media = local_media_file(&utf8(&args.input)?)?;
+    let dna = load_dna(&args.dna)?;
+    let understanding = load_understanding(&args.understanding)?;
+    // The understanding must be of this video: same file name, same length.
+    let named = Path::new(&understanding.source.path)
+        .file_name()
+        .map(|name| name.to_os_string());
+    if named.as_deref() != media.file_name() {
+        return Err(usage(format!(
+            "{}: it is of \"{}\", not of {}",
+            args.understanding.display(),
+            understanding.source.path,
+            media.display()
+        )));
+    }
+    if understanding.source.duration_ms.abs_diff(dna.duration_ms) > DNA_TOLERANCE_MS {
+        return Err(usage(format!(
+            "{}: it is of a {} ms video and the edit DNA of a {} ms one",
+            args.understanding.display(),
+            understanding.source.duration_ms,
+            dna.duration_ms
+        )));
+    }
+    let count = understanding.clips.len();
+    let clip = args
+        .clip
+        .checked_sub(1)
+        .and_then(|index| understanding.clips.get(index))
+        .ok_or_else(|| {
+            usage(format!(
+                "--clip {}: {} has {count} clip{} (numbered from 1)",
+                args.clip,
+                args.understanding.display(),
+                if count == 1 { "" } else { "s" }
+            ))
+        })?;
+    if !clip.flags.is_empty() && !args.allow_flagged {
+        return Err(usage(format!(
+            "clip {} breaks the clip rules ({}); pass --allow-flagged to use it anyway",
+            args.clip,
+            clip.flags.join("; ")
+        )));
+    }
+    let probe = probe_media(&media)?;
+    check_dna_length(&dna, &args.dna, &probe)?;
+    let spec = InitSpec {
+        media_path: utf8(&media)?,
+        fps: probe.fps,
+        frames: probe.frames,
+        width: probe.width,
+        height: probe.height,
+        has_audio: probe.has_audio,
+        dna: Some(DnaRef {
+            path: utf8(&absolute(&args.dna, "edit DNA")?)?,
+            duration_ms: dna.duration_ms,
+        }),
+    };
+    let pick = ClipPick {
+        understanding_path: utf8(&absolute(&args.understanding, "understanding")?)?,
+        index: args.clip,
+        start_ms: clip.start_ms,
+        end_ms: clip.end_ms,
+        hook_id: clip.hook.id,
+        last_id: clip.last.id,
+    };
+    let project = from_clip(&spec, &pick).map_err(invalid)?;
+    save_project(&project, &args.out)?;
+    let frames = timeline::timeline_frames(&project).map_err(invalid)?;
+    out!(
+        "from-clip: out={} clip={} start_ms={} end_ms={} frames={} flags={}",
+        args.out.display(),
+        args.clip,
+        clip.start_ms,
+        clip.end_ms,
+        frames,
+        clip.flags.len()
     );
     Ok(())
 }
@@ -545,7 +738,7 @@ fn cut_silence_cmd(args: CutSilenceArgs) -> Result<()> {
         },
     );
     save_project(&project, &args.out)?;
-    println!(
+    out!(
         "cut-silence: out={} removed_spans={} removed_ms={} timeline_ms={}",
         args.out.display(),
         report.removed.len(),
@@ -577,13 +770,148 @@ fn punch_in_cmd(args: PunchInArgs) -> Result<()> {
     )
     .map_err(invalid)?;
     save_project(&project, &args.out)?;
-    println!(
+    out!(
         "punch-in: out={} frames={}..{} clips={} scale={}",
         args.out.display(),
         report.start_frame,
         report.end_frame,
         report.clips,
         args.scale
+    );
+    Ok(())
+}
+
+fn auto_punch_in_cmd(args: AutoPunchInArgs) -> Result<()> {
+    if args.outlier.len() > 3 {
+        return Err(usage(format!(
+            "--outlier was given {} times; at most 3",
+            args.outlier.len()
+        )));
+    }
+    let mut project = load_project(&args.project)?;
+    let dna = load_dna(&args.dna)?;
+    check_project_dna(&project, dna.duration_ms)
+        .map_err(|error| usage(format!("{}: {error}", args.dna.display())))?;
+    let outliers = args
+        .outlier
+        .iter()
+        .map(|path| load_dna(path))
+        .collect::<Result<Vec<_>>>()?;
+    let refs: Vec<&EditDna> = outliers.iter().collect();
+    let report = auto_punch_in_like(&mut project, &dna, &refs).map_err(invalid)?;
+    save_project(&project, &args.out)?;
+    out!(
+        "auto-punch-in: out={} windows={} punches={} scale={} scale_from={}",
+        args.out.display(),
+        report.windows.len(),
+        report.punches.len(),
+        report.scale,
+        if report.measured {
+            "outliers"
+        } else {
+            "default"
+        }
+    );
+    Ok(())
+}
+
+fn reframe_cmd(args: ReframeArgs) -> Result<()> {
+    use timeline::{
+        centre_keyframes, crop_size, footage_span, plan_path, set_reframe, Aspect, Follow,
+        ReframeSpec,
+    };
+    let mut project = load_project(&args.project)?;
+    let aspect = Aspect::parse(&args.aspect).map_err(invalid)?;
+    let info = media_info(&project).map_err(invalid)?;
+    let media = local_media_file(&info.path)
+        .map_err(|error| usage(format!("{}: {error}", args.project.display())))?;
+    let (first, end) = footage_span(&project).map_err(invalid)?;
+    let follow = match args.follow {
+        FollowArg::Presenter => Follow::Presenter,
+        FollowArg::Centre => Follow::Centre,
+    };
+    let Some((crop_width, crop_height)) = crop_size(info.width, info.height, aspect) else {
+        save_project(&project, &args.out)?;
+        out!(
+            "reframe: out={} aspect={} follow={} keyframes=0 frames_measured=0 ms_per_frame=0 unchanged=true",
+            args.out.display(),
+            aspect.label(),
+            follow.as_str()
+        );
+        return Ok(());
+    };
+    let mut note = String::new();
+    let (keyframes, measured, ms_per_frame) = match follow {
+        Follow::Centre => (centre_keyframes(first, info.width, crop_width), 0, 0.0),
+        Follow::Presenter => {
+            let dna_path = match (&args.dna, dna_ref(&project)) {
+                (Some(path), _) => Some(path.clone()),
+                (None, Some(recorded)) => Some(PathBuf::from(recorded.path)),
+                (None, None) => None,
+            };
+            let cuts: Vec<i64> = match dna_path {
+                Some(path) => {
+                    let dna = load_dna(&path)?;
+                    check_project_dna(&project, dna.duration_ms)
+                        .map_err(|error| usage(format!("{}: {error}", path.display())))?;
+                    dna.cuts
+                        .iter()
+                        .map(|cut| timeline::round_frame(cut.time_ms, info.fps))
+                        .collect()
+                }
+                None => {
+                    note = "no edit DNA was given or recorded, so the window pans across cuts instead of jumping at them".to_string();
+                    Vec::new()
+                }
+            };
+            // The media and span are checked before the weights are opened, and
+            // the weights before the first frame is decoded.
+            let prepared = compositor::prepare_measure(&compositor::MeasureRequest {
+                input: media,
+                start_frame: first,
+                end_frame: end,
+                ratio: args.downsample_ratio,
+            })
+            .map_err(crate::compositor_cmd::exit_for)?;
+            let mut model = compositor::RvmModel::open(args.weights.as_deref())
+                .map_err(crate::compositor_cmd::exit_for)?;
+            let report = prepared
+                .run(&mut model)
+                .map_err(crate::compositor_cmd::exit_for)?;
+            let keyframes = plan_path(
+                &report.centroids,
+                first,
+                &cuts,
+                info.fps,
+                info.width,
+                crop_width,
+            )
+            .map_err(invalid)?;
+            let ms = report.model_time.as_secs_f64() * 1000.0 / report.frames.max(1) as f64;
+            (keyframes, report.frames, ms)
+        }
+    };
+    let count = keyframes.len();
+    set_reframe(
+        &mut project,
+        &ReframeSpec {
+            aspect,
+            follow,
+            crop_width,
+            crop_height,
+            keyframes,
+            note: note.clone(),
+        },
+    );
+    save_project(&project, &args.out)?;
+    if !note.is_empty() {
+        progress::note(&format!("reframe: {note}"));
+    }
+    out!(
+        "reframe: out={} aspect={} follow={} keyframes={count} frames_measured={measured} ms_per_frame={ms_per_frame:.1} unchanged=false",
+        args.out.display(),
+        aspect.label(),
+        follow.as_str()
     );
     Ok(())
 }
@@ -618,31 +946,37 @@ fn attach_bridge_cmd(args: AttachBridgeArgs) -> Result<()> {
             None => Vec::new(),
         }
     };
-    let report = attach_bridge(
-        &mut project,
-        &BridgeRequest {
-            target_url: args.target_url,
-            cutoff_pct: args.cutoff_pct,
-            card_ms: args.card_ms,
-        },
-        &pauses,
-    )
+    let report = if args.append {
+        append_bridge(&mut project, &args.target_url, args.card_ms)
+    } else {
+        attach_bridge(
+            &mut project,
+            &BridgeRequest {
+                target_url: args.target_url,
+                cutoff_pct: args.cutoff_pct,
+                card_ms: args.card_ms,
+            },
+            &pauses,
+        )
+    }
     .map_err(invalid)?;
     save_project(&project, &args.out)?;
     let rate = timeline::project_rate(&project).map_err(invalid)?;
-    println!(
-        "attach-bridge: out={} cut_ms={} in_pause={} card_ms={} unchanged={}",
+    out!(
+        "attach-bridge: out={} cut_ms={} in_pause={} card_ms={} unchanged={} appended={}",
         args.out.display(),
         timeline::frame_ms(report.spec.cut_frame, rate),
         report.in_pause,
         report.spec.card_ms,
-        report.unchanged
+        report.unchanged,
+        report.spec.cutoff_pct.is_none()
     );
     Ok(())
 }
 
 /// Removes its directory when dropped.
-pub(crate) struct TempDir(pub(crate) PathBuf);
+/// The second field keeps the folder registered for a forced exit.
+pub(crate) struct TempDir(pub(crate) PathBuf, #[allow(dead_code)] progress::Temporary);
 
 impl TempDir {
     pub(crate) fn create() -> Result<Self> {
@@ -653,7 +987,8 @@ impl TempDir {
         let path =
             std::env::temp_dir().join(format!("reelctl-render-{}-{nanos}", std::process::id()));
         fs::create_dir_all(&path).with_context(|| format!("create {}", path.display()))?;
-        Ok(Self(path))
+        let registered = progress::temporary(&path);
+        Ok(Self(path, registered))
     }
 }
 
@@ -674,6 +1009,7 @@ fn ffmpeg_args(
     media: &[PathBuf],
     card_paths: &[PathBuf],
     overlay_paths: &[PathBuf],
+    caption_pattern: Option<&Path>,
     output: &Path,
 ) -> Vec<std::ffi::OsString> {
     let mut args: Vec<std::ffi::OsString> =
@@ -709,6 +1045,21 @@ fn ffmpeg_args(
             args.push(part.into());
         }
         args.push(path.into());
+    }
+    // The captions: an image sequence with one picture per timeline frame, last.
+    if let Some(pattern) = caption_pattern {
+        for part in [
+            "-protocol_whitelist",
+            PROTOCOLS,
+            "-framerate",
+            plan.frame_rate.as_str(),
+            "-start_number",
+            "0",
+            "-i",
+        ] {
+            args.push(part.into());
+        }
+        args.push(pattern.into());
     }
     args.push("-filter_complex".into());
     args.push(plan.filter_graph.clone().into());
@@ -764,9 +1115,9 @@ pub fn render(args: RenderArgs) -> Result<()> {
         BackendChoice::Smelter => Box::new(SmelterBackend::new(args.smelter.clone())),
     };
     let outcome = backend.render(&job)?;
-    println!("{}", result_line(backend.name(), &args.out, &outcome));
+    out!("{}", result_line(backend.name(), &args.out, &outcome));
     for note in &outcome.notes {
-        println!("{note}");
+        out!("{note}");
     }
     Ok(())
 }
@@ -826,6 +1177,15 @@ pub(crate) fn render_ffmpeg(job: &RenderJob<'_>) -> Result<RenderOutcome> {
         card_paths.push(path);
     }
 
+    let caption_pattern = match &plan.captions {
+        Some(captions) => Some(crate::captions_draw::write_caption_sequence(
+            captions,
+            plan.size,
+            &scratch.0.join("captions"),
+        )?),
+        None => None,
+    };
+
     // Render beside the output, then rename. The temporary file is removed on every
     // way out but a kill, so a failed run leaves nothing behind. Its directory is
     // made absolute, so the path cannot be read as an option.
@@ -838,17 +1198,59 @@ pub(crate) fn render_ffmpeg(job: &RenderJob<'_>) -> Result<RenderOutcome> {
     let temporary = TempFile::new(dir.join(temporary_name));
 
     let started = Instant::now();
-    let output = Command::new("ffmpeg")
+    // ffmpeg's `-progress pipe:1` gives `frame=N` lines on stdout: the render's
+    // progress events, and nothing else uses its stdout.
+    let mut child = Command::new("ffmpeg")
+        .args(["-progress", "pipe:1"])
         .args(ffmpeg_args(
             &plan,
             &media,
             &card_paths,
             &overlay_paths,
+            caption_pattern.as_deref(),
             &temporary.path,
         ))
         .stdin(Stdio::null())
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|error| spawn_error("ffmpeg", error))?;
+    let _tracked = progress::track(child.id());
+    progress::stage("render");
+    progress::set_total("render", plan.frames.max(0) as u64);
+    let stderr = child.stderr.take().map(|mut pipe| {
+        std::thread::spawn(move || {
+            let mut text = Vec::new();
+            let _ = std::io::Read::read_to_end(&mut pipe, &mut text);
+            text
+        })
+    });
+    if progress::cancel_requested() {
+        let _ = child.kill();
+    }
+    if let Some(stdout) = child.stdout.take() {
+        for line in std::io::BufRead::lines(std::io::BufReader::new(stdout)).map_while(Result::ok) {
+            if let Some(frame) = line
+                .strip_prefix("frame=")
+                .and_then(|n| n.trim().parse::<u64>().ok())
+            {
+                progress::tick("render", frame);
+            }
+            if progress::cancel_requested() {
+                let _ = child.kill();
+            }
+        }
+    }
+    let status = child.wait().map_err(|error| spawn_error("ffmpeg", error))?;
+    cancelled()?;
+    progress::finish("render", plan.frames.max(0) as u64);
+    let output = std::process::Output {
+        status,
+        stdout: Vec::new(),
+        stderr: stderr
+            .and_then(|handle| handle.join().ok())
+            .unwrap_or_default(),
+    };
     if !output.status.success() {
         let log = String::from_utf8_lossy(&output.stderr);
         let tail: Vec<&str> = log.lines().rev().take(12).collect();
@@ -871,7 +1273,8 @@ pub(crate) fn render_ffmpeg(job: &RenderJob<'_>) -> Result<RenderOutcome> {
 
 /// Mono f32 audio of `media` from `from_ms` for `length_ms`, at `PCM_RATE`.
 fn decode_pcm(media: &Path, from_ms: u64, length_ms: u64) -> Result<Vec<f32>> {
-    let output = Command::new("ffmpeg")
+    let mut command = Command::new("ffmpeg");
+    command
         .args([
             "-v",
             "error",
@@ -888,9 +1291,9 @@ fn decode_pcm(media: &Path, from_ms: u64, length_ms: u64) -> Result<Vec<f32>> {
         .args(["-vn", "-f", "f32le", "-ac", "1", "-ar"])
         .arg(PCM_RATE.to_string())
         .arg("-")
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|error| spawn_error("ffmpeg", error))?;
+        .stdin(Stdio::null());
+    let output =
+        progress::tracked_output(&mut command).map_err(|error| spawn_error("ffmpeg", error))?;
     if !output.status.success() {
         return Err(anyhow!(
             "ffmpeg cannot read the audio of {}: {}",
@@ -1007,7 +1410,7 @@ fn inspect_cmd(args: InspectArgs) -> Result<()> {
     }
     let paths = filmstrip::write_boundary_views(&args.out_dir, &views, &words)
         .with_context(|| format!("write filmstrips to {}", args.out_dir.display()))?;
-    println!(
+    out!(
         "inspect-boundaries: out_dir={} joins={}",
         args.out_dir.display(),
         paths.len()

@@ -395,6 +395,16 @@ pub fn build_smelter_plan(timeline: &Timeline, size: Option<RenderSize>) -> Resu
             "the project has chart overlays, which the Smelter backend does not draw; render with --backend ffmpeg",
         ));
     }
+    if crate::captions::has_captions(timeline) {
+        return Err(TimelineError::invalid(
+            "the project has captions, which the Smelter backend does not draw; render with --backend ffmpeg",
+        ));
+    }
+    if crate::reframe::reframe_of(timeline)?.is_some() {
+        return Err(TimelineError::invalid(
+            "the project is reframed (metadata.reelctl.reframe), which the Smelter backend does not crop; render with --backend ffmpeg",
+        ));
+    }
     let rate = check_editable(timeline)?;
     let info = media_info(timeline)?;
     let size = checked_size(size, &info)?;
@@ -751,6 +761,29 @@ mod tests {
         .expect("an overlay");
         let error = build_smelter_plan(&timeline, None).expect_err("refused");
         assert!(error.to_string().contains("overlays"), "{error}");
+        assert!(error.to_string().contains("--backend ffmpeg"), "{error}");
+    }
+
+    #[test]
+    fn a_reframed_project_is_refused_not_rendered_uncropped() {
+        use crate::reframe::{set_reframe, Aspect, Follow, Keyframe, ReframeSpec};
+        let mut timeline = project(30.0, 300);
+        set_reframe(
+            &mut timeline,
+            &ReframeSpec {
+                aspect: Aspect::parse("9:16").unwrap(),
+                follow: Follow::Centre,
+                crop_width: 202,
+                crop_height: 360,
+                keyframes: vec![Keyframe {
+                    source_frame: 0,
+                    x: 0.342,
+                }],
+                note: String::new(),
+            },
+        );
+        let error = build_smelter_plan(&timeline, None).expect_err("refused");
+        assert!(error.to_string().contains("reframed"), "{error}");
         assert!(error.to_string().contains("--backend ffmpeg"), "{error}");
     }
 

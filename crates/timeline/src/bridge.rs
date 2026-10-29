@@ -41,7 +41,9 @@ pub struct BridgeRequest {
 #[derive(Debug, Clone, PartialEq)]
 pub struct BridgeSpec {
     pub target_url: String,
-    pub cutoff_pct: f64,
+    /// Where the cut was asked for, or `None` when the card was appended after the
+    /// last frame (`append_bridge`).
+    pub cutoff_pct: Option<f64>,
     pub card_ms: u64,
     /// Timeline frame of the cut.
     pub cut_frame: i64,
@@ -62,7 +64,12 @@ pub fn bridge_of(timeline: &Timeline) -> Option<BridgeSpec> {
     let map = reelctl(&timeline.metadata)?.get(BRIDGE_KEY)?.as_object()?;
     Some(BridgeSpec {
         target_url: map.get("url")?.as_str()?.to_string(),
-        cutoff_pct: map.get("cutoff_pct")?.as_f64()?,
+        // An appended bridge records `null`; a record from before `append_bridge`
+        // always has a number.
+        cutoff_pct: match map.get("cutoff_pct")? {
+            Value::Null => None,
+            value => Some(value.as_f64()?),
+        },
         card_ms: map.get("card_ms")?.as_u64()?,
         cut_frame: map.get("cut_frame")?.as_i64()?,
     })
@@ -212,37 +219,22 @@ pub fn attach_bridge(
     pauses: &[(u64, u64)],
 ) -> Result<BridgeReport> {
     crate::overlay::refuse_overlays(timeline)?;
+    crate::captions::refuse_captions(timeline)?;
     let rate = check_editable(timeline)?;
-    if request.target_url.trim().is_empty() {
-        return Err(TimelineError::invalid("--target-url is empty"));
-    }
     if !request.cutoff_pct.is_finite() || request.cutoff_pct <= 0.0 || request.cutoff_pct >= 1.0 {
         return Err(TimelineError::invalid(format!(
             "--cutoff-pct {} must be above 0 and below 1",
             request.cutoff_pct
         )));
     }
-    if request.card_ms == 0 || request.card_ms > MAX_CARD_MS {
-        return Err(TimelineError::invalid(format!(
-            "--card-ms {} must be above 0 and at most {MAX_CARD_MS}",
-            request.card_ms
-        )));
-    }
-    if let Some(existing) = bridge_of(timeline) {
-        if existing.target_url == request.target_url
-            && existing.card_ms == request.card_ms
-            && existing.cutoff_pct == request.cutoff_pct
-        {
-            return Ok(BridgeReport {
-                spec: existing,
-                in_pause: stored_in_pause(timeline),
-                unchanged: true,
-            });
-        }
-        return Err(TimelineError::invalid(format!(
-            "the project already ends on a bridge to \"{}\" ({} ms card, cutoff {}); make a new project with `reelctl timeline init` to change it",
-            existing.target_url, existing.card_ms, existing.cutoff_pct
-        )));
+    check_card(&request.target_url, request.card_ms)?;
+    if let Some(report) = existing_bridge(
+        timeline,
+        &request.target_url,
+        request.card_ms,
+        Some(request.cutoff_pct),
+    )? {
+        return Ok(report);
     }
 
     let total = timeline_frames(timeline)?;
@@ -258,8 +250,91 @@ pub fn attach_bridge(
         .ok_or_else(|| TimelineError::invalid("the project has no video track"))?;
     let joins = removed_silence_joins(timeline, video, total, rate)?;
     let (cut, in_pause) = place_cut(video, point, total, pauses, &joins, rate)?;
+    end_on_card(
+        timeline,
+        &request.target_url,
+        request.card_ms,
+        Some(request.cutoff_pct),
+        cut,
+        in_pause,
+        rate,
+    )
+}
 
-    let card_frames = ((request.card_ms as f64) * rate / 1000.0).round().max(1.0) as i64;
+/// End the timeline on the same card as [`attach_bridge`], after its last frame:
+/// nothing is cut, for a clip that already ends where it should (on the cliffhanger
+/// `understand` picked).
+pub fn append_bridge(
+    timeline: &mut Timeline,
+    target_url: &str,
+    card_ms: u64,
+) -> Result<BridgeReport> {
+    crate::overlay::refuse_overlays(timeline)?;
+    crate::captions::refuse_captions(timeline)?;
+    let rate = check_editable(timeline)?;
+    check_card(target_url, card_ms)?;
+    if let Some(report) = existing_bridge(timeline, target_url, card_ms, None)? {
+        return Ok(report);
+    }
+    let total = timeline_frames(timeline)?;
+    end_on_card(timeline, target_url, card_ms, None, total, false, rate)
+}
+
+fn check_card(target_url: &str, card_ms: u64) -> Result<()> {
+    if target_url.trim().is_empty() {
+        return Err(TimelineError::invalid("--target-url is empty"));
+    }
+    if card_ms == 0 || card_ms > MAX_CARD_MS {
+        return Err(TimelineError::invalid(format!(
+            "--card-ms {card_ms} must be above 0 and at most {MAX_CARD_MS}"
+        )));
+    }
+    Ok(())
+}
+
+/// The report for a project that already has this bridge, or an error if it has a
+/// different one.
+fn existing_bridge(
+    timeline: &Timeline,
+    target_url: &str,
+    card_ms: u64,
+    cutoff_pct: Option<f64>,
+) -> Result<Option<BridgeReport>> {
+    let Some(existing) = bridge_of(timeline) else {
+        return Ok(None);
+    };
+    if existing.target_url == target_url
+        && existing.card_ms == card_ms
+        && existing.cutoff_pct == cutoff_pct
+    {
+        return Ok(Some(BridgeReport {
+            spec: existing,
+            in_pause: stored_in_pause(timeline),
+            unchanged: true,
+        }));
+    }
+    let placed = match existing.cutoff_pct {
+        Some(pct) => format!("cutoff {pct}"),
+        None => "appended".to_string(),
+    };
+    Err(TimelineError::invalid(format!(
+        "the project already ends on a bridge to \"{}\" ({} ms card, {placed}); make a new project with `reelctl timeline init` to change it",
+        existing.target_url, existing.card_ms
+    )))
+}
+
+/// Drop everything from timeline frame `cut` on and end every track on the card.
+fn end_on_card(
+    timeline: &mut Timeline,
+    target_url: &str,
+    card_ms: u64,
+    cutoff_pct: Option<f64>,
+    cut: i64,
+    in_pause: bool,
+    rate: f64,
+) -> Result<BridgeReport> {
+    let total = timeline_frames(timeline)?;
+    let card_frames = ((card_ms as f64) * rate / 1000.0).round().max(1.0) as i64;
     let mut work = timeline.clone();
     for track in &mut work.tracks.children {
         split_at(track, cut, rate)?;
@@ -288,7 +363,7 @@ pub fn attach_bridge(
         let is_video = track.kind == VIDEO_KIND;
         let mut parameters = Map::new();
         let item = if is_video {
-            parameters.insert("text".to_string(), json!(request.target_url));
+            parameters.insert("text".to_string(), json!(target_url));
             parameters.insert("background".to_string(), json!(CARD_BACKGROUND));
             parameters.insert("foreground".to_string(), json!(CARD_FOREGROUND));
             card(CARD_KIND, "bridge card", card_frames, rate, parameters)
@@ -305,7 +380,7 @@ pub fn attach_bridge(
         update_reelctl(item.metadata_mut(), |map| {
             map.insert(
                 BRIDGE_KEY.to_string(),
-                json!({ "url": request.target_url, "card_ms": request.card_ms }),
+                json!({ "url": target_url, "card_ms": card_ms }),
             );
         });
         track.children.push(item);
@@ -314,9 +389,10 @@ pub fn attach_bridge(
         map.insert(
             BRIDGE_KEY.to_string(),
             json!({
-                "url": request.target_url,
-                "cutoff_pct": request.cutoff_pct,
-                "card_ms": request.card_ms,
+                "url": target_url,
+                "cutoff_pct": cutoff_pct,
+                "appended": cutoff_pct.is_none(),
+                "card_ms": card_ms,
                 "cut_frame": cut,
                 "cut_ms": frame_ms(cut, rate),
                 "frames_before": total,
@@ -328,9 +404,9 @@ pub fn attach_bridge(
     *timeline = work;
     Ok(BridgeReport {
         spec: BridgeSpec {
-            target_url: request.target_url.clone(),
-            cutoff_pct: request.cutoff_pct,
-            card_ms: request.card_ms,
+            target_url: target_url.to_string(),
+            cutoff_pct,
+            card_ms,
             cut_frame: cut,
         },
         in_pause,
@@ -672,5 +748,75 @@ mod tests {
         assert!(error.to_string().contains("60000"), "{error}");
         long.card_ms = MAX_CARD_MS;
         attach_bridge(&mut timeline, &long, &[]).expect("a minute is allowed");
+    }
+
+    #[test]
+    fn an_appended_card_follows_the_last_frame_and_cuts_nothing() {
+        let mut timeline = project(100.0, 1000);
+        let report =
+            append_bridge(&mut timeline, "https://example.com/full", 2_000).expect("append");
+        assert_eq!(report.spec.cut_frame, 1000);
+        assert_eq!(report.spec.cutoff_pct, None);
+        assert!(!report.in_pause && !report.unchanged);
+        for kind in [VIDEO_KIND, AUDIO_KIND] {
+            assert_eq!(ranges(&timeline, kind), vec![(0, 1000), (0, 200)]);
+        }
+        let record = &reelctl(&timeline.metadata).unwrap()[BRIDGE_KEY];
+        assert_eq!(record["cutoff_pct"], Value::Null);
+        assert_eq!(record["appended"], true);
+        // The footage now ends at a join, so its audio fades out.
+        let video = timeline.track(VIDEO_KIND).unwrap();
+        let Item::Clip(first) = &video.children[0] else {
+            panic!("clip")
+        };
+        assert!(reelctl(&first.metadata).unwrap().get(FADE_KEY).is_some());
+    }
+
+    #[test]
+    fn appending_twice_changes_nothing_and_reads_back() {
+        let mut timeline = project(100.0, 1000);
+        append_bridge(&mut timeline, "https://example.com/full", 2_000).expect("append");
+        let before = timeline.clone();
+        let again = append_bridge(&mut timeline, "https://example.com/full", 2_000).expect("again");
+        assert!(again.unchanged);
+        assert_eq!(timeline, before);
+        assert_eq!(bridge_of(&timeline).unwrap().cutoff_pct, None);
+    }
+
+    #[test]
+    fn an_appended_and_a_cut_bridge_do_not_replace_each_other() {
+        let mut appended = project(100.0, 1000);
+        append_bridge(&mut appended, "https://example.com/full", 2_000).expect("append");
+        let error = attach_bridge(&mut appended, &request("https://example.com/full"), &[])
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("appended"), "{error}");
+
+        let mut cut = project(100.0, 1000);
+        attach_bridge(&mut cut, &request("https://example.com/full"), &[]).expect("attach");
+        let error = append_bridge(&mut cut, "https://example.com/full", 2_500)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("cutoff 0.72"), "{error}");
+    }
+
+    #[test]
+    fn a_bridge_recorded_before_append_existed_still_reads() {
+        let mut timeline = project(100.0, 1000);
+        attach_bridge(&mut timeline, &request("https://example.com/full"), &[]).expect("attach");
+        update_reelctl(&mut timeline.metadata, |map| {
+            if let Some(Value::Object(bridge)) = map.get_mut(BRIDGE_KEY) {
+                bridge.remove("appended");
+            }
+        });
+        assert_eq!(bridge_of(&timeline).unwrap().cutoff_pct, Some(0.72));
+    }
+
+    #[test]
+    fn append_checks_its_arguments() {
+        let mut timeline = project(100.0, 1000);
+        assert!(append_bridge(&mut timeline, " ", 2_000).is_err());
+        assert!(append_bridge(&mut timeline, "https://example.com", 0).is_err());
+        assert!(append_bridge(&mut timeline, "https://example.com", MAX_CARD_MS + 1).is_err());
     }
 }

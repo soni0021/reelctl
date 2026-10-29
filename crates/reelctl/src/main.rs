@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::error::ErrorKind;
-use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
+use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
 use decompile::{
     decompile_file, run_whisper_worker, CutDetectorChoice, DecoderSetting, DecompileRequest,
     WhisperRunner,
@@ -16,12 +16,25 @@ use decompile::{
 use diff::{compare_many, render_text, NamedReel};
 use edit_dna::EditDna;
 
+/// `println!` for a command's result line: also a `result` event with
+/// `--progress json` (see the `progress` crate).
+macro_rules! out {
+    ($($arg:tt)*) => {{
+        let line = format!($($arg)*);
+        println!("{line}");
+        progress::result_line(module_path!().rsplit("::").next().unwrap_or("reelctl"), &line);
+    }};
+}
+
+mod captions_draw;
 mod card;
 mod compositor_cmd;
 mod dataset_cmd;
 mod look_cmd;
+mod make_reels_cmd;
 mod overlay_cmd;
 mod render_backend;
+mod serve_cmd;
 mod smelter_backend;
 mod smelter_client;
 #[cfg(test)]
@@ -29,24 +42,98 @@ mod smelter_fake;
 mod timeline_cmd;
 mod understand_cmd;
 
+/// How long a cancelled run may take to stop by itself before it is ended.
+const CANCEL_GRACE: Duration = Duration::from_secs(10);
+
+/// End the process now: children get SIGTERM, registered temporary files are
+/// deleted (their own guards will not run), and the exit code is 130.
+fn force_exit() -> ! {
+    progress::terminate_tracked();
+    progress::remove_temporaries();
+    progress::error(progress::CANCELLED_EXIT, "cancelled");
+    // As in main: drop the ONNX Runtime environments this thread can reach.
+    decompile::release_onnx_runtime();
+    compositor::release_runtime();
+    std::process::exit(progress::CANCELLED_EXIT);
+}
+
+/// On SIGTERM, SIGINT or SIGHUP: set the cancel flag (loops and steps stop, and no
+/// further output is written; temporary files are removed by their guards) and
+/// pass SIGTERM on to the child processes. A second signal, or a run still going
+/// after [`CANCEL_GRACE`], ends the process at once.
+fn install_cancel_handler() {
+    let _ = ctrlc::set_handler(|| {
+        if progress::cancel_requested() {
+            force_exit();
+        }
+        progress::request_cancel();
+        progress::terminate_tracked();
+        std::thread::spawn(|| {
+            std::thread::sleep(CANCEL_GRACE);
+            force_exit();
+        });
+    });
+}
+
 fn main() {
+    install_cancel_handler();
     let result = run();
     // Before any exit: a live ONNX Runtime environment makes the process abort at exit.
     decompile::release_onnx_runtime();
     compositor::release_runtime();
+    if progress::cancel_requested() {
+        let message = match &result {
+            Err(err) => format!("cancelled: {err:#}"),
+            Ok(()) => "cancelled".to_string(),
+        };
+        progress::error(progress::CANCELLED_EXIT, &message);
+        if !progress::json_enabled() {
+            eprintln!("error: {message}");
+        }
+        std::process::exit(progress::CANCELLED_EXIT);
+    }
     if let Err(err) = result {
         // Some failures have their own exit code (3: no API key, 4: over the cost cap).
         if let Some(exit) = err.downcast_ref::<understand_cmd::ExitWith>() {
-            eprintln!("error: {exit}");
+            progress::error(exit.code, &exit.to_string());
+            if !progress::json_enabled() {
+                eprintln!("error: {exit}");
+            }
             std::process::exit(exit.code);
         }
-        eprintln!("error: {err:#}");
+        progress::error(1, &format!("{err:#}"));
+        if !progress::json_enabled() {
+            eprintln!("error: {err:#}");
+        }
         std::process::exit(1);
     }
 }
 
+/// The subcommand's name, for the `command` of a result event.
+/// The subcommand path of a parsed command line, such as `timeline init`.
+fn command_path(matches: &clap::ArgMatches) -> String {
+    let mut names = Vec::new();
+    let mut current = matches;
+    while let Some((name, next)) = current.subcommand() {
+        names.push(name);
+        current = next;
+    }
+    names.join(" ")
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum ProgressArg {
+    /// One JSON object per line on stderr (stage, progress, warning, result, error).
+    Json,
+}
+
 fn run() -> Result<()> {
-    let cli = Cli::parse();
+    let matches = Cli::command().get_matches();
+    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
+    if cli.progress.is_some() {
+        progress::enable_json();
+    }
+    progress::set_command(&command_path(&matches));
     match cli.command {
         Command::Decompile(args) => decompile(args),
         Command::Diff(args) => diff(args),
@@ -57,10 +144,12 @@ fn run() -> Result<()> {
         Command::Funnel(command) => timeline_cmd::funnel(command),
         Command::Overlay(command) => overlay_cmd::overlay(command),
         Command::Render(args) => timeline_cmd::render(args),
+        Command::MakeReels(args) => make_reels_cmd::make_reels(args),
         Command::Qa(command) => timeline_cmd::qa(command),
         Command::Compositor(command) => compositor_cmd::compositor(command),
         Command::Dataset(command) => dataset_cmd::run_dataset(command),
         Command::Eval(args) => dataset_cmd::run_eval(args),
+        Command::Serve(args) => serve_cmd::serve(args),
         Command::WhisperWorker(args) => whisper_worker(args),
     }
 }
@@ -72,6 +161,9 @@ fn run() -> Result<()> {
     about = "Decompile a reel into edit DNA and diff pacing against an outlier"
 )]
 struct Cli {
+    /// Also write machine-readable progress to stderr. stdout is unchanged.
+    #[arg(long, global = true, value_enum)]
+    progress: Option<ProgressArg>,
     #[command(subcommand)]
     command: Command,
 }
@@ -98,6 +190,9 @@ enum Command {
     Overlay(overlay_cmd::OverlayCommand),
     /// Render a project to an mp4 with ffmpeg.
     Render(timeline_cmd::RenderArgs),
+    /// One long video in, finished vertical reels out: decompile, understand (paid,
+    /// after a yes), then for each clip cut, pace, reframe, card, caption and render.
+    MakeReels(make_reels_cmd::MakeReelsArgs),
     /// Check a project: `inspect-boundaries`.
     Qa(timeline_cmd::QaCommand),
     /// Cut a presenter out of a video: `isolate-presenter`.
@@ -107,6 +202,9 @@ enum Command {
     /// Score a model's answers against measured truth (an understanding.json or a
     /// dataset). Offline: it reads an answers file and never calls a model.
     Eval(dataset_cmd::EvalArgs),
+    /// The studio service: JSON-RPC on a Unix socket in the workspace, a job queue,
+    /// a content-addressed store and revertible checkpoints. Runs until `shutdown`.
+    Serve(serve_cmd::ServeArgs),
     /// Internal: runs whisper passes for a parent `reelctl`, one JSON line in
     /// and one out per pass, so a whisper.cpp abort cannot end the parent.
     #[command(hide = true)]
@@ -250,6 +348,7 @@ fn decompile(args: DecompileArgs) -> Result<()> {
     };
     let output = decompile_file(&request).context("decompile")?;
     let dir = filmstrip_dir(&args.out, args.filmstrip_dir);
+    timeline_cmd::cancelled()?;
     let paths = filmstrip::write_boundary_views(&dir, &output.boundaries, &output.dna.words)
         .context("write timeline views")?;
     print_timing(&output);
@@ -335,10 +434,11 @@ fn diff(args: DiffArgs) -> Result<()> {
         &named,
     );
     match args.format {
-        FormatArg::Json => println!(
-            "{}",
-            serde_json::to_string_pretty(&report).context("format diff")?
-        ),
+        FormatArg::Json => {
+            let json = serde_json::to_string_pretty(&report).context("format diff")?;
+            println!("{json}");
+            progress::result_line("diff", &json);
+        }
         FormatArg::Text => print!("{}", render_text(&report)),
     }
     Ok(())
@@ -346,7 +446,7 @@ fn diff(args: DiffArgs) -> Result<()> {
 
 fn print_timing(output: &decompile::DecompileOutput) {
     let under = output.signal < Duration::from_millis(500);
-    println!(
+    let line = format!(
         "signal_ms={} asr_ms={} asr_us={} structural_under_500ms={} cuts={} silence_gaps={} duration_ms={}",
         output.dna.signal_ms,
         output.dna.asr_ms,
@@ -356,6 +456,8 @@ fn print_timing(output: &decompile::DecompileOutput) {
         output.dna.silence_gaps.len(),
         output.dna.duration_ms
     );
+    println!("{line}");
+    progress::result_line("decompile", &line);
 }
 
 fn filmstrip_dir(out: &std::path::Path, explicit: Option<PathBuf>) -> PathBuf {

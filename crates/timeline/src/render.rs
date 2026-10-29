@@ -27,6 +27,8 @@ pub const MAX_PIXELS: u64 = 7680 * 4320;
 pub const VIDEO_LABEL: &str = "vout";
 /// Label of the concatenated video before overlays go on it.
 const BASE_LABEL: &str = "vbase";
+/// The footage before the captions are laid over it.
+const CAPTION_BASE_LABEL: &str = "vcap";
 /// Label of the audio the graph produces, when the project has an audio track.
 pub const AUDIO_LABEL: &str = "aout";
 
@@ -55,6 +57,18 @@ pub struct OverlayInput {
     pub end_frame: i64,
 }
 
+/// The captions to draw: one picture per state (drawn by `reelctl`), and which one
+/// each timeline frame shows. They are the last input of the render, an image
+/// sequence with one picture per frame (`None` frames are a transparent picture).
+#[derive(Debug, Clone, PartialEq)]
+pub struct CaptionPlan {
+    pub captions: crate::captions::Captions,
+    pub states: Vec<crate::captions::CaptionState>,
+    pub shown: Vec<Option<usize>>,
+    /// The input index of the image sequence.
+    pub input: usize,
+}
+
 /// Everything needed to run ffmpeg for a project.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RenderPlan {
@@ -64,6 +78,8 @@ pub struct RenderPlan {
     pub cards: Vec<CardSpec>,
     /// Overlay videos, as inputs `media.len() + cards.len()..`, in time order.
     pub overlays: Vec<OverlayInput>,
+    /// Captions, as the input after the overlays.
+    pub captions: Option<CaptionPlan>,
     pub filter_graph: String,
     pub video_label: String,
     pub audio_label: Option<String>,
@@ -246,9 +262,17 @@ pub(crate) fn continues(previous: &Item, next: &Item, rate: f64) -> Result<bool>
 pub fn build_render_plan(timeline: &Timeline, size: Option<RenderSize>) -> Result<RenderPlan> {
     let rate = check_editable(timeline)?;
     let info = media_info(timeline)?;
-    let size = size.unwrap_or(RenderSize {
-        width: info.width,
-        height: info.height,
+    let reframe = crate::reframe::reframe_of(timeline)?;
+    // A reframed project renders at its window's size unless told otherwise.
+    let size = size.unwrap_or(match &reframe {
+        Some(spec) => RenderSize {
+            width: spec.crop_width,
+            height: spec.crop_height,
+        },
+        None => RenderSize {
+            width: info.width,
+            height: info.height,
+        },
     });
     if size.width == 0
         || size.height == 0
@@ -337,8 +361,24 @@ pub fn build_render_plan(timeline: &Timeline, size: Option<RenderSize>) -> Resul
             MediaReference::External(external) => {
                 let index = media_index(&mut media, &external.target_url);
                 let tap = video_taps.label(index);
+                // The reframe's window comes first, in source pixels; `fit` then
+                // scales it to the output.
+                let window = match &reframe {
+                    Some(spec) => format!(
+                        "crop=w={}:h={}:x='{}':y=0,",
+                        spec.crop_width,
+                        spec.crop_height,
+                        crate::reframe::crop_x_expression(
+                            &spec.keyframes,
+                            start,
+                            duration,
+                            info.width
+                        )
+                    ),
+                    None => String::new(),
+                };
                 let mut chain = format!(
-                    "[{tap}]trim=start_frame={start}:end_frame={},setpts=PTS-STARTPTS,{fit}",
+                    "[{tap}]trim=start_frame={start}:end_frame={},setpts=PTS-STARTPTS,{window}{fit}",
                     start + duration
                 );
                 // `zoompan` goes last but for the pixel format: a `fps` after it
@@ -375,15 +415,40 @@ pub fn build_render_plan(timeline: &Timeline, size: Option<RenderSize>) -> Resul
         video_labels.push_str(&format!("[{label}]"));
     }
     let overlay_list = overlays(timeline)?;
-    let concat_label = if overlay_list.is_empty() {
+    let captions = crate::captions::captions_of(timeline)?;
+    // Captions go over the footage first, then the chart overlays over both.
+    let after_captions = if overlay_list.is_empty() {
         VIDEO_LABEL
     } else {
         BASE_LABEL
+    };
+    let concat_label = if captions.is_some() {
+        CAPTION_BASE_LABEL
+    } else {
+        after_captions
     };
     parts.push(format!(
         "{video_labels}concat=n={}:v=1:a=0[{concat_label}]",
         video.children.len()
     ));
+    let total_frames = crate::tracks::track_frames(video, rate)?;
+    let caption_plan = captions.map(|captions| {
+        let input = media.len() + cards.len() + overlay_list.len();
+        let time_base = time_base_expr(&frame_rate);
+        parts.push(format!(
+            "[{input}:v]settb=expr={time_base},setpts=N,format=rgba[cap]"
+        ));
+        parts.push(format!(
+            "[{CAPTION_BASE_LABEL}][cap]overlay=x=0:y=0:eof_action=pass:format=auto[{after_captions}]"
+        ));
+        let (states, shown) = crate::captions::caption_frames(&captions, total_frames);
+        CaptionPlan {
+            captions,
+            states,
+            shown,
+            input,
+        }
+    });
     let first_overlay_input = media.len() + cards.len();
     let overlay_inputs = overlay_chains(
         &overlay_list,
@@ -409,6 +474,7 @@ pub fn build_render_plan(timeline: &Timeline, size: Option<RenderSize>) -> Resul
         media,
         cards,
         overlays: overlay_inputs,
+        captions: caption_plan,
         filter_graph: parts.join(";"),
         video_label: VIDEO_LABEL.to_string(),
         audio_label,
@@ -959,5 +1025,95 @@ mod tests {
             .filter_graph;
         // 33 % of 1080 is 356.4: the nearest even number is 356.
         assert!(graph.contains("scale=356:-2[ov0]"), "{graph}");
+    }
+
+    #[test]
+    fn a_reframed_project_crops_each_piece_on_its_own_frames_then_fits() {
+        use crate::reframe::{set_reframe, Aspect, Follow, Keyframe, ReframeSpec};
+        // 640x360 at 30 fps; a 9:16 window is 202x360.
+        let mut timeline = project(30.0, 300);
+        let keyframes = vec![
+            Keyframe {
+                source_frame: 0,
+                x: 0.1,
+            },
+            Keyframe {
+                source_frame: 150,
+                x: 0.5,
+            },
+        ];
+        set_reframe(
+            &mut timeline,
+            &ReframeSpec {
+                aspect: Aspect::parse("9:16").unwrap(),
+                follow: Follow::Presenter,
+                crop_width: 202,
+                crop_height: 360,
+                keyframes: keyframes.clone(),
+                note: String::new(),
+            },
+        );
+        let plan = build_render_plan(&timeline, None).expect("plan");
+        // Without --size the output is the window's size.
+        assert_eq!((plan.size.width, plan.size.height), (202, 360));
+        let expression = crate::reframe::crop_x_expression(&keyframes, 0, 300, 640);
+        assert!(
+            plan.filter_graph.contains(&format!(
+                "setpts=PTS-STARTPTS,crop=w=202:h=360:x='{expression}':y=0,scale=202:360"
+            )),
+            "{}",
+            plan.filter_graph
+        );
+        // With --size it is scaled up from the window.
+        let plan = build_render_plan(
+            &timeline,
+            Some(RenderSize {
+                width: 1080,
+                height: 1920,
+            }),
+        )
+        .expect("plan");
+        assert!(
+            plan.filter_graph.contains(":y=0,scale=1080:1920"),
+            "{}",
+            plan.filter_graph
+        );
+    }
+
+    #[test]
+    fn captions_are_the_last_input_laid_over_the_footage_on_its_frames() {
+        use crate::captions::{add_captions, preset};
+        let mut timeline = project(30.0, 300);
+        let words = crate::testutil::with_words(
+            crate::testutil::dna(10_000, 30.0, &[]),
+            &[("hello", 1_000, 1_500), ("there", 1_500, 2_000)],
+        )
+        .words;
+        add_captions(&mut timeline, &words, &preset("bold").unwrap()).unwrap();
+        let plan = build_render_plan(&timeline, None).expect("plan");
+        let captions = plan.captions.as_ref().expect("captions");
+        assert_eq!(
+            captions.input,
+            plan.media.len() + plan.cards.len() + plan.overlays.len()
+        );
+        assert_eq!(captions.shown.len(), 300);
+        assert_eq!(captions.states.len(), 2);
+        assert_eq!(captions.shown[29], None);
+        assert_eq!(captions.shown[30], Some(0));
+        assert_eq!(captions.shown[45], Some(1));
+        assert_eq!(captions.shown[60], None);
+        let graph = &plan.filter_graph;
+        assert!(graph.contains("concat=n=1:v=1:a=0[vcap]"), "{graph}");
+        assert!(
+            graph.contains(&format!(
+                "[{}:v]settb=expr=1/30,setpts=N,format=rgba[cap]",
+                captions.input
+            )),
+            "{graph}"
+        );
+        assert!(
+            graph.contains("[vcap][cap]overlay=x=0:y=0:eof_action=pass:format=auto[vout]"),
+            "{graph}"
+        );
     }
 }

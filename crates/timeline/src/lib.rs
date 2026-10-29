@@ -5,13 +5,17 @@
 
 #![warn(clippy::all)]
 
+mod auto_punch;
 mod bridge;
+mod captions;
 mod cut;
 mod error;
+mod from_clip;
 mod init;
 mod otio;
 mod overlay;
 mod punch;
+mod reframe;
 mod render;
 mod smelter;
 mod tracks;
@@ -19,12 +23,23 @@ mod tracks;
 #[cfg(test)]
 mod testutil;
 
+pub use auto_punch::{
+    auto_punch_in, auto_punch_in_like, outlier_scale, AutoPunchReport,
+    DEFAULT_SCALE as DEFAULT_PUNCH_SCALE, STATIC_WINDOW_MS,
+};
 pub use bridge::{
-    attach_bridge, bridge_of, BridgeReport, BridgeRequest, BridgeSpec, CARD_BACKGROUND,
-    CARD_FOREGROUND, CARD_KIND, MAX_CARD_MS, PAUSE_SEARCH_MS, SILENCE_KIND,
+    append_bridge, attach_bridge, bridge_of, BridgeReport, BridgeRequest, BridgeSpec,
+    CARD_BACKGROUND, CARD_FOREGROUND, CARD_KIND, MAX_CARD_MS, PAUSE_SEARCH_MS, SILENCE_KIND,
+};
+pub use captions::{
+    add_captions, caption_frames, captions_of, has_captions, preset as caption_preset,
+    refuse_captions, remove_captions, CaptionCase, CaptionGroup, CaptionPosition, CaptionState,
+    CaptionStyle, Captions, CaptionsReport, PlacedWord, StyleOverrides, CAPTIONS_KEY,
+    PRESETS as CAPTION_PRESETS,
 };
 pub use cut::{check_dna_length, cut_silence, CutOptions, CutReport, RemovedSpan, CUTS_KEY};
 pub use error::{Result, TimelineError};
+pub use from_clip::{clip_record, from_clip, ClipPick, ClipRecord, CLIP_KEY, MIN_CLIP_FRAMES};
 pub use init::{
     dna_ref, init, media_info, set_dna_ref, DnaRef, InitSpec, MediaInfo, DNA_KEY, MEDIA_KEY,
 };
@@ -40,8 +55,12 @@ pub use overlay::{
     OVERLAY_KEY, OVERLAY_TRACK_NAME,
 };
 pub use punch::{punch_in, PunchReport, PunchRequest, MAX_SCALE, RAMP_FRAMES};
+pub use reframe::{
+    centre_keyframes, crop_size, crop_x_expression, footage_span, plan_path, reframe_of,
+    set_reframe, x_at, Aspect, Follow, Keyframe, ReframeSpec, REFRAME_KEY,
+};
 pub use render::{
-    build_render_plan, frame_rate_arg, CardSpec, OverlayInput, RenderPlan, RenderSize,
+    build_render_plan, frame_rate_arg, CaptionPlan, CardSpec, OverlayInput, RenderPlan, RenderSize,
     AUDIO_SAMPLE_RATE, MAX_PIXELS, MAX_SIDE,
 };
 pub use smelter::{

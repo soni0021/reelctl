@@ -225,7 +225,7 @@ Apple M3 MacBook Air, ffmpeg 8.1 (Homebrew), debug build of `reelctl`, `crates/t
 
 Audit of the editor (2026-10-28) found: `qa inspect-boundaries` fetched a URL if the project named one (a loopback server logged the request), `cut-silence` could cut a real word inside a silence gap, `attach-bridge` skipped the DNA length check, the bridge cut after `cut-silence` landed mid-speech, a render's temp file had a wrong name and could leak, a second overlapping punch-in left a jump in the zoom, `--fade-ms` was ignored on a rerun, hand-edited huge durations overflowed, and `--size`, `--card-ms` and zero-frame projects were unbounded. All fixed: media must be a local regular file (`://`, `concat:`, `pipe:`, directories and devices exit 2, and ffmpeg runs with `-protocol_whitelist file`), words inside a silence are protected, and 99 timeline and 16 `timeline_fixture` tests pass. Of the nine mutants the audit found surviving, eight are now caught and one is equivalent (a sort tie key that a stable sort already makes irrelevant). `--size` is capped at 8192 a side and 33,177,600 pixels, `--card-ms` at 60000.
 
-Known limits: one media file per project, one video and at most one audio track, media starting at 0; a punch-in is a centred zoom; the fade is a dip, not a crossfade; the bridge card uses a built-in bitmap font because this ffmpeg has no `drawtext`; filler removal is unit-tested only (no whisper model here); success criterion 3 (`decompile` detecting the punch-in) is checked by frame comparison, since `visual_events` is on another branch; Smelter, manimgx, RobustVideoMatting, reframe, captions and voice are later slices.
+Known limits: one media file per project, one video and at most one audio track (a clip may start after 0 since `timeline from-clip`, 2026-10-29); a punch-in is a centred zoom; the fade is a dip, not a crossfade; the bridge card uses a built-in bitmap font because this ffmpeg has no `drawtext`; filler removal is unit-tested only (no whisper model here); success criterion 3 (`decompile` detecting the punch-in) is checked by frame comparison, since `visual_events` is on another branch; Smelter, manimgx, RobustVideoMatting, reframe, captions and voice are later slices.
 
 ## manimgx chart overlays, 2026-10-29
 
@@ -479,6 +479,92 @@ What this means:
 - `reelctl decompile` writes `edit_dna.json` with cuts, silence gaps (with a threshold set from each recording's noise floor), integrated loudness, per-shot RGB histograms, and the 8–10 s payoff cue, plus one `timeline_view` PNG per cut.
 - `reelctl diff` flags dead air over 180 ms, more than 2.5 s without a cut, and a missing payoff cue when the outlier has one.
 - The JSON Schema is generated from the Rust types and matches them.
+
+## Studio store and catalogue (2026-10-29)
+
+Task 2 of [studio-service](specs/studio-service.md): `crates/studio`, 11 unit tests, in the cloud container.
+- The same bytes are one object, read-only (0400) in a 0700 `.reelstudio/`.
+- A folder is a tree object with the same hash for the same contents, and it lays out again by hard links.
+- A changed object reads back as an error.
+- A symbolic link in an output is refused.
+- An empty catalogue gets schema 1, and a newer schema is refused and left untouched.
+- Eight threads writing to one catalogue file lose nothing (WAL).
+
+Task 3 (`checkpoint.rs`, 8 more tests, 19 in all):
+- Checkpoints chain and the head follows.
+- A revert appends a copy, and can itself be reverted; nothing is deleted.
+- A revert to another subject's checkpoint is refused.
+- A branch is a new subject that starts from a copy and leaves the original alone.
+- Outputs must be stored objects.
+- Two checkpoints compare by role.
+- The cache key ignores argument key order and changes with the command, any argument, any input hash or the `reelctl` version.
+- A succeeded job's outputs are found by its key.
+
+Task 4 (`jobs.rs` and `queue.rs`, 12 more tests, 31 in all, six runs in a row with no failure):
+- A job's output becomes a checkpoint, and its scratch folder is removed.
+- Four heavy jobs never run two at a time; four light ones run together.
+- A chain passes an output to the next job's input, and a failure fails the jobs that wait on it.
+- The same job again is a cache hit with no run, unless forced.
+- A queued job and a running job are cancelled, and a retry runs again.
+- After a restart, the job that was running is interrupted and the queued one runs.
+- Bad submissions are refused.
+
+The runner is a fake that writes files; nothing runs `reelctl` yet.
+
+Task 5 (`commands.rs`, 6 more tests, 37 in all): the command catalogue.
+- 18 commands, each with typed arguments, input and output roles, a resource class, and the environment names it may get.
+- Every command builds with its required parts.
+- Unknown arguments, missing ones, wrong types, a relative tool path, text that starts with `-`, and too many repeated inputs are refused.
+- `make-reels` now builds every step from it, and its 13 tests pass unchanged.
+
+## Studio service, `reelctl serve` (2026-10-29)
+
+Task 6 of [studio-service](specs/studio-service.md), in the cloud container (Linux x86_64, FFmpeg 8.0 libraries, the distribution's ffmpeg 6.1 command line tools):
+- `crates/studio`: `protocol.rs` (2 tests: request parsing and its error codes, responses) and `service.rs` (3 tests with a fake runner): the plan and run gate (no plan, over and under the bound, no key, a used plan, no retry, and the key in no file of the workspace), assets by reference (a changed file fails its job), argument errors, the cache prediction, revert, branch, `store.gc` (a dry run lists, a real one removes only what nothing refers to) and `store.stats`. 42 studio tests in all.
+- `crates/reelctl/tests/serve_fixture.rs`, 4 tests, about 16 s:
+  - On `draft12`: 0700 and 0600 modes, a second `serve` exits 2, `doctor.check`, decompile, init and a cut-silence chained by `{"from": job}` (blocked, then run), a subscriber gets the decode's `job.progress` and the cut's `checkpoint.created`, outputs are 0400 in the store and the filmstrip is a tree, `jobs/` is empty after, the same init again is a cache hit with no child, revert appends, `understand.plan` with a recorded catalog gives a bound and an approval above it is refused with exit code 4, `shutdown` exits 0 and removes the socket, and the key is not in `studio.db`.
+  - A render of `bench60` cancelled mid-way ends `cancelled` with exit code 130, no checkpoint, and nothing in `jobs/`.
+  - A `serve` killed mid-render: after a restart the job is `interrupted`, and `jobs.retry` queues it again.
+  - A client of another uid (uid 65534 through `setpriv`, the test running as root with the folder and socket opened up) gets no answer, while the owner does. Skipped with a note when not root.
+- Not built yet: `pipelines.make_reels` (task 7), the checkpoint diff's DNA metrics and `.otio` differences, and `doctor.check` comparing the FFmpeg library version with Homebrew's (it reports both). A killed `serve` does not stop its children; they run to their end. Plans live in memory only.
+
+## Progress and cancel (2026-10-29)
+
+`--progress json` and clean cancel (task 1 of [studio-service](specs/studio-service.md)), tested in `crates/reelctl/tests/progress_fixture.rs` in the cloud container:
+- On `draft12`, decompile writes a `decode` stage and progress that reaches its 360 frames, and a `result` whose fields equal the stdout line. Without the flag, stderr is empty, as before.
+- A render of the same clip reports `render` progress up to `total` 360.
+- A missing input gives an `error` event with code 2 and nothing else on stderr.
+- A SIGTERM sent while `bench60` (1080p, 60 s) renders exits 130 with an error event of code 130, and leaves nothing in the output folder (no `.tmp` file).
+- A SIGTERM sent while `look` samples `bench60` (400 frames) exits 130 and writes no `.cube`.
+- `timeline init` gives the same stdout and the same `.otio` bytes with and without the flag; its result event names `timeline init`.
+- Audit fixes: cancel is checked before every output write and before `understand`'s model call; `make-reels` stops and records `"status": "cancelled"`; a second signal or the 10 s grace forces the exit after removing the registered temporary paths ([ADR-030](decisions/ADR-030-cancel-with-a-flag-a-child-registry-and-a-forced-exit.md)); `render` no longer passes `-nostats`, so its error tail is ffmpeg's as before; result values with spaces parse whole.
+
+Not yet reported: manimgx's stages, which run inside their stage. Clap usage errors are still plain text. A forced exit while a model session runs on another thread can abort with 134 instead of 130 (ADR-030). The make-reels cancel path and the forced exit have no end-to-end test.
+
+## make-reels steps (2026-10-29, in progress)
+
+Spec: [make-reels](specs/make-reels.md). Built in a Claude Code cloud session (Linux x86_64, Ubuntu 24.04, FFmpeg 8.0 libraries built from source, because the distribution's 6.1 lacks `av_frame_side_data_free`, which `decompile` calls; the `ffmpeg` and `ffprobe` command line tools were the distribution's 6.1). Done so far:
+
+- `timeline from-clip`, `funnel attach-bridge --append` and `transform auto-punch-in`, with unit tests and `crates/reelctl/tests/make_reels_steps.rs`. On `lecture70` with synthetic words and a clip built by the clip rules, the chain from-clip, cut-silence, auto-punch-in, attach-bridge `--append` and render gives a 360x640 file whose frame count equals the project's.
+- The existing edits (cut-silence, filler removal, punch-in, the bridge, the render's trims) give the same result on a clip that starts after 0 as on a whole file; no code change was needed.
+- The compositor's alpha-only pass (`measure_centroids`) runs with a fake model.
+- `cargo test --workspace --no-fail-fast` in that container: every test passes except three to five that also fail on the commit before these changes (1d2e97e), so they come from the environment, not this work. Three `overlay_fixture.rs` tests check chart pixels that come out differently with the distribution's ffmpeg 6.1 (`top row 100: [31, 63, 32]`). Two `scenes::worker` tests use a fake worker script and failed under load; one of them passes when run alone, and in the audit's run both passed. On the Mac (ffmpeg 8.1) they passed at the last merge.
+- `fixtures/generate.sh` used BSD `mktemp -t name`, which GNU `mktemp` refuses ("too few X's"), so `motion12` and the other temp-dir fixtures could not be made on Linux. It now uses `mktemp "${TMPDIR:-/tmp}/name.XXXXXX"`, which works on both.
+- `transform reframe`: the plan is tested on synthetic centroids (a walking presenter stays within the middle 40% of the window on every frame, the pan never exceeds its limit, the window jumps at a cut), and the render's moving crop on a left-to-right gradient: at frames 0, 45, 90 and 110 the left column's luma is within 6 of what the keyframes say, read back through real ffmpeg. `--follow presenter` with the real RVM model has **not been run** (no weights or ONNX Runtime here): its ms per frame and whether the window keeps a real presenter in frame are open, for the Mac.
+- Audit of 4e7a4be (the `audit` subagent, clean checkout, same container): fmt and check clean; the suite as above. Its findings, fixed in the next commit: the last piece of a window could be exactly 2.5 s (the loop stopped at the limit, not at 1.5 s), punch-ins snapped to the fallback's voiced bursts, a DNA cut on the first frame after a splice was dropped, auto-punch-in had no test on a trimmed clip, and one refusal test could not fail.
+- `overlay captions`: in the chain test the rendered 360x640 reel shows near-white caption text in the lower half on a caption's frame and none in the upper half; the drawing is checked on pixels (band, highlight on the right word, outline, box). Drawn with DejaVu Sans Bold here; on macOS the default is Arial Bold, not yet seen rendered.
+- `reelctl make-reels` (`crates/reelctl/tests/make_reels_fixture.rs`): on `lecture70` with words written into its DNA and a recorded reply (no model, no network), two clips (`--clips 1,2 --allow-flagged`; the second is flagged at 28.95 s tight) become two 540x960 reels with captions and the appended card. The crop falls back to the centre with the reason in `notes` (no RVM weights here). A second run uses `understanding.json` again and writes the same `.otio` bytes. Without `--yes` and with no terminal it exits 4 before any model step, and also with a bound over `--max-cost-usd`. That test file takes about 80 s in a debug build (2026-10-29, this container). Not run here: a real lecture with the Apex whisper model, RVM weights and one live `understand` call, which is for the Mac.
+- Audit of 32fbc07 (make-reels), fixed in the next commit:
+  - The cap was checked only by the live `understand`, after the user had been asked, and the message said to add `--yes`. The cap is now checked before asking (exit 4), and the key too (exit 3).
+  - `--reels 0` exited 0. It now exits 1.
+  - A refused reel step's code was not the run's.
+  - The centred fallback rewrote every argument equal to "presenter".
+  - A reused `understanding.json` was not checked against `--input`.
+  - `--clips 1,1` was accepted.
+  - A spawn error ended the run without a summary.
+  - The end-to-end test did not check the card, the caption pixels, dead air, the length or every project. It now does, and a test sets a key and checks that it is in no output.
+  - Found by the stronger test: `diff` flags the silent card at the end as dead air (2.5 s) and as a static window, on every reel. That is expected ([ADR-027](decisions/ADR-027-make-reels-runs-each-step-as-a-child-reelctl-with-a-minimal-environment.md)), and the footage before it has none.
+- Audit of 13b5433 and bc1c5e1 (the `audit` subagent, clean checkout): fmt and check clean, the suite as above. Its findings, fixed with `make-reels`: the spec still said `source_ms` keys and an expression in `t`; a reframe with no edit DNA panned across cuts without saying so (it now notes it); a relative `--font` broke a render from another directory (now stored absolute); words with empty text were counted nowhere; there was no two-piece crop render and no first-frame-cut test; and 8 older test files did not remove `MANIMGX_BIN` or `REELCTL_RVM_WEIGHTS`. `diff` on a rendered reel was not checked for static windows: the punch-ins zoom into flat colour, which the visual-event detector cannot see.
 
 ## Gaps
 

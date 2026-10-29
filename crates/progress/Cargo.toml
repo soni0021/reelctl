@@ -1,0 +1,13 @@
+[package]
+name = "progress"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Machine-readable progress events (NDJSON on stderr) and the cancel flag, shared by every reelctl crate"
+
+[dependencies]
+serde_json.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+nix.workspace = true

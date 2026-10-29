@@ -57,6 +57,10 @@ pub(crate) fn decode_frames_at_with_decoder(
             });
             match attempt {
                 Ok(frames) => Ok((frames, DecoderUsed::Hardware)),
+                // A cancel is not a reason to decode again in software.
+                Err(_) if progress::cancel_requested() => Err(DecompileError::Message(
+                    progress::CANCELLED_MESSAGE.to_string(),
+                )),
                 Err(reason) => Ok((
                     sample_with(path, None, times_ms, width)?,
                     DecoderUsed::Fallback(reason),
@@ -132,6 +136,11 @@ impl<'a> Sampler<'a> {
     /// Scale `frame` (shown at `time_ms`) if it is at or near a pending time. A frame
     /// far before one is only kept unscaled, in case it is the last frame.
     fn observe(&mut self, frame: &VideoFrame, time_ms: u64) -> Result<(), DecompileError> {
+        if progress::cancel_requested() {
+            return Err(DecompileError::Message(
+                progress::CANCELLED_MESSAGE.to_string(),
+            ));
+        }
         let Some(target) = self.target() else {
             return Ok(());
         };
@@ -157,6 +166,7 @@ impl<'a> Sampler<'a> {
             }
             self.next += 1;
         }
+        progress::tick("sample", self.next as u64);
         if !self.done() {
             self.latest = Some(Latest {
                 time_ms,
@@ -233,6 +243,7 @@ impl<'a> Sampler<'a> {
 
     /// Give every time still pending the latest frame kept, and collect the results.
     fn finish(mut self, path: &Path) -> Result<Vec<SampledFrame>, DecompileError> {
+        progress::finish("sample", self.times_ms.len() as u64);
         if let Some((time_ms, raw)) = self.last_raw.take() {
             let (width, height, rgb) = self.scale(&raw)?;
             self.latest = Some(Latest {
@@ -272,6 +283,8 @@ fn sample_with(
     times_ms: &[u64],
     width: u32,
 ) -> Result<Vec<SampledFrame>, DecompileError> {
+    progress::stage("sample");
+    progress::set_total("sample", times_ms.len() as u64);
     let mut input = ffmpeg::format::input(path).map_err(|err| stage("open input", err))?;
     let video_index = input
         .streams()

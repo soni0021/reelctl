@@ -7,6 +7,7 @@ publish.workspace = true
 description = "Chart specs, the fixed manimgx scene template, and the fail-closed process runner for the manimgx worker"
 
 [dependencies]
+progress = { path = "../progress" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

@@ -25,10 +25,14 @@ pub use background::{parse_hex_colour, Background, RawFrames, SolidColor};
 pub use composite::OutputMode;
 pub use error::CompositorError;
 pub use media::{
-    isolate_presenter, prepare, BackgroundSpec, IsolateReport, IsolateRequest, Prepared, VideoInfo,
+    isolate_presenter, measure_size, prepare, prepare_measure, BackgroundSpec, IsolateReport,
+    IsolateRequest, MeasureReport, MeasureRequest, Prepared, PreparedMeasure, VideoInfo,
+    MEASURE_MAX_WIDTH, MEASURE_RATIO,
 };
 pub use model::{MattingModel, ModelOutput};
 pub use ort_model::{release_runtime, RvmModel, LIBRARY_ENV};
-pub use pipeline::{isolate, Options, Stats};
+pub use pipeline::{
+    alpha_centroid, isolate, measure_centroids, Options, Stats, ALPHA_THRESHOLD, MIN_MASS,
+};
 pub use ratio::{auto_downsample_ratio, validate_ratio};
 pub use tensor::{FrameRgb, RecurrentState, Tensor4};

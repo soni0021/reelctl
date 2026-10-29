@@ -196,6 +196,7 @@ fn run(
         .map_err(|error| {
             SceneError::worker(format!("cannot start {}: {error}", program.display()))
         })?;
+    let _tracked = progress::track(child.id());
     let started = Instant::now();
     let status = loop {
         match child.try_wait() {

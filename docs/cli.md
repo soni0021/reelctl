@@ -250,9 +250,12 @@ Deterministic edits over an OpenTimelineIO project. Each command reads one `.oti
 
 ```
 reelctl timeline init --input take.mp4 [--dna take.edit_dna.json] --out edit.otio
+reelctl timeline from-clip --input long.mp4 --dna long.edit_dna.json --understanding understanding.json --clip N [--allow-flagged] --out clip.otio
 reelctl timeline cut-silence --project edit.otio --dna take.edit_dna.json [--min-gap-ms 180] [--fade-ms 30] [--fillers um,uh] --out edit.otio
 reelctl transform punch-in --project edit.otio --start-ms T1 --end-ms T2 --scale 1.18 --out edit.otio
-reelctl funnel attach-bridge --project edit.otio --target-url URL [--cutoff-pct 0.72] [--card-ms 2500, at most 60000] [--dna take.edit_dna.json] --out edit.otio
+reelctl transform auto-punch-in --project edit.otio --dna take.edit_dna.json [--outlier outlier.edit_dna.json ...] --out edit.otio
+reelctl transform reframe --project edit.otio --follow presenter|centre [--aspect 9:16] [--weights rvm.onnx] [--downsample-ratio 0.25] [--dna take.edit_dna.json] --out edit.otio
+reelctl funnel attach-bridge --project edit.otio --target-url URL [--cutoff-pct 0.72 | --append] [--card-ms 2500, at most 60000] [--dna take.edit_dna.json] --out edit.otio
 reelctl render --project edit.otio --out out.mp4 [--size 1080x1920] [--backend ffmpeg|smelter] [--smelter /path/to/smelter]
 reelctl qa inspect-boundaries --project edit.otio --out-dir views/
 ```
@@ -260,15 +263,21 @@ reelctl qa inspect-boundaries --project edit.otio --out-dir views/
 | Command | Stdout line |
 |---|---|
 | `timeline init` | `init: out= frames= fps= size= audio=` |
+| `timeline from-clip` | `from-clip: out= clip= start_ms= end_ms= frames= flags=` |
 | `timeline cut-silence` | `cut-silence: out= removed_spans= removed_ms= timeline_ms=` |
 | `transform punch-in` | `punch-in: out= frames=a..b clips= scale=` |
-| `funnel attach-bridge` | `attach-bridge: out= cut_ms= in_pause= card_ms= unchanged=` |
+| `transform auto-punch-in` | `auto-punch-in: out= windows= punches= scale= scale_from=outliers\|default` |
+| `transform reframe` | `reframe: out= aspect= follow= keyframes= frames_measured= ms_per_frame= unchanged=` |
+| `funnel attach-bridge` | `attach-bridge: out= cut_ms= in_pause= card_ms= unchanged= appended=` |
 | `render` | `render: out= frames= duration_ms= size= ffmpeg_ms=` (`smelter_ms=` with `--backend smelter`), then one `render: ...` note line for each thing the backend could not reproduce |
 | `qa inspect-boundaries` | `inspect-boundaries: out_dir= joins=` |
 
 - `cut-silence` removes every silence gap of at least `--min-gap-ms` and, with whisper words in the DNA, whole words that equal a `--fillers` entry. Times come from the DNA and snap to the frame grid into the pause, never into a word. The audio gets a `--fade-ms` dip at each join (a fade-out and a fade-in, not an overlapping crossfade, so the audio keeps pace with the picture).
+- `from-clip` makes the project `init` makes, trimmed to clip `N` of `understanding.json` (counting from 1 in its `clips` order): the clip's `start_ms` snaps down and `end_ms` up to whole frames. The understanding must be of the same file (same file name as `--input`) and its length within 100 ms of the DNA's; the DNA's is checked against the video as for `init`. A clip with `flags` (it breaks a clip rule) exits 2 unless `--allow-flagged` is given. Every other edit works on a trimmed clip as on a whole file.
+- `auto-punch-in` adds punch-ins wherever the edited timeline holds one picture longer than 2.5 s with no cut and no visual event (`diff`'s static window): the DNA's cuts and `visual_events` are placed on the timeline through the edits, and punch-ins already there and the card's edges end a window too. Each punch-in starts 1.0 s into the window (or after the previous one), moved to a whisper word that starts within 300 ms (voiced bursts are not words), and lasts 1.5 s, until no piece of the window is longer than 1.5 s. A DNA cut on the first frame after a splice ends a window. The scale is the median of the outliers' measured punch-in scales, clamped to 1.08–1.35, or 1.15 with none. At most three `--outlier`. A second run adds nothing. A join that `cut-silence` made does not end a window.
+- `reframe` records a crop window of `--aspect` (full height, even width) whose left edge moves over the source frames; `render` crops each piece with it before scaling, and renders at the window's size when `--size` is not given. `--follow centre` is a fixed window in the middle. `--follow presenter` runs RobustVideoMatting (`--weights` or `REELCTL_RVM_WEIGHTS`, and an absolute `ORT_DYLIB_PATH`, as for `compositor isolate-presenter`) over the footage's source frames, decoded at most 1280 wide, at `--downsample-ratio` (default 0.25), and keeps only the presenter's horizontal centre of mass per frame; no video is written. The window ignores moves within the middle 20%, pans at most 30% of its width per second with a 250 ms ease, jumps at the DNA's cuts (`--dna`, or the one the project recorded), holds when no presenter is found, and never leaves the picture; at most one keyframe every 500 ms. Missing weights or library, HDR input, or a bad `--aspect` exit 2 before a frame is decoded. Without an edit DNA the window cannot jump at cuts: it pans across them, and the `note` in the project and a stderr line say so. A source already as narrow as the aspect is left as it is (`unchanged=true`). `render --backend smelter` refuses a reframed project (exit 2).
 - `punch-in` needs `1 < --scale <= 2` and a span of at least 12 frames: a centred zoom ramping in over 6 frames, held, and ramping out. A second punch-in over the same pieces replaces the first.
-- `attach-bridge` cuts at `--cutoff-pct` of the timeline (in a pause if the DNA has one within 400 ms after, or if `cut-silence` left a join there; the DNA must be the media's length within 100 ms) and appends a card showing the URL, drawn with a built-in bitmap font (capitals, digits and a few symbols; other characters show as a box), because this ffmpeg build may lack `drawtext`. A different bridge on a project that already has one is refused.
+- `attach-bridge` cuts at `--cutoff-pct` of the timeline (in a pause if the DNA has one within 400 ms after, or if `cut-silence` left a join there; the DNA must be the media's length within 100 ms) and appends a card showing the URL, drawn with a built-in bitmap font (capitals, digits and a few symbols; other characters show as a box), because this ffmpeg build may lack `drawtext`. A different bridge on a project that already has one is refused. `--append` adds the card after the last frame and cuts nothing, for a clip that already ends where it should; it cannot be given with `--cutoff-pct` (exit 2).
 - `render` writes H.264 + AAC and scales and crops to `--size` (even sides, at most 8192 each and 33177600 pixels in all; default the source size). `--out` needs an extension and may not be a directory. It writes `.<name>.<pid>.tmp.<ext>` beside `--out`, renames it, and removes it on any failure. A card URL too long for the frame is cut with `...` and a second stdout line says how many characters show.
 - `render --backend smelter` (default `ffmpeg`) renders the same project with [Smelter](https://github.com/software-mansion/smelter), a GPU compositor that `reelctl` never installs: give the server with `--smelter <path>` or `SMELTER_BIN` (the `smelter` wrapper, a directory holding it, or `smelter_main`), else `smelter` on `PATH`. One server is started per render on a random port, with offline processing on and its WHIP, WHEP, RTMP and web-renderer parts off, and killed when the render ends (also on an error). Tested with v0.6.0 on macOS arm64; it needs Homebrew's FFmpeg 8. Smelter's mp4 input reads H.264 video and AAC audio only: other media exits 2 with the `ffmpeg` command that converts it (a file whose audio Smelter dropped, such as PCM, is refused when the project plays its sound). The frame count is exact (Smelter is asked for four frames too many and the file is trimmed and counted); the notes say what is not: a cut, a zoom step or the card can land one or two frames early in about a third of runs under load (the sound's cuts use the same scheduled events; audio sync was not measured), the audio dip at a join is not applied, an untagged source differs in colour, and it is slower on a project of many pieces (see [status](status.md#smelter-backend-2026-10-29)). Exit 1: no Smelter found, it would not start or did not answer within 30 s, it rejected a request, its log has an `ERROR` line, it did not finish within 60 s plus 10 s per second of timeline, or it wrote fewer frames than the project has. The API port is open on every network interface while the render runs ([ADR-023](decisions/ADR-023-drive-smelter-as-a-separate-process-over-its-http-api.md)).
 - Media paths must be plain local files (no `://`, `concat:` or `pipe:`; a directory or device is refused); `ffmpeg` and `ffprobe` run with only the `file` protocol allowed.
@@ -335,8 +344,12 @@ Draws a chart with `manimgx`, a separately installed program ([ADR-022](decision
 
 ```
 reelctl overlay add-chart --project edit.otio --spec chart.json --out edit.otio [--assets-dir DIR] [--manimgx PATH] [--skip-inspect] [--timeout-s 300]
-reelctl overlay remove --project edit.otio --id ID --out edit.otio
+reelctl overlay remove --project edit.otio (--id ID | --captions) --out edit.otio
+reelctl overlay captions --project edit.otio --dna take.edit_dna.json [--preset bold|clean|boxed|karaoke|minimal] [--style style.json] [style flags] --out edit.otio
+reelctl overlay captions --list-presets
 ```
+
+`overlay captions` burns word captions into the project from the DNA's whisper words (its `asr_backend` must be `whisper_cpp`: voiced bursts are not words, exit 2). Words are placed through the edits, rounded to frames (a word with no length gets one frame; a word an edit cut in two stays on its longer side, the later piece on a tie; words cut out, on the card or past the bridge are dropped) and grouped: at most `--words-per-group`, never across a hard cut or a pause of `--min-gap-ms`. The style is the preset, then the `--style` JSON file (the flag names with underscores; an unknown field is exit 2; a `preset` key in it starts over from that preset), then the flags: `--font` (.ttf or .otf, stored as an absolute path; default Arial Bold on macOS, DejaVu Sans Bold on Linux; none found is exit 2), `--font-size` (percent of the output height, 2–12), `--color`, `--highlight-color` (`#rrggbb` or `none`), `--outline-color`, `--outline-width` (0–12 px at 1080 wide), `--shadow` (0–12), `--box-color`, `--box-opacity` (0–1), `--position top|middle|bottom`, `--margin` (0–40 percent), `--words-per-group` (1–5), `--max-chars` (8–40, then the group wraps to two lines), `--case as-is|upper|lower`, `--min-gap-ms` (100–2000). `--list-presets` prints every preset as JSON. Add captions last: `cut-silence`, `punch-in`, `auto-punch-in` and `attach-bridge` refuse a captioned project (exit 2); `overlay remove --captions` takes them out. `render` draws them itself (this ffmpeg has no `drawtext`) and lays them over the footage on their exact frames; `render --backend smelter` refuses a captioned project. Stdout: `captions: out= groups= words= dropped= preset= font= unchanged=`.
 
 | Command | Stdout line |
 |---|---|
@@ -362,6 +375,90 @@ Text may hold any characters except control and text-direction ones. It reaches 
 - `cut-silence`, `punch-in` and `attach-bridge` refuse a project with overlays (exit 2). Add overlays last.
 - Exit 2: a bad spec or argument, a `://` in a path, a span outside the timeline or on another overlay, `manimgx inspect` reporting layout problems (the annotated PNG is kept as `<id>.inspect.png`), a project with overlays given to an edit that moves the tracks. Exit 1: the worker is missing (the message gives the install command), does not answer `--version`, fails, times out, or writes a video that is not as asked (wrong size, wrong length, no key-colour background); `ffmpeg` fails. The project is written last and only on success.
 
+## reelctl make-reels
+
+One long video in, finished vertical reels out. It runs the other commands in order, each as a child `reelctl` process with only the environment that step needs: `OPENROUTER_API_KEY` reaches `understand` only, `ORT_DYLIB_PATH` reaches `reframe` only, and the whisper model goes to `decompile` as `--whisper-model`. Each ONNX model gets its own process, and a step's failure stays in that step. [Spec](specs/make-reels.md).
+
+```
+reelctl make-reels --input long.mp4 --outlier outlier.edit_dna.json [--outlier ...] --target-url URL --out-dir DIR
+  [--whisper-model ggml.bin | --dna long.edit_dna.json] [--weights rvm.onnx] [--follow presenter|centre]
+  [--model qwen/qwen3.5-9b] [--max-cost-usd 0.50] [--yes] [--reels N] [--clips 1,3] [--allow-flagged] [--pick]
+  [--size 1080x1920] [--card-ms 2500] [caption style flags, as for overlay captions]
+```
+
+1. **Decompile.** `decompile` with whisper writes `DIR/source.edit_dna.json`; `--dna` skips it (its words must be whisper's). Without either, exit 2 before anything runs.
+2. **Plan and ask.** Unless `DIR/understanding.json` already exists, `understand --dry-run` prints the cost upper bound (`make-reels: plan model= frames= cost_upper_bound_usd=`). A bound over `--max-cost-usd` exits 4, and no `OPENROUTER_API_KEY` exits 3, both before anyone is asked. Then the live call needs a `y` on the terminal, or `--yes`; with no terminal and no `--yes` it exits 4 and nothing is sent. Every live call needs its own yes.
+3. **Understand.** It writes `DIR/understanding.json`. A run in a folder that already has one uses it again and never calls the model. The reused file must be of the same file name as `--input` (exit 2). One made with another `--model` is used, with a note on stderr; delete it to ask again.
+4. **Clips.** By default, every clip that passes the clip rules, in the model's order. `--reels N` keeps the first N, and `--clips 1,3` names them (a flagged one needs `--allow-flagged`). One `make-reels: clip= tight_length_ms= flags= hook=` line is printed per clip. `--pick` stops here: it writes the list to `make_reels.json` with `status: "picked"` and exits 0, so you can choose and re-run with `--clips`.
+5. **Each clip,** in `DIR/reel-<N>/`:
+   - `01-from-clip`, `02-cut-silence`, `03-auto-punch-in` (against the outliers), `04-reframe`, `05-bridge` (the card is appended), `06-captions`, then `render --size` to `reel-<N>.mp4`, then `diff` against the outliers to `reel-<N>.diff.json`. Each step's project is kept, so any step can be re-run by hand.
+   - With `--follow presenter` and no RVM weights or ONNX Runtime, the reframe falls back to a centred crop, and the reel's `notes` say why.
+   - A failed step marks that reel failed (with the step, its exit code and stderr tail) and the next reel goes on.
+6. **Summary.** `DIR/make_reels.json`:
+   - `schema_version` (1), `status` (`ok`, `failed`, `picked`, or `cancelled` after a SIGTERM, when the reels not started are left out and the exit code is 130), `source`, `dna`, `understanding`, `outliers`, `model`, `cost_usd`, `follow`, and the resolved caption `style`.
+   - The run-level `steps` (name, argv, exit code, ms).
+   - `reels`: one per clip, each with `index`, `status`, `path`, `length_ms`, `hook`, `last`, `diff_flags`, `notes`, `failure` and its `steps`.
+   - No argument list holds a key.
+
+Stdout ends with `make-reels: out_dir= reels= ok= failed= cost_usd= follow=presenter|centre`, where `follow=centre` means at least one reel fell back. Exit codes:
+- 0 if at least one reel rendered (or `--pick`).
+- 1 if none rendered or none was chosen (`--reels 0`, or every clip flagged without `--allow-flagged`).
+- When none rendered and the first failing step refused its input, that step's code, 2 to 4.
+- Before any reel: 2 for an argument (including `--clips` with 0 or a clip named twice), 3 without a key, and 4 over the cap or without a yes.
+
+`diff` of a rendered reel always flags the silent card at the end as dead air and a static window ([ADR-027](decisions/ADR-027-make-reels-runs-each-step-as-a-child-reelctl-with-a-minimal-environment.md)).
+
+## reelctl serve
+
+`reelctl serve [--workspace <dir>]` runs the studio service ([spec](specs/studio-service.md), [ADR-028](decisions/ADR-028-a-local-daemon-over-a-unix-socket-runs-jobs-as-child-reelctl-processes.md)) until a client sends `shutdown` or it gets SIGTERM, SIGINT or SIGHUP. It is meant for the Mac app and scripts; every command line above stays as it is.
+
+- **Workspace.** `--workspace` is made if missing. The default is `~/Movies/ReelStudio` on macOS and `~/ReelStudio` elsewhere. The service owns `<dir>/.reelstudio/` (mode 0700): `studio.db`, `objects/`, `jobs/`, `serve.lock` and `reelctl.sock`.
+- **Start.** stdout gets one line, `serve: workspace=<dir> socket=<path> pid=<n>`, once the socket listens.
+- **One per workspace.** A second `serve` on the same workspace exits 2: `another reelctl serve (pid N) is using this workspace` (an `flock` on `serve.lock`, released when the process ends, even by a kill).
+- **The socket.** `reelctl.sock`, mode 0600, no network port. A connection from another uid (`SO_PEERCRED` on Linux, `getpeereid` on macOS) is closed without an answer. The socket path must be at most 100 bytes (exit 2 otherwise), so keep the workspace path short.
+- **Protocol.** JSON-RPC 2.0, one JSON object per line each way. The methods, params and results are in the spec's section 5. Errors use `-32700` (not JSON), `-32600` (not a request), `-32601` (no such method), `-32602` (bad params), `-32000` (refused: a missing job, a changed asset, a refused plan) and `-32603` (internal), with `data.exit_code` when a child's exit code (2 to 4) is the cause.
+- **Jobs.** `jobs.submit {subject, command, args, inputs, after?, priority?, force?}` takes a catalogue command (`decompile`, `diff`, `look`, `timeline.init`, `timeline.from-clip`, `timeline.cut-silence`, `transform.punch-in`, `transform.auto-punch-in`, `transform.reframe`, `funnel.attach-bridge`, `overlay.captions`, `overlay.add-chart`, `overlay.remove`, `render`, `qa.inspect-boundaries`, `compositor.isolate-presenter`, `eval`) with typed `args` (the flag names with `_`, for example `{"min_gap_ms": 180}`), never an argv. Each input is a stored hash, `{"from": <job>, "role": "out"}` (an output of an earlier job, which then runs first) or `{"asset": <id>}` (an imported file, read where it is after a check that its size and hash are unchanged). A job runs as `reelctl --progress json <command> ...` in `jobs/<id>/` with only PATH, TMPDIR, HOME, the library paths and the variables its command needs, and every stderr event is kept.
+- **The paid call.** `jobs.submit` refuses `understand`. `understand.plan` runs its `--dry-run` (no key, no model call) and returns the bound, rounded up to the next $0.0001. `understand.run {plan, approved_max_usd, api_key}` is refused unless the plan is unused and under 15 minutes old and `approved_max_usd` equals that bound ([ADR-031](decisions/ADR-031-a-live-understand-call-needs-the-plans-bound-approved-exactly.md)); the key goes to that one child's environment and nowhere else.
+- **Events.** `events.subscribe {job?, since_seq?}` answers, then sends notifications on the same connection: `job.status`, `job.progress`, `job.event` and `checkpoint.created`. With `job`, that job's stored events after `since_seq` come first (one can come again live; `seq` tells them apart).
+- **Stopping.** `shutdown` answers `{}`, then running jobs get SIGTERM (SIGKILL after 5 s), end `cancelled`, and the socket is removed; exit 0. A killed `serve` leaves its running jobs `interrupted` at the next start (`jobs.retry` runs one again), and their children run on until they end.
+- **Exit codes.** 0 after `shutdown`, 130 after a signal (its running jobs are cancelled the same way), 2 for a workspace that cannot be used (another `serve`, a socket path too long, a newer catalogue schema), 1 otherwise.
+
+## Progress and cancel (all commands)
+
+`--progress json`, before or after the subcommand, makes `reelctl` write one JSON object per line on **stderr**. stdout is unchanged. Schema version 1:
+
+```
+{"v":1,"event":"stage","name":"decode"}
+{"v":1,"event":"progress","stage":"decode","done":120,"total":1800}
+{"v":1,"event":"warning","message":"..."}
+{"v":1,"event":"result","command":"timeline init","fields":{"frames":"300","fps":"30.000"}}
+{"v":1,"event":"error","code":2,"message":"..."}
+```
+
+- **Stages:**
+  - `decode` (decompile, diff, and the decode inside other commands)
+  - `sample` (frames decoded at chosen times: `look`, `understand`'s frames)
+  - `transnet` (with `--cut-detector transnet`)
+  - `whisper`
+  - `render` (from ffmpeg's frame counter)
+  - `matte` (`compositor isolate-presenter`)
+  - `measure` (`transform reframe --follow presenter`)
+  - one per `make-reels` step
+- **Rate:** progress is written at most 10 times a second per stage, and always when `done` reaches `total`.
+- **`result`:** `command` is the subcommand path (`decompile`, `timeline init`, `overlay add-chart`). Its `fields` are the `key=value` pairs of the stdout line; a value runs to the next ` key=`, so a value with spaces stays whole. `diff` and `eval`, which print JSON, give `"stdout": "json"` and no fields.
+- **Errors:** an error is an `error` event with the exit code and message, and no plain `error:` line. Notes such as `dataset build`'s skipped lines become `warning` events.
+- **Clap usage errors:** an unknown flag or a missing argument is printed by clap as plain text, exit 2, before the flag is read.
+
+**Cancel.** SIGTERM, SIGINT or SIGHUP ([ADR-030](decisions/ADR-030-cancel-with-a-flag-a-child-registry-and-a-forced-exit.md)):
+- stops the decode, sampling, TransNet and matting loops;
+- sends SIGTERM to `reelctl`'s child processes (ffmpeg, the whisper worker, manimgx, Smelter, `make-reels` steps);
+- writes no further output: every command checks before it writes its result file (`.otio`, `.mp4`, `.cube`, `understanding.json`, `edit_dna.json`, the filmstrip, dataset files), and `understand` checks before the model call;
+- removes the temporary outputs (`render`'s `.tmp` file, the compositor's, and the caption pictures);
+- `make-reels` starts no further step or reel and writes `make_reels.json` with `"status": "cancelled"`;
+- exits **130**, with an `error` event of code 130.
+
+A second signal, or a run that has not stopped 10 s after the first, ends it at once: the children get SIGTERM, the registered temporary files and folders are removed, and it exits 130.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -369,8 +466,9 @@ Text may hold any characters except control and text-direction ones. It reaches 
 | 0 | Success |
 | 1 | Runtime error. stderr gets `error: ` and the cause chain, for example `error: decompile: open input: No such file or directory` or `error: decompile: whisper: model not found at /missing.bin` |
 | 2 | Invalid arguments, including more than three `--outlier` files or none, or a `--dna` for `understand` without whisper words, or an `eval` of an `understanding.json` without `--dna`, or `--val-percent` over 50; clap prints the usage |
-| 3 | `reelctl understand` without `OPENROUTER_API_KEY` |
-| 4 | `reelctl understand` with a cost upper bound over `--max-cost-usd` |
+| 3 | `reelctl understand` (and `make-reels`, before asking) without `OPENROUTER_API_KEY` |
+| 130 | Cancelled by SIGTERM, SIGINT or SIGHUP (see Progress and cancel) |
+| 4 | `reelctl understand` with a cost upper bound over `--max-cost-usd`; `reelctl make-reels` when the bound is over the cap or the model call was not confirmed |
 
 ## Input requirements
 

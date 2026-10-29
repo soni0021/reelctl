@@ -21,7 +21,7 @@ use crate::background::{Background, RawFrames, SolidColor};
 use crate::composite::OutputMode;
 use crate::error::CompositorError;
 use crate::model::MattingModel;
-use crate::pipeline::{isolate, Options};
+use crate::pipeline::{isolate, measure_centroids, Options};
 use crate::ratio::{auto_downsample_ratio, validate_ratio};
 
 /// Only this protocol may be opened by `ffmpeg` and `ffprobe`: a media file that is
@@ -526,6 +526,8 @@ impl Drain {
 struct Process {
     child: Child,
     stderr: Drain,
+    /// A cancel (SIGTERM to `reelctl`) reaches ffmpeg too.
+    _tracked: progress::Tracked,
 }
 
 impl Process {
@@ -538,7 +540,12 @@ impl Process {
             .spawn()
             .map_err(|error| tool_error("ffmpeg", error))?;
         let stderr = Drain::start(&mut child);
-        Ok(Self { child, stderr })
+        let tracked = progress::track(child.id());
+        Ok(Self {
+            child,
+            stderr,
+            _tracked: tracked,
+        })
     }
 
     /// Stop it and collect what it said.
@@ -559,6 +566,8 @@ impl Process {
 struct TempFile {
     path: PathBuf,
     keep: bool,
+    /// Removed by a forced exit too, when this guard never gets to run.
+    _registered: progress::Temporary,
 }
 
 impl Drop for TempFile {
@@ -592,8 +601,10 @@ impl Prepared {
         let dir = fs::canonicalize(&dir).map_err(|error| {
             CompositorError::run(format!("cannot find {}: {error}", dir.display()))
         })?;
+        let path = dir.join(temporary_name(&request.out)?);
         let temporary = TempFile {
-            path: dir.join(temporary_name(&request.out)?),
+            _registered: progress::temporary(&path),
+            path,
             keep: false,
         };
 
@@ -737,6 +748,182 @@ impl Prepared {
             width,
             height,
             fps: self.rate.1,
+            ratio: self.ratio,
+            model_time: stats.model_time,
+            total_time: started.elapsed(),
+        })
+    }
+}
+
+/// The default downsample ratio when measuring where the presenter is: the matte
+/// only has to be good enough to find its centre of mass.
+pub const MEASURE_RATIO: f32 = 0.25;
+/// Frames are decoded at most this wide to be measured.
+pub const MEASURE_MAX_WIDTH: u32 = 1280;
+
+/// One measuring run: the presenter's horizontal position on source frames
+/// `start_frame..end_frame` of `input`.
+#[derive(Debug, Clone)]
+pub struct MeasureRequest {
+    pub input: PathBuf,
+    pub start_frame: i64,
+    pub end_frame: i64,
+    /// `None` for [`MEASURE_RATIO`].
+    pub ratio: Option<f32>,
+}
+
+/// What a measuring run found.
+#[derive(Debug, Clone)]
+pub struct MeasureReport {
+    /// One entry per frame from `start_frame`: the centre of mass as a share of the
+    /// width, or `None` where no presenter was found (and for frames the decoder
+    /// did not give, at the end).
+    pub centroids: Vec<Option<f64>>,
+    /// Frames that went through the model.
+    pub frames: usize,
+    pub width: u32,
+    pub height: u32,
+    pub ratio: f32,
+    pub model_time: Duration,
+    pub total_time: Duration,
+}
+
+/// A measuring run that has been checked and probed, and is ready for a model.
+#[derive(Debug)]
+pub struct PreparedMeasure {
+    request: MeasureRequest,
+    input: PathBuf,
+    info: VideoInfo,
+    size: (u32, u32),
+    ratio: f32,
+}
+
+/// The size frames are decoded at to be measured: the source, scaled down to at
+/// most [`MEASURE_MAX_WIDTH`] wide, both sides even.
+pub fn measure_size(width: u32, height: u32) -> (u32, u32) {
+    if width <= MEASURE_MAX_WIDTH {
+        return (width - width % 2, height - height % 2);
+    }
+    let scaled =
+        (f64::from(height) * f64::from(MEASURE_MAX_WIDTH) / f64::from(width)).round() as u32;
+    (MEASURE_MAX_WIDTH, (scaled - scaled % 2).max(2))
+}
+
+/// The decoder for a measuring run: source frames `start..end` (counted as
+/// `render` counts them, before any rate change), scaled to `width` x `height`,
+/// raw `rgb24` on stdout.
+pub(crate) fn measure_args(
+    input: &Path,
+    info: &VideoInfo,
+    (start, end): (i64, i64),
+    (width, height): (u32, u32),
+) -> Vec<OsString> {
+    let mut args = base_args();
+    push_all(&mut args, &["-protocol_whitelist", PROTOCOLS, "-i"]);
+    args.push(input.into());
+    let filter = format!(
+        "trim=start_frame={start}:end_frame={end},setpts=PTS-STARTPTS,scale={width}:{height}:in_color_matrix={}:out_range=full,format=rgb24",
+        info.matrix()
+    );
+    push_all(
+        &mut args,
+        &[
+            "-map",
+            "0:v:0",
+            "-an",
+            "-sn",
+            "-dn",
+            "-vf",
+            &filter,
+            "-fps_mode",
+            "passthrough",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "pipe:1",
+        ],
+    );
+    args
+}
+
+/// Check the request and probe the input; no model is needed yet, so a bad
+/// command fails before the weights are touched.
+pub fn prepare_measure(request: &MeasureRequest) -> Result<PreparedMeasure, CompositorError> {
+    if request.start_frame < 0 || request.end_frame <= request.start_frame {
+        return Err(CompositorError::setup(format!(
+            "frames {}..{} are not a span to measure",
+            request.start_frame, request.end_frame
+        )));
+    }
+    let ratio = validate_ratio(request.ratio.unwrap_or(MEASURE_RATIO))?;
+    let input = local_file(&request.input, "the project's media")?;
+    let info = probe(&input)?;
+    check_video(&info, &request.input, "the project's media")?;
+    let size = measure_size(info.width, info.height);
+    Ok(PreparedMeasure {
+        request: request.clone(),
+        input,
+        info,
+        size,
+        ratio,
+    })
+}
+
+impl PreparedMeasure {
+    /// Decode the span and run every frame through `model`, keeping only where the
+    /// presenter is.
+    pub fn run(self, model: &mut dyn MattingModel) -> Result<MeasureReport, CompositorError> {
+        let started = Instant::now();
+        let span = (self.request.start_frame, self.request.end_frame);
+        let mut decoder = Process::spawn(
+            &measure_args(&self.input, &self.info, span, self.size),
+            Stdio::null(),
+            Stdio::piped(),
+        )?;
+        let Some(out) = decoder.child.stdout.take() else {
+            decoder.stop();
+            return Err(CompositorError::run("cannot connect to ffmpeg's pipe"));
+        };
+        let (width, height) = self.size;
+        let outcome = measure_centroids(
+            BufReader::with_capacity(PIPE_BUFFER, out),
+            model,
+            width as usize,
+            height as usize,
+            self.ratio,
+        );
+        let (decoder_ok, decoder_said) = if outcome.is_err() {
+            (false, decoder.stop())
+        } else {
+            decoder.finish()
+        };
+        let (mut centroids, stats) = match outcome {
+            Ok(result) => result,
+            Err(error) if !decoder_said.trim().is_empty() => {
+                return Err(CompositorError::run(format!(
+                    "{error}\nffmpeg said while decoding {}:\n{}",
+                    self.request.input.display(),
+                    tail(&decoder_said)
+                )))
+            }
+            Err(error) => return Err(error),
+        };
+        if !decoder_ok {
+            return Err(CompositorError::run(format!(
+                "ffmpeg failed while decoding {}:\n{}",
+                self.request.input.display(),
+                tail(&decoder_said)
+            )));
+        }
+        let wanted = usize::try_from(span.1 - span.0).unwrap_or(0);
+        centroids.truncate(wanted);
+        centroids.resize(wanted, None);
+        Ok(MeasureReport {
+            centroids,
+            frames: stats.frames,
+            width,
+            height,
             ratio: self.ratio,
             model_time: stats.model_time,
             total_time: started.elapsed(),
@@ -1043,5 +1230,59 @@ mod tests {
         assert_eq!(kept.lines().count(), 12);
         assert!(kept.starts_with("line 18"));
         assert!(kept.ends_with("line 29"));
+    }
+
+    #[test]
+    fn measuring_decodes_the_span_scaled_and_untouched_in_rate() {
+        let args = strings(&measure_args(
+            Path::new("/media/take.mp4"),
+            &info(1920, 1080),
+            (300, 450),
+            measure_size(1920, 1080),
+        ));
+        let filter = &args[args.iter().position(|arg| arg == "-vf").unwrap() + 1];
+        assert_eq!(
+            filter,
+            "trim=start_frame=300:end_frame=450,setpts=PTS-STARTPTS,scale=1280:720:in_color_matrix=bt709:out_range=full,format=rgb24"
+        );
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["-protocol_whitelist", "file"]));
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["-fps_mode", "passthrough"]));
+        assert_eq!(args.last().map(String::as_str), Some("pipe:1"));
+    }
+
+    #[test]
+    fn the_measuring_size_is_even_and_at_most_1280_wide() {
+        assert_eq!(measure_size(1280, 720), (1280, 720));
+        assert_eq!(measure_size(641, 361), (640, 360));
+        assert_eq!(measure_size(3840, 2160), (1280, 720));
+        assert_eq!(measure_size(1920, 1081), (1280, 720));
+    }
+
+    #[test]
+    fn a_bad_span_is_refused_before_anything_runs() {
+        let request = |start, end| MeasureRequest {
+            input: PathBuf::from("/no/such/file.mp4"),
+            start_frame: start,
+            end_frame: end,
+            ratio: None,
+        };
+        for (start, end) in [(10, 10), (10, 5), (-1, 5)] {
+            match prepare_measure(&request(start, end)) {
+                Err(CompositorError::Setup(message)) => {
+                    assert!(message.contains("not a span"), "{message}")
+                }
+                other => panic!("{other:?}"),
+            }
+        }
+        match prepare_measure(&request(0, 5)) {
+            Err(CompositorError::Setup(message)) => {
+                assert!(message.contains("not a file"), "{message}")
+            }
+            other => panic!("{other:?}"),
+        }
     }
 }

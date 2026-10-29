@@ -7,6 +7,8 @@ members = [
     "crates/diff",
     "crates/filmstrip",
     "crates/look",
+    "crates/progress",
+    "crates/studio",
     "crates/understand",
     "crates/timeline",
     "crates/compositor",
@@ -21,13 +23,24 @@ license = "MIT"
 publish = false
 
 [workspace.dependencies]
+# Draws caption text from a .ttf or .otf font (this ffmpeg has no drawtext).
+ab_glyph = "0.2"
 anyhow = "1"
 base64 = "0.22"
+# Content hashes for the studio store.
+blake3 = "1"
 clap = { version = "4", features = ["derive", "env"] }
+# SIGTERM, SIGINT and SIGHUP handling with a safe API, for a clean cancel.
+ctrlc = { version = "3", features = ["termination"] }
+# Safe wrappers: kill(2) for passing SIGTERM to child processes (ctrlc already uses
+# it), and for `reelctl serve` the socket peer's uid and the workspace lock (flock).
+nix = { version = "0.31", default-features = false, features = ["signal", "socket", "user", "fs"] }
 ffmpeg-next = "9"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 # No stable 2.0 exists, so the release candidate is pinned. `load-dynamic` finds
 # ONNX Runtime at run time (ORT_DYLIB_PATH): nothing is downloaded at build time.
+# The studio catalogue; `bundled` compiles SQLite in, so no system library must match.
+rusqlite = { version = "0.37", features = ["bundled"] }
 ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "load-dynamic", "api-17"] }
 schemars = "1"
 serde = { version = "1", features = ["derive"] }

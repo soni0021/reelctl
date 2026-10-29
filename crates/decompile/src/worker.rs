@@ -85,6 +85,8 @@ struct Worker {
     child: Child,
     stdin: Option<ChildStdin>,
     stdout: BufReader<ChildStdout>,
+    /// A cancel (SIGTERM to `reelctl`) reaches the worker too.
+    _tracked: progress::Tracked,
 }
 
 impl Remote {
@@ -132,10 +134,13 @@ impl Remote {
         let stdout = child.stdout.take().map(BufReader::new).ok_or_else(|| {
             DecompileError::Whisper("the whisper worker has no stdout".to_string())
         })?;
+        progress::stage("whisper");
+        let tracked = progress::track(child.id());
         Ok(Worker {
             child,
             stdin,
             stdout,
+            _tracked: tracked,
         })
     }
 }

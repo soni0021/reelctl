@@ -86,7 +86,7 @@ pub fn compositor(command: CompositorCommand) -> Result<()> {
 }
 
 /// A setup error exits with code 2; a failure while running with 1.
-fn exit_for(error: CompositorError) -> anyhow::Error {
+pub(crate) fn exit_for(error: CompositorError) -> anyhow::Error {
     match error {
         CompositorError::Setup(message) => anyhow::Error::new(ExitWith { code: 2, message }),
         CompositorError::Run(message) => anyhow::anyhow!(message),
@@ -134,7 +134,7 @@ fn isolate_presenter(args: IsolateArgs) -> Result<()> {
     let precision = model.precision().name();
     let report = prepared.run(&mut model).map_err(exit_for)?;
     let model_ms = report.model_time.as_secs_f64() * 1000.0;
-    println!(
+    out!(
         "isolate-presenter: out={} mode={} frames={} size={}x{} fps={:.3} downsample_ratio={:.4} \
 model={precision} model_ms={:.0} ms_per_frame={:.1} total_ms={}",
         report.out.display(),

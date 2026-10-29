@@ -85,7 +85,11 @@ pub fn isolate<R: Read, W: Write>(
     let mut frames = 0;
     let mut model_time = Duration::ZERO;
 
+    progress::stage("matte");
     while read_frame(&mut input, &mut source, frames)? {
+        if progress::cancel_requested() {
+            return Err(CompositorError::run(progress::CANCELLED_MESSAGE));
+        }
         frame.load_rgb8(&source)?;
         let started = Instant::now();
         let mut matte = model
@@ -120,14 +124,90 @@ expected {} and {pixels}",
         })?;
         state = matte.state;
         frames += 1;
+        progress::tick("matte", frames as u64);
     }
     if frames == 0 {
         return Err(CompositorError::run("the video has no frames"));
     }
+    progress::finish("matte", frames as u64);
     output
         .flush()
         .map_err(|error| CompositorError::run(format!("cannot flush the encoder: {error}")))?;
     Ok(Stats { frames, model_time })
+}
+
+/// Alpha below this is background for [`alpha_centroid`].
+pub const ALPHA_THRESHOLD: f32 = 0.5;
+/// A frame whose foreground covers less than this share of it has no presenter.
+pub const MIN_MASS: f64 = 0.01;
+
+/// The alpha-weighted horizontal centre of mass of a `width` x `height` matte, as a
+/// share of the width (0 is the left edge, 1 the right), counting only pixels at
+/// [`ALPHA_THRESHOLD`] or above. `None` when they weigh less than [`MIN_MASS`] of
+/// the frame.
+pub fn alpha_centroid(pha: &[f32], width: usize, height: usize) -> Option<f64> {
+    if width == 0 || height == 0 || pha.len() != width * height {
+        return None;
+    }
+    let mut mass = 0.0f64;
+    let mut moment = 0.0f64;
+    for row in pha.chunks_exact(width) {
+        for (column, &alpha) in row.iter().enumerate() {
+            if alpha >= ALPHA_THRESHOLD {
+                let weight = f64::from(alpha);
+                mass += weight;
+                moment += weight * (column as f64 + 0.5);
+            }
+        }
+    }
+    (mass >= MIN_MASS * (width * height) as f64).then(|| moment / mass / width as f64)
+}
+
+/// Run every frame of `input` (raw `rgb24`, `width` x `height`) through `model` and
+/// keep only where the presenter is: one [`alpha_centroid`] per frame. Nothing is
+/// written; the state runs from frame to frame as in [`isolate`].
+pub fn measure_centroids<R: Read>(
+    mut input: R,
+    model: &mut dyn MattingModel,
+    width: usize,
+    height: usize,
+    ratio: f32,
+) -> Result<(Vec<Option<f64>>, Stats), CompositorError> {
+    let pixels = width * height;
+    let mut source = vec![0u8; 3 * pixels];
+    let mut frame = FrameRgb::new(width, height);
+    let mut state = RecurrentState::initial();
+    let mut centroids = Vec::new();
+    let mut model_time = Duration::ZERO;
+    progress::stage("measure");
+    while read_frame(&mut input, &mut source, centroids.len())? {
+        if progress::cancel_requested() {
+            return Err(CompositorError::run(progress::CANCELLED_MESSAGE));
+        }
+        let index = centroids.len();
+        frame.load_rgb8(&source)?;
+        let started = Instant::now();
+        let mut matte = model
+            .matte(&frame, ratio, &state)
+            .map_err(|error| in_frame(index, error))?;
+        model_time += started.elapsed();
+        if matte.pha.len() != pixels {
+            return Err(CompositorError::run(format!(
+                "the model gave {} alpha values for frame {index}, expected {pixels}",
+                matte.pha.len()
+            )));
+        }
+        clamp_unit(&mut matte.pha, "alpha", index)?;
+        centroids.push(alpha_centroid(&matte.pha, width, height));
+        progress::tick("measure", centroids.len() as u64);
+        state = matte.state;
+    }
+    if centroids.is_empty() {
+        return Err(CompositorError::run("the video has no frames"));
+    }
+    progress::finish("measure", centroids.len() as u64);
+    let frames = centroids.len();
+    Ok((centroids, Stats { frames, model_time }))
 }
 
 /// `error` with the frame it happened on, keeping its kind.
@@ -607,5 +687,105 @@ mod tests {
         .unwrap();
         assert_eq!(stats.frames, 3);
         assert_eq!(out, bytes);
+    }
+
+    /// Alpha 1 where the source is bright red, 0 elsewhere: a "presenter" a test
+    /// can place. Counts its calls and checks that the state comes back.
+    struct RedIsPresenter {
+        calls: usize,
+        ratios: Vec<f32>,
+    }
+
+    impl MattingModel for RedIsPresenter {
+        fn matte(
+            &mut self,
+            frame: &FrameRgb,
+            ratio: f32,
+            state: &RecurrentState,
+        ) -> Result<ModelOutput, CompositorError> {
+            let expected = if self.calls == 0 {
+                RecurrentState::initial()
+            } else {
+                Fake::state_of(self.calls - 1)
+            };
+            assert_eq!(state, &expected, "call {} got the wrong state", self.calls);
+            self.ratios.push(ratio);
+            let pixels = frame.width * frame.height;
+            // `data` is planar: the red plane comes first.
+            let pha = frame.data[..pixels]
+                .iter()
+                .map(|&red| if red > 0.5 { 1.0 } else { 0.0 })
+                .collect();
+            let output = ModelOutput {
+                fgr: frame.data.clone(),
+                pha,
+                state: Fake::state_of(self.calls),
+            };
+            self.calls += 1;
+            Ok(output)
+        }
+    }
+
+    /// `frames` frames of 10x4 black with a red column from `column(k)` two wide.
+    fn moving_column(frames: usize, column: impl Fn(usize) -> Option<usize>) -> Vec<u8> {
+        let (width, height) = (10, 4);
+        let mut bytes = Vec::new();
+        for k in 0..frames {
+            for _ in 0..height {
+                for x in 0..width {
+                    let red = column(k).is_some_and(|c| x == c || x == c + 1);
+                    bytes.extend_from_slice(if red { &[255, 0, 0] } else { &[0, 0, 0] });
+                }
+            }
+        }
+        bytes
+    }
+
+    #[test]
+    fn the_centroid_is_the_middle_of_the_bright_part() {
+        let mut pha = vec![0.0; 10 * 4];
+        for row in 0..4 {
+            pha[row * 10 + 2] = 1.0;
+            pha[row * 10 + 3] = 1.0;
+        }
+        assert_eq!(alpha_centroid(&pha, 10, 4), Some(0.3));
+        // Weak alpha below the threshold does not pull it.
+        pha[9] = 0.4;
+        assert_eq!(alpha_centroid(&pha, 10, 4), Some(0.3));
+        // Too little foreground is no presenter.
+        let mut speck = vec![0.0; 1000];
+        speck[0] = 1.0;
+        assert_eq!(alpha_centroid(&speck, 100, 10), None);
+        assert_eq!(alpha_centroid(&[], 0, 0), None);
+        assert_eq!(alpha_centroid(&[1.0; 3], 2, 2), None);
+    }
+
+    #[test]
+    fn measuring_reads_every_frame_carries_the_state_and_writes_nothing() {
+        let input = moving_column(5, |k| if k == 3 { None } else { Some(2 * k) });
+        let mut model = RedIsPresenter {
+            calls: 0,
+            ratios: Vec::new(),
+        };
+        let (centroids, stats) =
+            measure_centroids(input.as_slice(), &mut model, 10, 4, 0.25).unwrap();
+        assert_eq!(stats.frames, 5);
+        assert_eq!(model.calls, 5);
+        assert!(model.ratios.iter().all(|ratio| *ratio == 0.25));
+        assert_eq!(
+            centroids,
+            vec![Some(0.1), Some(0.3), Some(0.5), None, Some(0.9)]
+        );
+    }
+
+    #[test]
+    fn measuring_no_frames_or_a_short_frame_is_an_error() {
+        let mut model = RedIsPresenter {
+            calls: 0,
+            ratios: Vec::new(),
+        };
+        assert!(measure_centroids(&[][..], &mut model, 10, 4, 0.25).is_err());
+        let short = vec![0u8; 50];
+        assert!(measure_centroids(short.as_slice(), &mut model, 10, 4, 0.25).is_err());
     }
 }

@@ -21,13 +21,15 @@ use scenes::{
     SceneError, SceneJob, SceneRenderer, MAX_SPEC_BYTES, SCENE_NAME, WORKER_ENV,
 };
 use timeline::{
-    add_overlay, media_info, overlays, plan_overlay, project_rate, remove_overlay, OverlayAsset,
-    OverlayRequest, KEY_COLOR,
+    add_captions, add_overlay, caption_preset, check_dna_length as check_project_dna, media_info,
+    overlays, plan_overlay, project_rate, remove_captions, remove_overlay, CaptionCase,
+    CaptionPosition, CaptionStyle, OverlayAsset, OverlayRequest, StyleOverrides, CAPTION_PRESETS,
+    KEY_COLOR,
 };
 
 use crate::timeline_cmd::{
-    invalid, load_project, probe_media, replace_file, save_project, spawn_error, usage, utf8,
-    Probe, TempDir, TempFile,
+    invalid, load_dna, load_project, probe_media, replace_file, save_project, spawn_error, usage,
+    utf8, Probe, TempDir, TempFile,
 };
 
 /// The most a rendered chart video may weigh.
@@ -51,8 +53,135 @@ enum OverlaySub {
     /// Draw a bar, line or number-callout chart with manimgx and lay it over the
     /// video for a span.
     AddChart(AddChartArgs),
-    /// Take an overlay off the project.
+    /// Take an overlay (or the captions) off the project.
     Remove(RemoveArgs),
+    /// Burn word captions from the edit DNA's whisper words into the project.
+    Captions(CaptionsArgs),
+}
+
+/// The caption style flags, shared with `make-reels`.
+#[derive(Args, Clone, Debug, Default)]
+pub struct CaptionStyleArgs {
+    /// Start from this preset: bold, clean, boxed, karaoke or minimal.
+    #[arg(long)]
+    pub preset: Option<String>,
+    /// A JSON file of style fields (the flag names with underscores), applied
+    /// after the preset and before the flags.
+    #[arg(long)]
+    pub style: Option<PathBuf>,
+    /// A .ttf or .otf font. Default: a bold system sans.
+    #[arg(long)]
+    pub font: Option<String>,
+    /// Text height, percent of the output height (2 to 12).
+    #[arg(long)]
+    pub font_size: Option<f64>,
+    /// Text colour, #rrggbb.
+    #[arg(long)]
+    pub color: Option<String>,
+    /// The spoken word's colour, #rrggbb, or none.
+    #[arg(long)]
+    pub highlight_color: Option<String>,
+    #[arg(long)]
+    pub outline_color: Option<String>,
+    /// Pixels at 1080 wide (0 to 12).
+    #[arg(long)]
+    pub outline_width: Option<u32>,
+    /// Shadow offset, pixels at 1080 wide (0 to 12).
+    #[arg(long)]
+    pub shadow: Option<u32>,
+    #[arg(long)]
+    pub box_color: Option<String>,
+    /// 0 (no box) to 1.
+    #[arg(long)]
+    pub box_opacity: Option<f64>,
+    /// top, middle or bottom.
+    #[arg(long)]
+    pub position: Option<String>,
+    /// Percent of the output height from that edge (0 to 40).
+    #[arg(long)]
+    pub margin: Option<f64>,
+    /// 1 to 5.
+    #[arg(long)]
+    pub words_per_group: Option<u32>,
+    /// Characters per line before a group wraps (8 to 40).
+    #[arg(long)]
+    pub max_chars: Option<u32>,
+    /// as-is, upper or lower.
+    #[arg(long)]
+    pub case: Option<String>,
+    /// A pause at least this long starts a new group (100 to 2000).
+    #[arg(long)]
+    pub min_gap_ms: Option<u64>,
+}
+
+/// A flag whose value is one of a style field's names (`top`, `as-is`, ...).
+fn named<T: serde::de::DeserializeOwned>(field: &str, value: &Option<String>) -> Result<Option<T>> {
+    value
+        .as_ref()
+        .map(|text| {
+            serde_json::from_value(serde_json::Value::String(text.clone()))
+                .map_err(|error| usage(format!("--{field} {text}: {error}")))
+        })
+        .transpose()
+}
+
+impl CaptionStyleArgs {
+    /// The resolved style: the preset, then the file, then the flags.
+    pub fn resolve(&self) -> Result<CaptionStyle> {
+        let base = caption_preset(self.preset.as_deref().unwrap_or("bold")).map_err(invalid)?;
+        let from_file = match &self.style {
+            Some(path) => {
+                let text = fs::read_to_string(path).map_err(|error| {
+                    usage(format!(
+                        "cannot read the caption style {}: {error}",
+                        path.display()
+                    ))
+                })?;
+                serde_json::from_str::<StyleOverrides>(&text)
+                    .map_err(|error| usage(format!("{}: {error}", path.display())))?
+            }
+            None => StyleOverrides::default(),
+        };
+        let position: Option<CaptionPosition> = named("position", &self.position)?;
+        let case: Option<CaptionCase> = named("case", &self.case)?;
+        let flags = StyleOverrides {
+            preset: None,
+            font: self.font.clone(),
+            font_size: self.font_size,
+            color: self.color.clone(),
+            highlight_color: self.highlight_color.clone(),
+            outline_color: self.outline_color.clone(),
+            outline_width: self.outline_width,
+            shadow: self.shadow,
+            box_color: self.box_color.clone(),
+            box_opacity: self.box_opacity,
+            position,
+            margin: self.margin,
+            words_per_group: self.words_per_group,
+            max_chars: self.max_chars,
+            case,
+            min_gap_ms: self.min_gap_ms,
+        };
+        base.with(&from_file)
+            .and_then(|style| style.with(&flags))
+            .map_err(invalid)
+    }
+}
+
+#[derive(Args)]
+struct CaptionsArgs {
+    #[arg(long, required_unless_present = "list_presets")]
+    project: Option<PathBuf>,
+    /// The edit_dna.json with whisper words of the project's video.
+    #[arg(long, required_unless_present = "list_presets")]
+    dna: Option<PathBuf>,
+    #[arg(long, required_unless_present = "list_presets")]
+    out: Option<PathBuf>,
+    /// Print every preset's style as JSON and exit.
+    #[arg(long)]
+    list_presets: bool,
+    #[command(flatten)]
+    style: CaptionStyleArgs,
 }
 
 #[derive(Args)]
@@ -84,8 +213,15 @@ struct RemoveArgs {
     #[arg(long)]
     project: PathBuf,
     /// The overlay's id, as `add-chart` printed it.
+    #[arg(
+        long,
+        required_unless_present = "captions",
+        conflicts_with = "captions"
+    )]
+    id: Option<String>,
+    /// Take the captions off instead.
     #[arg(long)]
-    id: String,
+    captions: bool,
     #[arg(long)]
     out: PathBuf,
 }
@@ -94,7 +230,63 @@ pub fn overlay(command: OverlayCommand) -> Result<()> {
     match command.command {
         OverlaySub::AddChart(args) => add_chart(args),
         OverlaySub::Remove(args) => remove(args),
+        OverlaySub::Captions(args) => captions(args),
     }
+}
+
+fn captions(args: CaptionsArgs) -> Result<()> {
+    if args.list_presets {
+        let mut all = serde_json::Map::new();
+        for name in CAPTION_PRESETS {
+            all.insert(
+                name.to_string(),
+                serde_json::to_value(caption_preset(name).map_err(invalid)?)?,
+            );
+        }
+        out!("{}", serde_json::to_string_pretty(&all)?);
+        return Ok(());
+    }
+    let (Some(project_path), Some(dna_path), Some(out)) = (&args.project, &args.dna, &args.out)
+    else {
+        return Err(usage("--project, --dna and --out are required"));
+    };
+    let mut style = args.style.resolve()?;
+    // The font is found now, and a given one is kept as an absolute path, so the
+    // project renders from any directory.
+    let font = crate::captions_draw::find_font(&style)?;
+    crate::captions_draw::load_font(&font)?;
+    if style.font.is_some() {
+        let absolute = fs::canonicalize(&font).map_err(|error| {
+            usage(format!(
+                "cannot find the caption font {}: {error}",
+                font.display()
+            ))
+        })?;
+        style.font = Some(utf8(&absolute)?);
+    }
+    let mut project = load_project(project_path)?;
+    let dna = load_dna(dna_path)?;
+    check_project_dna(&project, dna.duration_ms)
+        .map_err(|error| usage(format!("{}: {error}", dna_path.display())))?;
+    if dna.asr_backend != edit_dna::AsrBackend::WhisperCpp {
+        return Err(usage(format!(
+            "{}: its words are voiced bursts, not whisper words; decompile with --whisper-model to caption",
+            dna_path.display()
+        )));
+    }
+    let report = add_captions(&mut project, &dna.words, &style).map_err(invalid)?;
+    save_project(&project, out)?;
+    out!(
+        "captions: out={} groups={} words={} dropped={} preset={} font={} unchanged={}",
+        out.display(),
+        report.groups,
+        report.words,
+        report.dropped,
+        style.preset,
+        font.display(),
+        report.unchanged
+    );
+    Ok(())
 }
 
 /// A scenes error as a command error with the right exit code.
@@ -164,7 +356,8 @@ fn length_ok(video_frames: i64, video_fps: f64, expected_s: f64, project_fps: f6
 
 /// The top-left pixel of the first frame of `video`, as RGB.
 fn corner_pixel(video: &Path) -> Result<[u8; 3]> {
-    let output = Command::new("ffmpeg")
+    let mut command = Command::new("ffmpeg");
+    command
         .args([
             "-v",
             "error",
@@ -185,9 +378,9 @@ fn corner_pixel(video: &Path) -> Result<[u8; 3]> {
             "rgb24",
             "-",
         ])
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|error| spawn_error("ffmpeg", error))?;
+        .stdin(Stdio::null());
+    let output =
+        progress::tracked_output(&mut command).map_err(|error| spawn_error("ffmpeg", error))?;
     match output.stdout.as_slice() {
         [r, g, b] if output.status.success() => Ok([*r, *g, *b]),
         _ => Err(anyhow!(
@@ -276,7 +469,7 @@ fn add_chart(args: AddChartArgs) -> Result<()> {
         if let Some(overlay) = recorded {
             if fs::metadata(&overlay.asset.path).is_ok_and(|meta| meta.is_file()) {
                 save_project(&project, &args.out)?;
-                println!(
+                out!(
                     "overlay add-chart: out={} id={id} frames={}..{} asset={} unchanged=true",
                     args.out.display(),
                     slot.start_frame,
@@ -376,7 +569,7 @@ fn add_chart(args: AddChartArgs) -> Result<()> {
     )
     .map_err(invalid)?;
     save_project(&project, &args.out)?;
-    println!(
+    out!(
         "overlay add-chart: out={} id={id} frames={}..{} asset={} unchanged={} renderer=\"{version}\"",
         args.out.display(),
         report.start_frame,
@@ -401,19 +594,28 @@ fn keep_storyboard(storyboard: &Path, assets_dir: &Path, id: &str) -> Option<Pat
 
 fn remove(args: RemoveArgs) -> Result<()> {
     let mut project = load_project(&args.project)?;
-    let removed = remove_overlay(&mut project, &args.id).map_err(invalid)?;
+    let Some(id) = args.id else {
+        if !remove_captions(&mut project) {
+            return Err(usage(format!("{} has no captions", args.project.display())));
+        }
+        save_project(&project, &args.out)?;
+        out!(
+            "overlay remove: out={} captions=true removed=true",
+            args.out.display()
+        );
+        return Ok(());
+    };
+    let removed = remove_overlay(&mut project, &id).map_err(invalid)?;
     if !removed {
         return Err(usage(format!(
-            "{} has no overlay with id \"{}\"",
-            args.project.display(),
-            args.id
+            "{} has no overlay with id \"{id}\"",
+            args.project.display()
         )));
     }
     save_project(&project, &args.out)?;
-    println!(
-        "overlay remove: out={} id={} removed=true",
-        args.out.display(),
-        args.id
+    out!(
+        "overlay remove: out={} id={id} removed=true",
+        args.out.display()
     );
     Ok(())
 }

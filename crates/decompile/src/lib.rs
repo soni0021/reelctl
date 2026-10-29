@@ -33,3 +33,22 @@ pub use pipeline::{decompile_file, DecompileOutput, DecompileRequest, StageProfi
 pub use scene::{CutDetector, SCENE_SCORE_THRESHOLD};
 pub use transnet::{release_runtime as release_onnx_runtime, CutDetectorChoice};
 pub use worker::{run_whisper_worker, WhisperRunner};
+
+/// The FFmpeg libraries this build links, as `libavformat M.m.p, libavcodec M.m.p,
+/// libavutil M.m.p` (for `reelctl serve`'s `doctor.check`).
+pub fn ffmpeg_library_versions() -> String {
+    let text = |version: u32| {
+        format!(
+            "{}.{}.{}",
+            version >> 16,
+            (version >> 8) & 0xff,
+            version & 0xff
+        )
+    };
+    format!(
+        "libavformat {}, libavcodec {}, libavutil {}",
+        text(ffmpeg_next::format::version()),
+        text(ffmpeg_next::codec::version()),
+        text(ffmpeg_next::util::version())
+    )
+}

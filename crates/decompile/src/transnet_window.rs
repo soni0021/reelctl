@@ -142,7 +142,14 @@ pub(crate) fn predict(
     let count = frames.len();
     let mut probabilities = Vec::with_capacity(window_count(count) * STRIDE);
     let mut window = Vec::new();
+    progress::stage("transnet");
+    progress::set_total("transnet", window_count(count) as u64);
     for index in 0..window_count(count) {
+        if progress::cancel_requested() {
+            return Err(DecompileError::Message(
+                progress::CANCELLED_MESSAGE.to_string(),
+            ));
+        }
         fill_window(frames, index, &mut window);
         let output = run(&window)?;
         if output.len() != WINDOW {
@@ -152,6 +159,7 @@ pub(crate) fn predict(
             )));
         }
         probabilities.extend_from_slice(&output[CONTEXT..CONTEXT + STRIDE]);
+        progress::tick("transnet", index as u64 + 1);
     }
     probabilities.truncate(count);
     check_probabilities(&probabilities)?;

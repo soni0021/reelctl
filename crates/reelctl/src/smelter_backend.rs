@@ -93,6 +93,8 @@ fn free_port() -> Result<u16> {
 /// Kills and reaps the child when dropped, on every way out.
 struct Server {
     child: Child,
+    /// A cancel (SIGTERM to `reelctl`) reaches the server too.
+    _tracked: progress::Tracked,
 }
 
 impl Server {
@@ -188,7 +190,8 @@ fn color_space(path: &Path) -> Option<String> {
 
 /// The number of video frames in `path`, counted as packets (one per frame in mp4).
 fn count_frames(path: &Path) -> Result<i64> {
-    let output = Command::new("ffprobe")
+    let mut command = Command::new("ffprobe");
+    command
         .args([
             "-v",
             "error",
@@ -204,9 +207,9 @@ fn count_frames(path: &Path) -> Result<i64> {
         ])
         .args(["-of", "csv=p=0"])
         .arg(path)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|error| spawn_error("ffprobe", error))?;
+        .stdin(Stdio::null());
+    let output =
+        progress::tracked_output(&mut command).map_err(|error| spawn_error("ffprobe", error))?;
     if !output.status.success() {
         bail!(
             "ffprobe could not read what Smelter wrote ({}): {}",
@@ -225,7 +228,8 @@ fn count_frames(path: &Path) -> Result<i64> {
 /// the first `frames` packets are the first `frames` frames.
 fn trim_to_frames(from: &Path, to: &Path, frames: i64, fps: f64) -> Result<()> {
     let length = format!("{:.6}", frames as f64 / fps);
-    let output = Command::new("ffmpeg")
+    let mut command = Command::new("ffmpeg");
+    command
         .args(["-y", "-hide_banner", "-loglevel", "error", "-nostdin"])
         .args(["-protocol_whitelist", "file", "-i"])
         .arg(from)
@@ -239,9 +243,9 @@ fn trim_to_frames(from: &Path, to: &Path, frames: i64, fps: f64) -> Result<()> {
         ])
         .args(["-movflags", "+faststart"])
         .arg(to)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|error| spawn_error("ffmpeg", error))?;
+        .stdin(Stdio::null());
+    let output =
+        progress::tracked_output(&mut command).map_err(|error| spawn_error("ffmpeg", error))?;
     if !output.status.success() {
         bail!(
             "ffmpeg could not trim what Smelter wrote ({}): {}",
@@ -287,7 +291,11 @@ impl SmelterBackend {
                 ),
                 _ => anyhow!("cannot run Smelter at {}: {error}", binary.display()),
             })?;
-        let mut server = Server { child };
+        let tracked = progress::track(child.id());
+        let mut server = Server {
+            child,
+            _tracked: tracked,
+        };
         let client = Client::new(port);
         let deadline = Instant::now() + self.startup_timeout;
         loop {

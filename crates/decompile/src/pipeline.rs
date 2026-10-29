@@ -93,6 +93,11 @@ pub(crate) fn decompile_selected(
     let payoff = from_cuts(&cuts);
     let analyze_elapsed = select_elapsed + analyze_started.elapsed();
 
+    if progress::cancel_requested() {
+        return Err(DecompileError::Message(
+            progress::CANCELLED_MESSAGE.to_string(),
+        ));
+    }
     let silence_started = Instant::now();
     let silence = silence::analyze(&decoded.pcm, decoded.sample_rate);
     let silence_elapsed = silence_started.elapsed();
@@ -108,6 +113,11 @@ pub(crate) fn decompile_selected(
     );
     let mut signal = decode_elapsed + analyze_elapsed + silence_elapsed + loudness_elapsed;
 
+    if progress::cancel_requested() {
+        return Err(DecompileError::Message(
+            progress::CANCELLED_MESSAGE.to_string(),
+        ));
+    }
     let asr_started = Instant::now();
     let asr = asr::transcribe(
         &decoded.pcm,
@@ -130,6 +140,12 @@ pub(crate) fn decompile_selected(
         detector,
         &detector_note,
     );
+    // A cancel during whisper (its worker was stopped) writes no edit DNA.
+    if progress::cancel_requested() {
+        return Err(DecompileError::Message(
+            progress::CANCELLED_MESSAGE.to_string(),
+        ));
+    }
     let json_elapsed = match &request.output {
         Some(path) => stamp_json(path, &mut dna, &mut signal, asr_elapsed)?,
         None => {
