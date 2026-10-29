@@ -210,12 +210,17 @@ impl Queue {
                         StudioError::invalid(format!("input {role}: there is no job {from}"))
                     })?;
                 }
+                InputRef::Asset { asset } => {
+                    catalogue.asset(*asset)?.ok_or_else(|| {
+                        StudioError::invalid(format!("input {role}: there is no asset {asset}"))
+                    })?;
+                }
             }
         }
         let mut waits = request.after.clone();
         waits.extend(request.inputs.values().filter_map(|input| match input {
             InputRef::FromJob { from, .. } => Some(*from),
-            InputRef::Hash(_) => None,
+            InputRef::Hash(_) | InputRef::Asset { .. } => None,
         }));
         waits.sort_unstable();
         waits.dedup();
@@ -430,19 +435,36 @@ fn dispatch(inner: Arc<Inner>, catalogue: Catalogue) {
     }
 }
 
-/// Resolve an input to its stored hash.
-fn resolve(catalogue: &Catalogue, role: &str, input: &InputRef) -> Result<String> {
+/// Resolve an input to its hash, and for an asset the file it is read from.
+fn resolve(
+    catalogue: &Catalogue,
+    role: &str,
+    input: &InputRef,
+) -> Result<(String, Option<PathBuf>)> {
     match input {
-        InputRef::Hash(hash) => Ok(hash.clone()),
+        InputRef::Hash(hash) => Ok((hash.clone(), None)),
+        InputRef::Asset { asset } => {
+            let asset = catalogue.asset(*asset)?.ok_or_else(|| {
+                StudioError::invalid(format!("input {role}: there is no asset {asset}"))
+            })?;
+            if !catalogue.asset_unchanged(&asset)? {
+                return Err(StudioError::invalid(format!(
+                    "input {role}: {} changed or is gone since it was imported",
+                    asset.source_path
+                )));
+            }
+            Ok((asset.hash, Some(PathBuf::from(asset.source_path))))
+        }
         InputRef::FromJob { from, role: output } => {
             let checkpoint = catalogue.checkpoint_of_job(*from)?.ok_or_else(|| {
                 StudioError::invalid(format!("input {role}: job {from} made no checkpoint"))
             })?;
-            checkpoint.outputs.get(output).cloned().ok_or_else(|| {
+            let hash = checkpoint.outputs.get(output).cloned().ok_or_else(|| {
                 StudioError::invalid(format!(
                     "input {role}: job {from} has no output \"{output}\""
                 ))
-            })
+            })?;
+            Ok((hash, None))
         }
     }
 }
@@ -451,8 +473,13 @@ fn resolve(catalogue: &Catalogue, role: &str, input: &InputRef) -> Result<String
 fn execute(inner: &Inner, job: &Job, cancel: &AtomicBool) -> Result<JobStatus> {
     let catalogue = Catalogue::open(&inner.db_path)?;
     let mut hashes = BTreeMap::new();
+    let mut referenced = BTreeMap::new();
     for (role, input) in &job.inputs {
-        hashes.insert(role.clone(), resolve(&catalogue, role, input)?);
+        let (hash, path) = resolve(&catalogue, role, input)?;
+        if let Some(path) = path {
+            referenced.insert(role.clone(), path);
+        }
+        hashes.insert(role.clone(), hash);
     }
     let key = cache_key(&job.command, &job.args, &hashes, &inner.version);
     catalogue.set_cache_key(job.id, &key)?;
@@ -480,6 +507,10 @@ fn execute(inner: &Inner, job: &Job, cancel: &AtomicBool) -> Result<JobStatus> {
     let scratch = inner.store.scratch(job.id)?;
     let mut inputs = BTreeMap::new();
     for (role, hash) in &hashes {
+        if let Some(path) = referenced.get(role) {
+            inputs.insert(role.clone(), path.clone());
+            continue;
+        }
         let is_tree = catalogue
             .object(hash)?
             .is_some_and(|object| object.kind == "tree");

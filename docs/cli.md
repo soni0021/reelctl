@@ -408,6 +408,21 @@ Stdout ends with `make-reels: out_dir= reels= ok= failed= cost_usd= follow=prese
 
 `diff` of a rendered reel always flags the silent card at the end as dead air and a static window ([ADR-027](decisions/ADR-027-make-reels-runs-each-step-as-a-child-reelctl-with-a-minimal-environment.md)).
 
+## reelctl serve
+
+`reelctl serve [--workspace <dir>]` runs the studio service ([spec](specs/studio-service.md), [ADR-028](decisions/ADR-028-a-local-daemon-over-a-unix-socket-runs-jobs-as-child-reelctl-processes.md)) until a client sends `shutdown` or it gets SIGTERM, SIGINT or SIGHUP. It is meant for the Mac app and scripts; every command line above stays as it is.
+
+- **Workspace.** `--workspace` is made if missing. The default is `~/Movies/ReelStudio` on macOS and `~/ReelStudio` elsewhere. The service owns `<dir>/.reelstudio/` (mode 0700): `studio.db`, `objects/`, `jobs/`, `serve.lock` and `reelctl.sock`.
+- **Start.** stdout gets one line, `serve: workspace=<dir> socket=<path> pid=<n>`, once the socket listens.
+- **One per workspace.** A second `serve` on the same workspace exits 2: `another reelctl serve (pid N) is using this workspace` (an `flock` on `serve.lock`, released when the process ends, even by a kill).
+- **The socket.** `reelctl.sock`, mode 0600, no network port. A connection from another uid (`SO_PEERCRED` on Linux, `getpeereid` on macOS) is closed without an answer. The socket path must be at most 100 bytes (exit 2 otherwise), so keep the workspace path short.
+- **Protocol.** JSON-RPC 2.0, one JSON object per line each way. The methods, params and results are in the spec's section 5. Errors use `-32700` (not JSON), `-32600` (not a request), `-32601` (no such method), `-32602` (bad params), `-32000` (refused: a missing job, a changed asset, a refused plan) and `-32603` (internal), with `data.exit_code` when a child's exit code (2 to 4) is the cause.
+- **Jobs.** `jobs.submit {subject, command, args, inputs, after?, priority?, force?}` takes a catalogue command (`decompile`, `diff`, `look`, `timeline.init`, `timeline.from-clip`, `timeline.cut-silence`, `transform.punch-in`, `transform.auto-punch-in`, `transform.reframe`, `funnel.attach-bridge`, `overlay.captions`, `overlay.add-chart`, `overlay.remove`, `render`, `qa.inspect-boundaries`, `compositor.isolate-presenter`, `eval`) with typed `args` (the flag names with `_`, for example `{"min_gap_ms": 180}`), never an argv. Each input is a stored hash, `{"from": <job>, "role": "out"}` (an output of an earlier job, which then runs first) or `{"asset": <id>}` (an imported file, read where it is after a check that its size and hash are unchanged). A job runs as `reelctl --progress json <command> ...` in `jobs/<id>/` with only PATH, TMPDIR, HOME, the library paths and the variables its command needs, and every stderr event is kept.
+- **The paid call.** `jobs.submit` refuses `understand`. `understand.plan` runs its `--dry-run` (no key, no model call) and returns the bound, rounded up to the next $0.0001. `understand.run {plan, approved_max_usd, api_key}` is refused unless the plan is unused and under 15 minutes old and `approved_max_usd` equals that bound ([ADR-031](decisions/ADR-031-a-live-understand-call-needs-the-plans-bound-approved-exactly.md)); the key goes to that one child's environment and nowhere else.
+- **Events.** `events.subscribe {job?, since_seq?}` answers, then sends notifications on the same connection: `job.status`, `job.progress`, `job.event` and `checkpoint.created`. With `job`, that job's stored events after `since_seq` come first (one can come again live; `seq` tells them apart).
+- **Stopping.** `shutdown` answers `{}`, then running jobs get SIGTERM (SIGKILL after 5 s), end `cancelled`, and the socket is removed; exit 0. A killed `serve` leaves its running jobs `interrupted` at the next start (`jobs.retry` runs one again), and their children run on until they end.
+- **Exit codes.** 0 after `shutdown`, 130 after a signal (its running jobs are cancelled the same way), 2 for a workspace that cannot be used (another `serve`, a socket path too long, a newer catalogue schema), 1 otherwise.
+
 ## Progress and cancel (all commands)
 
 `--progress json`, before or after the subcommand, makes `reelctl` write one JSON object per line on **stderr**. stdout is unchanged. Schema version 1:

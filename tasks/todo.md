@@ -22,7 +22,7 @@ Plan: [plan.md](plan.md). Spec: [docs/specs/studio-service.md](../docs/specs/stu
 - [x] Typed args to argv and env for every command a job runs (not `dataset build`, whose inputs are folders: later); `make-reels` moved onto it, its tests unchanged
 
 ## Task 6: `reelctl serve`
-- [ ] Socket, lock, peer uid; JSON-RPC and events; understand plan/run gate; gc; doctor
+- [x] Socket, lock, peer uid; JSON-RPC and events; understand plan/run gate; gc; doctor (checkpoint diff by hash only; the DNA metrics and `.otio` differences are later)
 
 ## Task 7: `pipelines.make_reels`
 - [ ] The M0 chain as jobs and checkpoints

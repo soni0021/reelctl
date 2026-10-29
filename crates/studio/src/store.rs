@@ -114,6 +114,46 @@ impl Store {
         self.path(hash).is_ok_and(|path| path.is_file())
     }
 
+    /// Every object in the store, with its size.
+    pub fn objects(&self) -> Result<Vec<(String, u64)>> {
+        let mut found = Vec::new();
+        let objects = self.root.join("objects");
+        let shards = fs::read_dir(&objects).map_err(|error| StudioError::io(&objects, error))?;
+        for shard in shards {
+            let shard = shard
+                .map_err(|error| StudioError::io(&objects, error))?
+                .path();
+            if !shard.is_dir() {
+                continue;
+            }
+            let entries = fs::read_dir(&shard).map_err(|error| StudioError::io(&shard, error))?;
+            for entry in entries {
+                let entry = entry.map_err(|error| StudioError::io(&shard, error))?;
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if !valid_hash(&name) {
+                    continue;
+                }
+                let size = entry
+                    .metadata()
+                    .map_err(|error| StudioError::io(&entry.path(), error))?
+                    .len();
+                found.push((name, size));
+            }
+        }
+        found.sort();
+        Ok(found)
+    }
+
+    /// Delete the object with `hash` (garbage collection only).
+    pub fn remove(&self, hash: &str) -> Result<()> {
+        let path = self.path(hash)?;
+        match fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(StudioError::io(&path, error)),
+        }
+    }
+
     /// A job's scratch folder, made empty.
     pub fn scratch(&self, job: i64) -> Result<PathBuf> {
         let dir = self.root.join("jobs").join(job.to_string());

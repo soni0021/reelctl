@@ -61,6 +61,7 @@ Add `--whisper-model <model.bin>` to `decompile` for real words instead of voice
 | `cargo run -p dataset --example dataset_schema` | Regenerate `crates/dataset/schema/record.schema.json` and `manifest.schema.json` |
 | `reelctl dataset build --dna <dir> [--understanding <runs>] --out <dir>` | Write `train.jsonl`, `val.jsonl` and `manifest.json` for a later fine-tune |
 | `reelctl eval --truth <understanding.json or dataset> --answers <file>` | Score a model's answers; offline |
+| `reelctl serve [--workspace dir]` | The studio service for the Mac app and scripts: JSON-RPC on a Unix socket in the workspace, a job queue, a content-addressed store and revertible checkpoints. See [docs/cli.md](docs/cli.md#reelctl-serve) |
 | `reelctl make-reels --input long.mp4 --outlier o.edit_dna.json --target-url URL --out-dir out/` | One long video in, finished vertical reels out: decompile, understand (asks before the paid call), then per clip cut silence, pace like the outliers, crop to 9:16 on the presenter, card, captions, render and check. See [docs/cli.md](docs/cli.md#reelctl-make-reels) |
 | `REELCTL_PROFILE=1 target/release/reelctl decompile ...` | Also print per-stage timings to stderr |
 
@@ -82,7 +83,7 @@ The Cargo workspace has these crates (the Go watchtower is a separate module in 
 | `compositor` | `reelctl compositor isolate-presenter`: RobustVideoMatting presenter cut-out. A pure core (downsample ratio, recurrent state, alpha, compositing, frame pipeline) behind a `MattingModel` trait, the `ort` session, and the `ffprobe`/`ffmpeg` edges; no `unsafe` |
 | `dataset` | `reelctl dataset` and `reelctl eval`: record builder, JSONL and manifest, split by reel, and the scoring metrics (pure; takes bytes, returns bytes) |
 | `scenes` | Chart specs, the fixed manimgx scene template and the fail-closed worker runner for `reelctl overlay` |
-| `studio` | The core of `reelctl serve` (being built): the content-addressed store and the SQLite catalogue, then checkpoints, the job queue and the command catalogue ([spec](docs/specs/studio-service.md)) |
+| `studio` | The core of `reelctl serve`: the content-addressed store, the SQLite catalogue, checkpoints, the job queue, the command catalogue, the JSON-RPC framing and the request handlers ([spec](docs/specs/studio-service.md)); the socket and the child runner are `crates/reelctl/src/serve_cmd.rs` |
 | `progress` | `--progress json` events (NDJSON on stderr) and the cancel flag and child registry every crate with a long loop or a child process uses |
 | `reelctl` | The command-line tool |
 

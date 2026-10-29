@@ -23,6 +23,7 @@ edit-dna = { path = "../edit-dna" }
 filmstrip = { path = "../filmstrip" }
 image.workspace = true
 look = { path = "../look" }
+nix.workspace = true
 progress = { path = "../progress" }
 scenes = { path = "../scenes" }
 studio = { path = "../studio" }

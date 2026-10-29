@@ -11,7 +11,9 @@ pub mod checkpoint;
 pub mod commands;
 pub mod error;
 pub mod jobs;
+pub mod protocol;
 pub mod queue;
+pub mod service;
 pub mod store;
 
 pub use catalogue::{now_ms, Asset, Catalogue, ASSET_KINDS, SCHEMA_VERSION};

@@ -37,7 +37,7 @@ pub const MAKE_REELS_SCHEMA_VERSION: u32 = 1;
 const STDERR_LINES: usize = 12;
 /// Variables a child may need to find its libraries and temporary space. Nothing
 /// else of this process's environment is passed on.
-const PASS_THROUGH: [&str; 6] = [
+pub(crate) const PASS_THROUGH: [&str; 6] = [
     "PATH",
     "TMPDIR",
     "HOME",

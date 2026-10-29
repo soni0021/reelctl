@@ -282,6 +282,40 @@ impl Catalogue {
         Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
 
+    /// The hashes something still refers to: a checkpoint's outputs, a job's
+    /// stored inputs and a copied asset. (Trees are not opened here.)
+    pub fn referenced_hashes(&self) -> Result<std::collections::BTreeSet<String>> {
+        let mut found = std::collections::BTreeSet::new();
+        let mut outputs = self.db.prepare("SELECT outputs FROM checkpoints")?;
+        for row in outputs.query_map([], |row| row.get::<_, String>(0))? {
+            let map: std::collections::BTreeMap<String, String> = serde_json::from_str(&row?)?;
+            found.extend(map.into_values());
+        }
+        let mut inputs = self.db.prepare("SELECT inputs FROM jobs")?;
+        for row in inputs.query_map([], |row| row.get::<_, String>(0))? {
+            let map: std::collections::BTreeMap<String, serde_json::Value> =
+                serde_json::from_str(&row?)?;
+            found.extend(
+                map.into_values()
+                    .filter_map(|value| value.as_str().map(str::to_string)),
+            );
+        }
+        let mut assets = self
+            .db
+            .prepare("SELECT hash FROM assets WHERE copied = 1")?;
+        for row in assets.query_map([], |row| row.get::<_, String>(0))? {
+            found.insert(row?);
+        }
+        Ok(found)
+    }
+
+    /// Drop an object's row (after garbage collection removed its file).
+    pub fn forget_object(&self, hash: &str) -> Result<()> {
+        self.db
+            .execute("DELETE FROM objects WHERE hash = ?1", [hash])?;
+        Ok(())
+    }
+
     /// Whether an asset's file is still the one that was imported (same size and
     /// hash; the mtime alone is not trusted).
     pub fn asset_unchanged(&self, asset: &Asset) -> Result<bool> {

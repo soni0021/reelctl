@@ -60,7 +60,7 @@ Migrations are explicit and numbered. An unknown `version`, newer than this bina
 - **Every job makes one.** A `succeeded` job writes one checkpoint on its subject, with `parent` set to the subject's head, and moves the head to it. An edit of a project takes the head's `.otio` as its input, so a chain of edits is a chain of checkpoints.
 - **Revert** (`checkpoints.revert {subject, checkpoint}`) appends a **new** checkpoint whose outputs equal the target's, labelled `revert to #N`, and moves the head to it. Nothing is deleted or rewritten, so a revert can itself be reverted.
 - **Branch** (`subjects.branch {checkpoint, name}`) makes a new subject whose first checkpoint copies the given one. It is for trying a second edit path from one cut.
-- **Diff** (`checkpoints.diff {a, b}`) lists the output roles that differ, by hash. For two edit DNAs it also returns `reelctl diff`-style metrics; for two `.otio` it lists clip and metadata differences.
+- **Diff** (`checkpoints.diff {a, b}`) lists the output roles that are the same, changed, or only in one, by hash. (Planned, not built: `reelctl diff`-style metrics for two edit DNAs, and clip and metadata differences for two `.otio`.)
 - **Cache.** `cache_key = blake3(command, normalised args, input hashes, reelctl version)`. A new job whose key matches a succeeded job makes its checkpoint at once, marked `cached`, with no child process. `force: true` runs it anyway, for example to measure `signal_ms` again. `understand` live calls are **never** cached.
 - **Garbage collection** (`store.gc {dry_run}`) removes only objects no checkpoint, job input or asset refers to. A dry run, which is the default, returns the files and bytes it would free. Nothing is collected without an explicit `dry_run: false`.
 
@@ -76,7 +76,7 @@ Migrations are explicit and numbered. An unknown `version`, newer than this bina
   | `network` | understand | 1 |
 
   A consumer takes the oldest highest-priority runnable job and builds its argv and environment from scratch, as `make-reels` does: PATH, TMPDIR, HOME and the library paths, plus only what the command needs. It runs `reelctl <command> --progress json` in the job's scratch directory with stdin null. It reads the NDJSON on stderr into `job_events` and to subscribers, and on exit it ingests the outputs and writes the checkpoint, all in one transaction.
-- **`after` chains.** A job's `after` jobs must all succeed first. An input may name an output of an `after` job (`{"from": "<job-id>", "role": "out"}`), which is resolved when the job becomes runnable. If an `after` job fails or is cancelled, every job waiting on it fails with `"after job <id> failed"`.
+- **`after` chains.** A job's `after` jobs must all succeed first. An input may name an output of an `after` job (`{"from": "<job-id>", "role": "out"}`), which is resolved when the job becomes runnable, and makes that job an `after` job. An input may also be a stored hash, or `{"asset": <id>}`: an imported file, read where it is once its size and hash are checked again (a changed file fails the job). If an `after` job fails or is cancelled, every job waiting on it fails with `"after job <id> failed"`.
 - **Cancel** (`jobs.cancel`): a queued or blocked job is cancelled at once. A running one gets SIGTERM, then SIGKILL after 5 s, and its scratch directory is removed.
 - **Restart.** When `serve` starts, `running` jobs become `interrupted`, so they can be retried with `jobs.retry`, and `queued` and `blocked` jobs carry on. If the app quits, jobs keep running; a client that reconnects asks for the events it missed by sequence number.
 
@@ -97,7 +97,7 @@ Migrations are explicit and numbered. An unknown `version`, newer than this bina
 | `jobs.list` | `{subject?, status?, limit?}` | `[job]` |
 | `jobs.cancel` | `{job}` | `{status}` |
 | `jobs.retry` | `{job}` | `{job}` (a new job with the same request) |
-| `events.subscribe` | `{since_seq?}` | then notifications: `job.status`, `job.progress`, `job.event`, `checkpoint.created` |
+| `events.subscribe` | `{job?, since_seq?}`: with `job`, its stored events after `since_seq` first | then notifications: `job.status`, `job.progress`, `job.event`, `checkpoint.created` |
 | `checkpoints.list` | `{subject}` | `[checkpoint]` |
 | `checkpoints.get` | `{checkpoint}` | the checkpoint, with each output's `path` in `objects/` |
 | `checkpoints.revert` | `{subject, checkpoint}` | `{checkpoint}` |
@@ -112,7 +112,7 @@ Migrations are explicit and numbered. An unknown `version`, newer than this bina
 
 Errors are JSON-RPC errors with `code` and `message`, and `data.exit_code` when a child's exit code is the cause (2 to 4, as on the command line).
 
-- **The paid call takes two requests.** `understand.plan` runs `understand --dry-run` as a job and stores the bound. `understand.run` is refused unless it names an unexpired plan (15 minutes) and `approved_max_usd` is no more than that plan's bound, which is then passed as `--max-cost-usd`. The key comes in that request only. It is kept in memory for that one child's environment and never written to the catalogue, an event, a log or an error. The client (the Mac app) asks the user each time. A request without `approved_max_usd` cannot make a live call.
+- **The paid call takes two requests.** `understand.plan` runs `understand --dry-run` as a job and stores the bound, reported rounded up to the next $0.0001. `understand.run` is refused unless it names an unused, unexpired plan (15 minutes) and `approved_max_usd` equals that bound ([ADR-031](../decisions/ADR-031-a-live-understand-call-needs-the-plans-bound-approved-exactly.md)), which is then passed as `--max-cost-usd`. `jobs.submit` refuses `understand`, and `jobs.retry` refuses a live one. The key comes in that request only. It is kept in memory for that one child's environment and never written to the catalogue, an event, a log or an error. The client (the Mac app) asks the user each time. A request without `approved_max_usd` cannot make a live call.
 - **`pipelines.make_reels`** queues the M0 chain as jobs with `after` links, on one `make_reels` subject plus one `reel` subject per clip:
   1. decompile
   2. understand, through the plan and run pair: the pipeline stops at the plan and returns it, and the client continues with `understand.run`

@@ -94,13 +94,15 @@ impl JobStatus {
     }
 }
 
-/// Where a job's input comes from: a stored object, or an output of an earlier
-/// job (resolved when that job has succeeded).
+/// Where a job's input comes from: a stored object, an output of an earlier job
+/// (resolved when that job has succeeded), or an asset imported by reference (read
+/// where it is, after checking that it is still the file that was imported).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum InputRef {
     Hash(String),
     FromJob { from: i64, role: String },
+    Asset { asset: i64 },
 }
 
 /// What a producer asks for.

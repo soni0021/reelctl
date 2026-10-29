@@ -34,6 +34,7 @@ mod look_cmd;
 mod make_reels_cmd;
 mod overlay_cmd;
 mod render_backend;
+mod serve_cmd;
 mod smelter_backend;
 mod smelter_client;
 #[cfg(test)]
@@ -148,6 +149,7 @@ fn run() -> Result<()> {
         Command::Compositor(command) => compositor_cmd::compositor(command),
         Command::Dataset(command) => dataset_cmd::run_dataset(command),
         Command::Eval(args) => dataset_cmd::run_eval(args),
+        Command::Serve(args) => serve_cmd::serve(args),
         Command::WhisperWorker(args) => whisper_worker(args),
     }
 }
@@ -200,6 +202,9 @@ enum Command {
     /// Score a model's answers against measured truth (an understanding.json or a
     /// dataset). Offline: it reads an answers file and never calls a model.
     Eval(dataset_cmd::EvalArgs),
+    /// The studio service: JSON-RPC on a Unix socket in the workspace, a job queue,
+    /// a content-addressed store and revertible checkpoints. Runs until `shutdown`.
+    Serve(serve_cmd::ServeArgs),
     /// Internal: runs whisper passes for a parent `reelctl`, one JSON line in
     /// and one out per pass, so a whisper.cpp abort cannot end the parent.
     #[command(hide = true)]

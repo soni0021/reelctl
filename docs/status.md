@@ -517,6 +517,17 @@ Task 5 (`commands.rs`, 6 more tests, 37 in all): the command catalogue.
 - Unknown arguments, missing ones, wrong types, a relative tool path, text that starts with `-`, and too many repeated inputs are refused.
 - `make-reels` now builds every step from it, and its 13 tests pass unchanged.
 
+## Studio service, `reelctl serve` (2026-10-29)
+
+Task 6 of [studio-service](specs/studio-service.md), in the cloud container (Linux x86_64, FFmpeg 8.0 libraries, the distribution's ffmpeg 6.1 command line tools):
+- `crates/studio`: `protocol.rs` (2 tests: request parsing and its error codes, responses) and `service.rs` (3 tests with a fake runner): the plan and run gate (no plan, over and under the bound, no key, a used plan, no retry, and the key in no file of the workspace), assets by reference (a changed file fails its job), argument errors, the cache prediction, revert, branch, `store.gc` (a dry run lists, a real one removes only what nothing refers to) and `store.stats`. 42 studio tests in all.
+- `crates/reelctl/tests/serve_fixture.rs`, 4 tests, about 16 s:
+  - On `draft12`: 0700 and 0600 modes, a second `serve` exits 2, `doctor.check`, decompile, init and a cut-silence chained by `{"from": job}` (blocked, then run), a subscriber gets the decode's `job.progress` and the cut's `checkpoint.created`, outputs are 0400 in the store and the filmstrip is a tree, `jobs/` is empty after, the same init again is a cache hit with no child, revert appends, `understand.plan` with a recorded catalog gives a bound and an approval above it is refused with exit code 4, `shutdown` exits 0 and removes the socket, and the key is not in `studio.db`.
+  - A render of `bench60` cancelled mid-way ends `cancelled` with exit code 130, no checkpoint, and nothing in `jobs/`.
+  - A `serve` killed mid-render: after a restart the job is `interrupted`, and `jobs.retry` queues it again.
+  - A client of another uid (uid 65534 through `setpriv`, the test running as root with the folder and socket opened up) gets no answer, while the owner does. Skipped with a note when not root.
+- Not built yet: `pipelines.make_reels` (task 7), the checkpoint diff's DNA metrics and `.otio` differences, and `doctor.check` comparing the FFmpeg library version with Homebrew's (it reports both). A killed `serve` does not stop its children; they run to their end. Plans live in memory only.
+
 ## Progress and cancel (2026-10-29)
 
 `--progress json` and clean cancel (task 1 of [studio-service](specs/studio-service.md)), tested in `crates/reelctl/tests/progress_fixture.rs` in the cloud container:
