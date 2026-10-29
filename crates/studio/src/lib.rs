@@ -8,6 +8,7 @@
 
 pub mod catalogue;
 pub mod checkpoint;
+pub mod commands;
 pub mod error;
 pub mod jobs;
 pub mod queue;

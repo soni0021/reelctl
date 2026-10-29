@@ -14,6 +14,7 @@
 //! the cost is over `--max-cost-usd` (checked before asking) or the call was not
 //! confirmed.
 
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs;
 use std::io::{BufRead, IsTerminal, Write};
@@ -269,39 +270,57 @@ fn choose(understanding: &Value, args: &MakeReelsArgs) -> Result<Vec<usize>> {
     Ok(chosen)
 }
 
-/// The style flags as arguments for `overlay captions`.
-fn style_args(style: &CaptionStyleArgs) -> Vec<OsString> {
-    let mut args: Vec<OsString> = Vec::new();
-    let mut push = |flag: &str, value: Option<String>| {
+/// The style flags as `overlay captions` job arguments. File paths are made
+/// absolute (the catalogue takes absolute paths only); they were checked to exist
+/// when the style was resolved.
+fn style_json(style: &CaptionStyleArgs) -> Value {
+    let absolute = |path: &str| {
+        fs::canonicalize(path)
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| path.to_string())
+    };
+    let mut map = serde_json::Map::new();
+    let mut put = |key: &str, value: Option<Value>| {
         if let Some(value) = value {
-            args.push(format!("--{flag}").into());
-            args.push(value.into());
+            map.insert(key.to_string(), value);
         }
     };
-    push("preset", style.preset.clone());
-    push(
+    put("preset", style.preset.clone().map(Value::from));
+    put(
         "style",
-        style.style.as_ref().map(|path| path.display().to_string()),
+        style
+            .style
+            .as_ref()
+            .map(|path| Value::from(absolute(&path.to_string_lossy()))),
     );
-    push("font", style.font.clone());
-    push("font-size", style.font_size.map(|v| v.to_string()));
-    push("color", style.color.clone());
-    push("highlight-color", style.highlight_color.clone());
-    push("outline-color", style.outline_color.clone());
-    push("outline-width", style.outline_width.map(|v| v.to_string()));
-    push("shadow", style.shadow.map(|v| v.to_string()));
-    push("box-color", style.box_color.clone());
-    push("box-opacity", style.box_opacity.map(|v| v.to_string()));
-    push("position", style.position.clone());
-    push("margin", style.margin.map(|v| v.to_string()));
-    push(
-        "words-per-group",
-        style.words_per_group.map(|v| v.to_string()),
+    put(
+        "font",
+        style
+            .font
+            .as_deref()
+            .map(|font| Value::from(absolute(font))),
     );
-    push("max-chars", style.max_chars.map(|v| v.to_string()));
-    push("case", style.case.clone());
-    push("min-gap-ms", style.min_gap_ms.map(|v| v.to_string()));
-    args
+    put("font_size", style.font_size.map(Value::from));
+    put("color", style.color.clone().map(Value::from));
+    put(
+        "highlight_color",
+        style.highlight_color.clone().map(Value::from),
+    );
+    put(
+        "outline_color",
+        style.outline_color.clone().map(Value::from),
+    );
+    put("outline_width", style.outline_width.map(Value::from));
+    put("shadow", style.shadow.map(Value::from));
+    put("box_color", style.box_color.clone().map(Value::from));
+    put("box_opacity", style.box_opacity.map(Value::from));
+    put("position", style.position.clone().map(Value::from));
+    put("margin", style.margin.map(Value::from));
+    put("words_per_group", style.words_per_group.map(Value::from));
+    put("max_chars", style.max_chars.map(Value::from));
+    put("case", style.case.clone().map(Value::from));
+    put("min_gap_ms", style.min_gap_ms.map(Value::from));
+    Value::Object(map)
 }
 
 /// What one reel came to.
@@ -335,132 +354,134 @@ fn make_reel(
         steps: Vec::new(),
     };
     let project = |n: usize, step: &str| reel_dir.join(format!("{n:02}-{step}.otio"));
-    let outliers: Vec<OsString> = args
-        .outlier
-        .iter()
-        .flat_map(|path| [OsString::from("--outlier"), os(path)])
-        .collect();
-    let mut previous = project(1, "from-clip");
-    let mut plan: Vec<(&str, Vec<OsString>, Vec<(&str, OsString)>)> = vec![(
-        "from-clip",
-        [
-            vec![
-                "timeline".into(),
-                "from-clip".into(),
-                "--input".into(),
-                os(&args.input),
-            ],
-            vec![
-                "--dna".into(),
-                os(dna),
-                "--understanding".into(),
-                os(understanding),
-            ],
-            vec![
-                "--clip".into(),
-                index.to_string().into(),
-                "--out".into(),
-                os(&previous),
-            ],
-            if args.allow_flagged {
-                vec!["--allow-flagged".into()]
-            } else {
-                Vec::new()
-            },
-        ]
-        .concat(),
-        Vec::new(),
-    )];
-    let mut chain = |n: usize,
-                     name: &'static str,
-                     head: &[&str],
-                     tail: Vec<OsString>,
-                     env: Vec<(&'static str, OsString)>| {
-        let out = project(n, name);
-        let mut argv: Vec<OsString> = head.iter().map(OsString::from).collect();
-        argv.extend(["--project".into(), os(&previous)]);
-        argv.extend(tail);
-        argv.extend(["--out".into(), os(&out)]);
-        previous = out;
-        plan.push((name, argv, env));
+    // Every step's argv comes from the command catalogue, as the service's jobs
+    // do: the same typed arguments, inputs and outputs.
+    let built = |command: &str,
+                 args: Value,
+                 inputs: &[(&str, &Path)],
+                 out: &Path|
+     -> Result<Vec<OsString>> {
+        let inputs: BTreeMap<String, PathBuf> = inputs
+            .iter()
+            .map(|(role, path)| (role.to_string(), path.to_path_buf()))
+            .collect();
+        // `diff` writes its report on stdout: its output role is `report`.
+        let role = if command == "diff" { "report" } else { "out" };
+        let outputs = BTreeMap::from([(role.to_string(), out.to_path_buf())]);
+        let built = studio::commands::build(command, &args, &inputs, &outputs)
+            .map_err(|error| usage(error.to_string()))?;
+        Ok(built.argv.into_iter().map(OsString::from).collect())
     };
-    chain(
-        2,
+    let outlier_roles: Vec<String> = (1..=args.outlier.len())
+        .map(|n| {
+            if n == 1 {
+                "outlier".to_string()
+            } else {
+                format!("outlier.{n}")
+            }
+        })
+        .collect();
+    let mut plan: Vec<(&str, Vec<OsString>, Vec<(&str, OsString)>)> = Vec::new();
+    plan.push((
+        "from-clip",
+        built(
+            "timeline.from-clip",
+            json!({"clip": index, "allow_flagged": args.allow_flagged}),
+            &[
+                ("input", &args.input),
+                ("dna", dna),
+                ("understanding", understanding),
+            ],
+            &project(1, "from-clip"),
+        )?,
+        Vec::new(),
+    ));
+    plan.push((
         "cut-silence",
-        &["timeline", "cut-silence"],
-        vec!["--dna".into(), os(dna)],
+        built(
+            "timeline.cut-silence",
+            json!({}),
+            &[("project", &project(1, "from-clip")), ("dna", dna)],
+            &project(2, "cut-silence"),
+        )?,
         Vec::new(),
-    );
-    chain(
-        3,
+    ));
+    let cut = project(2, "cut-silence");
+    let outliers: Vec<(&str, &Path)> = outlier_roles
+        .iter()
+        .zip(&args.outlier)
+        .map(|(role, path)| (role.as_str(), path.as_path()))
+        .collect();
+    let punch_inputs: Vec<(&str, &Path)> = [
+        vec![("project", cut.as_path()), ("dna", dna)],
+        outliers.clone(),
+    ]
+    .concat();
+    plan.push((
         "auto-punch-in",
-        &["transform", "auto-punch-in"],
-        [vec!["--dna".into(), os(dna)], outliers.clone()].concat(),
+        built(
+            "transform.auto-punch-in",
+            json!({}),
+            &punch_inputs,
+            &project(3, "auto-punch-in"),
+        )?,
         Vec::new(),
-    );
+    ));
     let mut reframe_env: Vec<(&'static str, OsString)> = Vec::new();
     if let Some(library) = std::env::var_os(compositor::LIBRARY_ENV) {
         reframe_env.push((compositor::LIBRARY_ENV, library));
     }
-    let follow = match args.follow {
-        FollowArg::Presenter => "presenter",
-        FollowArg::Centre => "centre",
-    };
-    let reframe_tail = |follow: &str, weights: Option<&PathBuf>| -> Vec<OsString> {
-        let mut tail: Vec<OsString> =
-            vec!["--follow".into(), follow.into(), "--dna".into(), os(dna)];
-        if let Some(weights) = weights {
-            tail.extend(["--weights".into(), os(weights)]);
+    let punched = project(3, "auto-punch-in");
+    let reframe_inputs = [("project", punched.as_path()), ("dna", dna)];
+    // The fallback is built like the first, never by rewriting it.
+    let centre_argv = built(
+        "transform.reframe",
+        json!({"follow": "centre"}),
+        &reframe_inputs,
+        &project(4, "reframe"),
+    )?;
+    let reframe_args = match (args.follow, &args.weights) {
+        (FollowArg::Presenter, Some(weights)) => {
+            // The catalogue takes absolute paths; a missing file is reframe's to
+            // report (and to fall back from).
+            let weights = fs::canonicalize(weights)
+                .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(weights));
+            json!({"follow": "presenter", "weights": weights.to_string_lossy()})
         }
-        tail
+        (FollowArg::Presenter, None) => json!({"follow": "presenter"}),
+        (FollowArg::Centre, _) => json!({"follow": "centre"}),
     };
-    // The argument list for the fallback, built like the first rather than by
-    // rewriting it, so no path is ever mistaken for a flag value.
-    let centre_input = project(3, "auto-punch-in");
-    let centre_out = project(4, "reframe");
-    let centre_argv: Vec<OsString> = [
-        vec![
-            "transform".into(),
-            "reframe".into(),
-            "--project".into(),
-            os(&centre_input),
-        ],
-        reframe_tail("centre", None),
-        vec!["--out".into(), os(&centre_out)],
-    ]
-    .concat();
-    let weights = match args.follow {
-        FollowArg::Presenter => args.weights.as_ref(),
-        FollowArg::Centre => None,
-    };
-    let reframe_tail = reframe_tail(follow, weights);
-    chain(
-        4,
+    plan.push((
         "reframe",
-        &["transform", "reframe"],
-        reframe_tail,
+        built(
+            "transform.reframe",
+            reframe_args,
+            &reframe_inputs,
+            &project(4, "reframe"),
+        )?,
         reframe_env,
-    );
-    chain(
-        5,
+    ));
+    plan.push((
         "bridge",
-        &["funnel", "attach-bridge"],
-        vec![
-            "--target-url".into(),
-            args.target_url.clone().into(),
-            "--append".into(),
-            "--card-ms".into(),
-            args.card_ms.to_string().into(),
-        ],
+        built(
+            "funnel.attach-bridge",
+            json!({"target_url": args.target_url, "append": true, "card_ms": args.card_ms}),
+            &[("project", &project(4, "reframe"))],
+            &project(5, "bridge"),
+        )?,
         Vec::new(),
-    );
-    chain(
-        6,
+    ));
+    plan.push((
         "captions",
-        &["overlay", "captions"],
-        [vec!["--dna".into(), os(dna)], style_args(&args.style)].concat(),
+        built(
+            "overlay.captions",
+            style_json(&args.style),
+            &[("project", &project(5, "bridge")), ("dna", dna)],
+            &project(6, "captions"),
+        )?,
         Vec::new(),
-    );
+    ));
+    let previous = project(6, "captions");
 
     for (name, argv, env) in plan {
         let mut step = run(name, argv.clone(), &env)?;
@@ -495,15 +516,12 @@ fn make_reel(
     let video = reel_dir.join(format!("reel-{index}.mp4"));
     let render = run(
         "render",
-        vec![
-            "render".into(),
-            "--project".into(),
-            os(&previous),
-            "--out".into(),
-            os(&video),
-            "--size".into(),
-            args.size.clone().into(),
-        ],
+        built(
+            "render",
+            json!({"size": args.size}),
+            &[("project", &previous)],
+            &video,
+        )?,
         &[],
     )?;
     if !render.ok() {
@@ -525,9 +543,11 @@ fn make_reel(
     reel.path = Some(video.clone());
     reel.status = "ok";
 
+    let report_path = reel_dir.join(format!("reel-{index}.diff.json"));
+    let diff_inputs: Vec<(&str, &Path)> = [vec![("draft", video.as_path())], outliers].concat();
     let diff = run(
         "diff",
-        [vec!["diff".into(), "--draft".into(), os(&video)], outliers].concat(),
+        built("diff", json!({}), &diff_inputs, &report_path)?,
         &[],
     )?;
     if diff.ok() {

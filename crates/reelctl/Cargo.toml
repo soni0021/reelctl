@@ -25,6 +25,7 @@ image.workspace = true
 look = { path = "../look" }
 progress = { path = "../progress" }
 scenes = { path = "../scenes" }
+studio = { path = "../studio" }
 serde.workspace = true
 serde_json.workspace = true
 timeline = { path = "../timeline" }

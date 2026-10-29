@@ -1175,6 +1175,7 @@ dependencies = [
  "scenes",
  "serde",
  "serde_json",
+ "studio",
  "timeline",
  "understand",
 ]

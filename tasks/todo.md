@@ -19,7 +19,7 @@ Plan: [plan.md](plan.md). Spec: [docs/specs/studio-service.md](../docs/specs/stu
 - [x] Classes, priority, `after`, cancel, interrupted on restart; consumers ingest outputs (with a fake runner; the real one is task 5/6)
 
 ## Task 5: Command catalogue
-- [ ] Typed args to argv and env for every command; `make-reels` moved onto it, its tests unchanged
+- [x] Typed args to argv and env for every command a job runs (not `dataset build`, whose inputs are folders: later); `make-reels` moved onto it, its tests unchanged
 
 ## Task 6: `reelctl serve`
 - [ ] Socket, lock, peer uid; JSON-RPC and events; understand plan/run gate; gc; doctor

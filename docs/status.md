@@ -511,6 +511,12 @@ Task 4 (`jobs.rs` and `queue.rs`, 12 more tests, 31 in all, six runs in a row wi
 
 The runner is a fake that writes files; nothing runs `reelctl` yet.
 
+Task 5 (`commands.rs`, 6 more tests, 37 in all): the command catalogue.
+- 18 commands, each with typed arguments, input and output roles, a resource class, and the environment names it may get.
+- Every command builds with its required parts.
+- Unknown arguments, missing ones, wrong types, a relative tool path, text that starts with `-`, and too many repeated inputs are refused.
+- `make-reels` now builds every step from it, and its 13 tests pass unchanged.
+
 ## Progress and cancel (2026-10-29)
 
 `--progress json` and clean cancel (task 1 of [studio-service](specs/studio-service.md)), tested in `crates/reelctl/tests/progress_fixture.rs` in the cloud container:
