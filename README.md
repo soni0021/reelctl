@@ -7,12 +7,13 @@
 
 - `reelctl look` builds a `.cube` 3D LUT that moves a draft's colour toward an outlier's by per-channel histogram matching on sampled frames. It works well on the same content graded differently and poorly between very different content (see [docs/cli.md](docs/cli.md)).
 - `reelctl timeline`, `transform punch-in`, `funnel attach-bridge`, `render` and `qa inspect-boundaries` edit an OpenTimelineIO project deterministically (cut silence and filler words, punch-in zoom, a long-form bridge card) and render it with `ffmpeg`. See [docs/timeline.md](docs/timeline.md) and [docs/cli.md](docs/cli.md).
+- `reelctl compositor isolate-presenter` cuts a presenter out of a video with RobustVideoMatting (an ONNX model you supply, run through `ort` and an ONNX Runtime library named in `ORT_DYLIB_PATH`) and writes them over a colour, image or video background, or writes the alpha matte, or ProRes 4444 with alpha. SDR input only; on a CPU it is not real time. See [docs/cli.md](docs/cli.md) and [docs/specs/rvm-presenter.md](docs/specs/rvm-presenter.md).
 
 - `watchtower/` is a separate Go module (not part of the Cargo workspace) that ranks a niche's creators by outlier multiplier and growth velocity, runs `reelctl decompile` on their breakout Reels, compares the last five breakouts with the baseline posts on measured fields, and writes a digest. It reads recorded JSON files; the live Virlo client is not built. See [docs/watchtower.md](docs/watchtower.md).
 
 - `reelctl understand` takes a 20–60 minute video and its whisper-timed `edit_dna.json`, sends sampled frames and numbered transcript segments to a hosted vision-language model (OpenRouter; needs `OPENROUTER_API_KEY`), and writes `understanding.json`: Reel-sized clips picked by segment ID and checked by code (hook, cliffhanger, length; a clip that breaks a rule is kept with a flag naming it), and a label for what each cut really was. Every quote is whisper's text and every time is measured. See [docs/understanding.md](docs/understanding.md).
 
-This repository is P0 of the plan in [planer.md](planer.md). P1 has a first slice (the Go watchtower, reading recorded data) and P2 has a first slice (OpenTimelineIO edits and an ffmpeg render); the rest of P2 (Smelter, manimgx, RobustVideoMatting, reframe, captions, voice) and P3 (a fine-tuned vision-language model, deferred by the user) are specified there and not built. Current state, measurements, and known gaps are in [docs/status.md](docs/status.md).
+This repository is P0 of the plan in [planer.md](planer.md). P1 has a first slice (the Go watchtower, reading recorded data) and P2 has a first slice (OpenTimelineIO edits and an ffmpeg render) and RobustVideoMatting presenter cut-out (`reelctl compositor isolate-presenter`); the rest of P2 (Smelter, manimgx, reframe, captions, voice) and P3 (a fine-tuned vision-language model, deferred by the user) are specified there and not built. Current state, measurements, and known gaps are in [docs/status.md](docs/status.md).
 
 ## Quick start
 
@@ -70,6 +71,7 @@ The Cargo workspace has these crates (the Go watchtower is a separate module in 
 | `look` | `reelctl look`: per-channel histogram matching and the `.cube` writer and reader (pure) |
 | `understand` | Long-video understanding: transcript segments, frame plan, the model request and cost bound, clip rules, and `understanding.json` (no ffmpeg or whisper dependency) |
 | `timeline` | The OpenTimelineIO subset, edit operations and the ffmpeg filter-graph builder (pure) |
+| `compositor` | `reelctl compositor isolate-presenter`: RobustVideoMatting presenter cut-out. A pure core (downsample ratio, recurrent state, alpha, compositing, frame pipeline) behind a `MattingModel` trait, the `ort` session, and the `ffprobe`/`ffmpeg` edges; no `unsafe` |
 | `reelctl` | The command-line tool |
 
 ```
