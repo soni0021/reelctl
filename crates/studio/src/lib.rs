@@ -7,9 +7,11 @@
 #![forbid(unsafe_code)]
 
 pub mod catalogue;
+pub mod checkpoint;
 pub mod error;
 pub mod store;
 
 pub use catalogue::{now_ms, Asset, Catalogue, ASSET_KINDS, SCHEMA_VERSION};
+pub use checkpoint::{cache_key, Checkpoint, CheckpointDiff, Subject, SUBJECT_KINDS};
 pub use error::{Result, StudioError};
 pub use store::{hash_file, ObjectInfo, Store, TreeEntry, STUDIO_DIR, TREE_KIND};

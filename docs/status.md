@@ -490,6 +490,16 @@ Task 2 of [studio-service](specs/studio-service.md): `crates/studio`, 11 unit te
 - An empty catalogue gets schema 1, and a newer schema is refused and left untouched.
 - Eight threads writing to one catalogue file lose nothing (WAL).
 
+Task 3 (`checkpoint.rs`, 8 more tests, 19 in all):
+- Checkpoints chain and the head follows.
+- A revert appends a copy, and can itself be reverted; nothing is deleted.
+- A revert to another subject's checkpoint is refused.
+- A branch is a new subject that starts from a copy and leaves the original alone.
+- Outputs must be stored objects.
+- Two checkpoints compare by role.
+- The cache key ignores argument key order and changes with the command, any argument, any input hash or the `reelctl` version.
+- A succeeded job's outputs are found by its key.
+
 Nothing uses it yet.
 
 ## Progress and cancel (2026-10-29)

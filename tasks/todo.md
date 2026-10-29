@@ -13,7 +13,7 @@ Plan: [plan.md](plan.md). Spec: [docs/specs/studio-service.md](../docs/specs/stu
 - [x] Objects, trees, read-only files; schema version 1 and migrations; assets by reference
 
 ## Task 3: Checkpoints
-- [ ] Append, head, revert, branch, diff; cache key and `force`
+- [x] Append, head, revert, branch, diff; the cache key and the cached-outputs lookup (`force` is the queue's, task 4)
 
 ## Task 4: Queue
 - [ ] Classes, priority, `after`, cancel, interrupted on restart; consumers ingest outputs
