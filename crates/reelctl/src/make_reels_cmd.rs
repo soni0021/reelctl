@@ -8,9 +8,11 @@
 //! card, captions, render and `diff` against the outliers. Every intermediate
 //! project is kept (`reel-<N>/NN-<step>.otio`), so any step can be re-run by hand.
 //!
-//! Exit codes: 0 when at least one reel rendered (or `--pick`), 1 when none did,
-//! 2 for a bad argument or a step that refused its input, 3 without an API key,
-//! 4 when the cost is over `--max-cost-usd` or the call was not confirmed.
+//! Exit codes: 0 when at least one reel rendered (or `--pick`); 1 when none did
+//! (or none was chosen); 2 for a bad argument or when every reel's first failing
+//! step refused its input; 3 without an API key (checked before asking); 4 when
+//! the cost is over `--max-cost-usd` (checked before asking) or the call was not
+//! confirmed.
 
 use std::ffi::OsString;
 use std::fs;
@@ -397,11 +399,34 @@ fn make_reel(
         FollowArg::Presenter => "presenter",
         FollowArg::Centre => "centre",
     };
-    let mut reframe_tail: Vec<OsString> =
-        vec!["--follow".into(), follow.into(), "--dna".into(), os(dna)];
-    if let (FollowArg::Presenter, Some(weights)) = (args.follow, &args.weights) {
-        reframe_tail.extend(["--weights".into(), os(weights)]);
-    }
+    let reframe_tail = |follow: &str, weights: Option<&PathBuf>| -> Vec<OsString> {
+        let mut tail: Vec<OsString> =
+            vec!["--follow".into(), follow.into(), "--dna".into(), os(dna)];
+        if let Some(weights) = weights {
+            tail.extend(["--weights".into(), os(weights)]);
+        }
+        tail
+    };
+    // The argument list for the fallback, built like the first rather than by
+    // rewriting it, so no path is ever mistaken for a flag value.
+    let centre_input = project(3, "auto-punch-in");
+    let centre_out = project(4, "reframe");
+    let centre_argv: Vec<OsString> = [
+        vec![
+            "transform".into(),
+            "reframe".into(),
+            "--project".into(),
+            os(&centre_input),
+        ],
+        reframe_tail("centre", None),
+        vec!["--out".into(), os(&centre_out)],
+    ]
+    .concat();
+    let weights = match args.follow {
+        FollowArg::Presenter => args.weights.as_ref(),
+        FollowArg::Centre => None,
+    };
+    let reframe_tail = reframe_tail(follow, weights);
     chain(
         4,
         "reframe",
@@ -449,30 +474,7 @@ fn make_reel(
                 "reframe followed the centre, not the presenter: {reason}"
             ));
             reel.steps.push(step);
-            let centred: Vec<OsString> = argv
-                .iter()
-                .map(|arg| {
-                    if arg == "presenter" {
-                        OsString::from("centre")
-                    } else {
-                        arg.clone()
-                    }
-                })
-                .collect();
-            let mut without_weights = Vec::new();
-            let mut skip = false;
-            for arg in centred {
-                if skip {
-                    skip = false;
-                    continue;
-                }
-                if arg == "--weights" {
-                    skip = true;
-                    continue;
-                }
-                without_weights.push(arg);
-            }
-            step = run("reframe", without_weights, &[])?;
+            step = run("reframe", centre_argv.clone(), &[])?;
         }
         let ok = step.ok();
         if !ok {
@@ -563,6 +565,15 @@ pub fn make_reels(args: MakeReelsArgs) -> Result<()> {
     for outlier in &args.outlier {
         load_dna(outlier)?;
     }
+    let mut seen = std::collections::BTreeSet::new();
+    for &index in &args.clips {
+        if index == 0 {
+            return Err(usage("--clips are numbered from 1"));
+        }
+        if !seen.insert(index) {
+            return Err(usage(format!("--clips names clip {index} twice")));
+        }
+    }
     // The caption style and its font are checked before anything runs.
     let style = args.style.resolve()?;
     crate::captions_draw::find_font(&style)?;
@@ -638,6 +649,31 @@ pub fn make_reels(args: MakeReelsArgs) -> Result<()> {
             args.model
         );
         steps.push(plan);
+        // The cap is checked here, before anyone is asked: a dry run that would be
+        // refused still exits 0.
+        let over = bound
+            .parse::<f64>()
+            .map(|bound| bound > args.max_cost_usd)
+            .unwrap_or(false);
+        if over {
+            return Err(exit(
+                4,
+                format!(
+                    "the model call could cost up to ${bound}, over --max-cost-usd {}; raise it to make the call",
+                    args.max_cost_usd
+                ),
+            ));
+        }
+        let key = std::env::var_os(understand::KEY_VARIABLE);
+        if args.understand_replay.is_none() && key.is_none() {
+            return Err(exit(
+                3,
+                format!(
+                    "{} is not set; set it to an OpenRouter API key to let understand pick the clips (nothing was sent)",
+                    understand::KEY_VARIABLE
+                ),
+            ));
+        }
         let question = format!(
             "understand will send {frames} frames and the transcript to {} and cost at most ${bound}. Continue?",
             args.model
@@ -653,7 +689,7 @@ pub fn make_reels(args: MakeReelsArgs) -> Result<()> {
         match &args.understand_replay {
             Some(replay) => live.extend(["--replay".into(), os(replay)]),
             None => {
-                if let Some(key) = std::env::var_os(understand::KEY_VARIABLE) {
+                if let Some(key) = key {
                     env.push((understand::KEY_VARIABLE, key));
                 }
             }
@@ -661,6 +697,26 @@ pub fn make_reels(args: MakeReelsArgs) -> Result<()> {
         steps.push(required(run("understand", live, &env)?)?);
     }
     let understanding = read_json(&understanding_path)?;
+    let source_name = Path::new(understanding["source"]["path"].as_str().unwrap_or(""))
+        .file_name()
+        .map(|name| name.to_os_string());
+    if source_name.as_deref() != args.input.file_name() {
+        return Err(usage(format!(
+            "{} is of {}, not of {}; use another --out-dir or delete it",
+            understanding_path.display(),
+            understanding["source"]["path"],
+            args.input.display()
+        )));
+    }
+    let used_model = understanding["model"]["id"].as_str().unwrap_or("");
+    if used_model != args.model {
+        eprintln!(
+            "make-reels: {} was made with {used_model}, not {}; delete it to ask {} again",
+            understanding_path.display(),
+            args.model,
+            args.model
+        );
+    }
     let chosen = choose(&understanding, &args)?;
     for &index in &chosen {
         let clip = &understanding["clips"][index - 1];
@@ -723,7 +779,19 @@ pub fn make_reels(args: MakeReelsArgs) -> Result<()> {
             &dna,
             &understanding_path,
             &args.out_dir.join(format!("reel-{index}")),
-        )?;
+        )
+        .unwrap_or_else(|error| Reel {
+            index,
+            status: "failed",
+            path: None,
+            length_ms: None,
+            failure: Some(
+                json!({"step": "make-reels", "code": null, "stderr": format!("{error:#}")}),
+            ),
+            notes: Vec::new(),
+            diff_flags: Vec::new(),
+            steps: Vec::new(),
+        });
         let clip = &understanding["clips"][index - 1];
         let mut notes = reel.notes.clone();
         if clip["flags"]
@@ -753,6 +821,11 @@ pub fn make_reels(args: MakeReelsArgs) -> Result<()> {
         }));
     }
     let ok = reels.iter().filter(|reel| reel["status"] == "ok").count();
+    let failure_codes: Vec<Option<i32>> = reels
+        .iter()
+        .filter(|reel| reel["status"] != "ok")
+        .map(|reel| reel["failure"]["code"].as_i64().map(|code| code as i32))
+        .collect();
     let follow_used = if reels.iter().any(|reel| {
         reel["notes"].as_array().is_some_and(|notes| {
             notes.iter().any(|note| {
@@ -779,11 +852,20 @@ pub fn make_reels(args: MakeReelsArgs) -> Result<()> {
         chosen.len(),
         understanding["model"]["cost_usd"]
     );
-    if ok == 0 && !chosen.is_empty() {
+    if chosen.is_empty() {
         return Err(anyhow::anyhow!(
-            "no reel rendered; see {}",
-            summary_path.display()
+            "no clip to make (none passes the clip rules, or --reels 0); see --allow-flagged and --clips"
         ));
+    }
+    if ok == 0 {
+        // Every reel failed: the exit code of the step that refused, when the
+        // first failure was a refusal (2 to 4), else 1.
+        let code = failure_codes.first().copied().flatten();
+        let message = format!("no reel rendered; see {}", summary_path.display());
+        return Err(match code {
+            Some(code @ 2..=4) => exit(code, message),
+            _ => anyhow::anyhow!(message),
+        });
     }
     Ok(())
 }

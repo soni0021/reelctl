@@ -250,9 +250,63 @@ fn one_video_in_two_vertical_reels_out() {
             ),
             (Some(540), Some(960))
         );
-        assert!(reel["length_ms"].as_u64().unwrap() > 20_000, "{reel}");
-        // No secret in any recorded argument list.
-        assert!(!reel["steps"].to_string().contains("OPENROUTER"));
+        // The reel's length is the edited project's: footage plus the card.
+        let index = reel["index"].as_u64().unwrap();
+        let project = read_json(&out.join(format!("reel-{index}/06-captions.otio")));
+        let frames: f64 = project["tracks"]["children"][0]["children"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["source_range"]["duration"]["value"].as_f64().unwrap())
+            .sum();
+        let want_ms = frames * 1000.0 / 24.0;
+        let length_ms = reel["length_ms"].as_f64().unwrap();
+        assert!(
+            (length_ms - want_ms).abs() <= 50.0,
+            "{length_ms} vs {want_ms}"
+        );
+        // The pauses were cut: diff finds no dead air in the footage. The silent
+        // card at the end is dead air to diff, and is the only one.
+        let report = read_json(&out.join(format!("reel-{index}/reel-{index}.diff.json")));
+        let card_start = length_ms - 2_500.0;
+        let early: Vec<&Value> = report["flags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|flag| flag["kind"] == "dead_air")
+            .filter(|flag| flag["end_ms"].as_f64().unwrap() < card_start + 100.0)
+            .collect();
+        assert!(early.is_empty(), "dead air before the card: {early:?}");
+        // The last item on the video track is the card.
+        let last = project["tracks"]["children"][0]["children"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap()
+            .clone();
+        assert_eq!(
+            last["media_references"]["DEFAULT_MEDIA"]["generator_kind"], "reelctl.card",
+            "{last}"
+        );
+        // On a caption's frame there is near-white text in the lower half and
+        // none in the upper half (the footage is flat red or blue).
+        let group = &project["metadata"]["reelctl"]["captions"]["groups"][0];
+        let frame = (group["start"].as_i64().unwrap() + group["end"].as_i64().unwrap()) / 2;
+        let pixels = rgb_frame(&video, frame as u32, 540, 960);
+        let white = |rows: std::ops::Range<usize>| {
+            rows.flat_map(|y| (0..540).map(move |x| (x, y)))
+                .filter(|&(x, y)| {
+                    let at = (y * 540 + x) * 3;
+                    pixels[at] > 220 && pixels[at + 1] > 220 && pixels[at + 2] > 220
+                })
+                .count()
+        };
+        assert!(
+            white(480..960) > 200,
+            "reel {index}: {} white pixels",
+            white(480..960)
+        );
+        assert_eq!(white(0..480), 0, "reel {index}");
     }
     // The last project ends on the card and carries the captions and the crop.
     let project = read_json(&out.join("reel-1/06-captions.otio"));
@@ -266,7 +320,23 @@ fn one_video_in_two_vertical_reels_out() {
 
     // Run again: the understanding is used again (no model step) and every
     // project comes out byte for byte the same.
-    let first = fs::read(out.join("reel-2/06-captions.otio")).unwrap();
+    let projects = |out: &Path| -> Vec<Vec<u8>> {
+        let mut all = Vec::new();
+        for reel in 1..=2 {
+            for step in [
+                "01-from-clip",
+                "02-cut-silence",
+                "03-auto-punch-in",
+                "04-reframe",
+                "05-bridge",
+                "06-captions",
+            ] {
+                all.push(fs::read(out.join(format!("reel-{reel}/{step}.otio"))).unwrap());
+            }
+        }
+        all
+    };
+    let first = projects(&out);
     let again = make_reels(
         lecture,
         &out,
@@ -279,10 +349,144 @@ fn one_video_in_two_vertical_reels_out() {
         "{}",
         summary["steps"]
     );
-    assert_eq!(
-        first,
-        fs::read(out.join("reel-2/06-captions.otio")).unwrap()
+    assert!(
+        first == projects(&out),
+        "a project changed on the second run"
     );
+
+    // A refused step's exit code is the run's when no reel renders: an odd size
+    // makes render exit 2 for every reel.
+    let odd = make_reels(
+        lecture,
+        &out,
+        &["--allow-flagged", "--clips", "1", "--size", "541x960"],
+    );
+    assert_eq!(odd.status.code(), Some(2), "{}", text(&odd).1);
+    let summary = read_json(&out.join("make_reels.json"));
+    assert_eq!(summary["reels"][0]["failure"]["step"], "render");
+}
+
+/// Frame `index` of `video` as `width` x `height` RGB bytes.
+fn rgb_frame(video: &Path, index: u32, width: usize, height: usize) -> Vec<u8> {
+    let output = Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "error", "-i"])
+        .arg(video)
+        .args([
+            "-vf",
+            &format!("select=eq(n\\,{index})"),
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "pipe:1",
+        ])
+        .output()
+        .expect("spawn ffmpeg");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout.len(), width * height * 3);
+    output.stdout
+}
+
+#[test]
+fn the_cap_and_the_key_are_checked_before_anyone_is_asked() {
+    let lecture = lecture();
+    // Over the cap: exit 4 at once, even without --yes, and the message names the
+    // cap rather than asking for a yes.
+    let out = scratch("cap");
+    let output = make_reels(lecture, &out, &["--max-cost-usd", "0.0000001"]);
+    let (_, stderr) = text(&output);
+    assert_eq!(output.status.code(), Some(4), "{stderr}");
+    assert!(stderr.contains("--max-cost-usd"), "{stderr}");
+    assert!(!stderr.contains("--yes"), "{stderr}");
+    assert!(!out.join("understanding.json").exists());
+    // No key and no recorded reply: exit 3 before asking, nothing written.
+    let out = scratch("no-key");
+    let output = reelctl()
+        .args([
+            "make-reels",
+            "--input",
+            &s(&lecture.video),
+            "--dna",
+            &s(&lecture.dna),
+            "--outlier",
+            &s(&lecture.outlier),
+            "--target-url",
+            "https://example.com",
+            "--out-dir",
+            &s(&out),
+            "--understand-catalog",
+            &s(&lecture.catalog),
+            "--yes",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(3), "{}", text(&output).1);
+    assert!(!out.join("understanding.json").exists());
+}
+
+#[test]
+fn the_key_is_never_written_or_printed() {
+    let lecture = lecture();
+    let out = scratch("key");
+    let secret = "sk-or-test-NEVER-WRITE-THIS";
+    let output = {
+        let mut command = reelctl();
+        command.env("OPENROUTER_API_KEY", secret).args([
+            "make-reels",
+            "--input",
+            &s(&lecture.video),
+            "--dna",
+            &s(&lecture.dna),
+            "--outlier",
+            &s(&lecture.outlier),
+            "--target-url",
+            "https://example.com",
+            "--out-dir",
+            &s(&out),
+            "--understand-catalog",
+            &s(&lecture.catalog),
+            "--understand-replay",
+            &s(&lecture.replay),
+            "--yes",
+            "--pick",
+            "--allow-flagged",
+        ]);
+        command.output().unwrap()
+    };
+    let (stdout, stderr) = text(&output);
+    assert!(output.status.success(), "{stderr}");
+    for (what, body) in [
+        ("stdout", stdout),
+        ("stderr", stderr),
+        (
+            "make_reels.json",
+            fs::read_to_string(out.join("make_reels.json")).unwrap(),
+        ),
+        (
+            "understanding.json",
+            fs::read_to_string(out.join("understanding.json")).unwrap(),
+        ),
+    ] {
+        assert!(!body.contains(secret), "the key is in {what}");
+    }
+}
+
+#[test]
+fn nothing_to_make_and_a_clip_named_twice_are_refused() {
+    let lecture = lecture();
+    let out = scratch("nothing");
+    let output = make_reels(lecture, &out, &["--yes", "--reels", "0"]);
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output).1);
+    assert!(text(&output).1.contains("no clip to make"));
+    let output = make_reels(lecture, &out, &["--clips", "1,1"]);
+    assert_eq!(output.status.code(), Some(2), "{}", text(&output).1);
+    assert!(text(&output).1.contains("twice"));
 }
 
 #[test]

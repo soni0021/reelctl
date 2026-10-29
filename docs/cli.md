@@ -387,8 +387,8 @@ reelctl make-reels --input long.mp4 --outlier outlier.edit_dna.json [--outlier .
 ```
 
 1. **Decompile.** `decompile` with whisper writes `DIR/source.edit_dna.json`; `--dna` skips it (its words must be whisper's). Without either, exit 2 before anything runs.
-2. **Plan and ask.** Unless `DIR/understanding.json` already exists, `understand --dry-run` prints the cost upper bound (`make-reels: plan model= frames= cost_upper_bound_usd=`). A bound over `--max-cost-usd` exits 4. Then the live call needs a `y` on the terminal, or `--yes`; with no terminal and no `--yes` it exits 4 and nothing is sent. Every live call needs its own yes.
-3. **Understand.** It writes `DIR/understanding.json`. A run in a folder that already has one uses it again and never calls the model.
+2. **Plan and ask.** Unless `DIR/understanding.json` already exists, `understand --dry-run` prints the cost upper bound (`make-reels: plan model= frames= cost_upper_bound_usd=`). A bound over `--max-cost-usd` exits 4, and no `OPENROUTER_API_KEY` exits 3, both before anyone is asked. Then the live call needs a `y` on the terminal, or `--yes`; with no terminal and no `--yes` it exits 4 and nothing is sent. Every live call needs its own yes.
+3. **Understand.** It writes `DIR/understanding.json`. A run in a folder that already has one uses it again and never calls the model. The reused file must be of the same file name as `--input` (exit 2). One made with another `--model` is used, with a note on stderr; delete it to ask again.
 4. **Clips.** By default, every clip that passes the clip rules, in the model's order. `--reels N` keeps the first N, and `--clips 1,3` names them (a flagged one needs `--allow-flagged`). One `make-reels: clip= tight_length_ms= flags= hook=` line is printed per clip. `--pick` stops here: it writes the list to `make_reels.json` with `status: "picked"` and exits 0, so you can choose and re-run with `--clips`.
 5. **Each clip,** in `DIR/reel-<N>/`:
    - `01-from-clip`, `02-cut-silence`, `03-auto-punch-in` (against the outliers), `04-reframe`, `05-bridge` (the card is appended), `06-captions`, then `render --size` to `reel-<N>.mp4`, then `diff` against the outliers to `reel-<N>.diff.json`. Each step's project is kept, so any step can be re-run by hand.
@@ -400,7 +400,13 @@ reelctl make-reels --input long.mp4 --outlier outlier.edit_dna.json [--outlier .
    - `reels`: one per clip, each with `index`, `status`, `path`, `length_ms`, `hook`, `last`, `diff_flags`, `notes`, `failure` and its `steps`.
    - No argument list holds a key.
 
-Stdout ends with `make-reels: out_dir= reels= ok= failed= cost_usd= follow=presenter|centre`, where `follow=centre` means at least one reel fell back. Exit 0 if at least one reel rendered (or `--pick`), 1 if none did, and 2, 3 or 4 as the refusing step's.
+Stdout ends with `make-reels: out_dir= reels= ok= failed= cost_usd= follow=presenter|centre`, where `follow=centre` means at least one reel fell back. Exit codes:
+- 0 if at least one reel rendered (or `--pick`).
+- 1 if none rendered or none was chosen (`--reels 0`, or every clip flagged without `--allow-flagged`).
+- When none rendered and the first failing step refused its input, that step's code, 2 to 4.
+- Before any reel: 2 for an argument (including `--clips` with 0 or a clip named twice), 3 without a key, and 4 over the cap or without a yes.
+
+`diff` of a rendered reel always flags the silent card at the end as dead air and a static window ([ADR-027](decisions/ADR-027-make-reels-runs-each-step-as-a-child-reelctl-with-a-minimal-environment.md)).
 
 ## Exit codes
 
@@ -409,7 +415,7 @@ Stdout ends with `make-reels: out_dir= reels= ok= failed= cost_usd= follow=prese
 | 0 | Success |
 | 1 | Runtime error. stderr gets `error: ` and the cause chain, for example `error: decompile: open input: No such file or directory` or `error: decompile: whisper: model not found at /missing.bin` |
 | 2 | Invalid arguments, including more than three `--outlier` files or none, or a `--dna` for `understand` without whisper words, or an `eval` of an `understanding.json` without `--dna`, or `--val-percent` over 50; clap prints the usage |
-| 3 | `reelctl understand` without `OPENROUTER_API_KEY` |
+| 3 | `reelctl understand` (and `make-reels`, before asking) without `OPENROUTER_API_KEY` |
 | 4 | `reelctl understand` with a cost upper bound over `--max-cost-usd`; `reelctl make-reels` when the bound is over the cap or the model call was not confirmed |
 
 ## Input requirements

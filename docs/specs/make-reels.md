@@ -158,7 +158,7 @@ reelctl make-reels --input <long.mp4> --outlier <edit_dna.json>... --target-url 
 It runs each step as a child `reelctl` process from the same executable. Each ONNX model then gets its own process, and a step's failure is contained to that step. The environment passed to each child holds only what that step needs: `OPENROUTER_API_KEY` reaches `understand` only, and `REELCTL_RVM_WEIGHTS` and `ORT_DYLIB_PATH` reach `reframe` only.
 
 1. **Decompile.** `decompile` with whisper writes `<out-dir>/source.edit_dna.json`. A whisper model is required, because clips and captions need words. Without one it exits 2 before decoding, naming `--whisper-model` and `REELCTL_WHISPER_MODEL`. `--dna` skips this step when a DNA with whisper words already exists.
-2. **Plan the cost.** `understand --dry-run` prints the plan line. If its `cost_upper_bound_usd` is over `--max-cost-usd`, `make-reels` exits 4 with the bound.
+2. **Plan the cost.** `understand --dry-run` prints the plan line. If its `cost_upper_bound_usd` is over `--max-cost-usd`, `make-reels` exits 4 with the bound, before asking. Without `OPENROUTER_API_KEY` (and no recorded reply) it exits 3, before asking. See [ADR-027](../decisions/ADR-027-make-reels-runs-each-step-as-a-child-reelctl-with-a-minimal-environment.md).
 3. **Ask.** Unless `--yes` is given, it asks on the terminal: `understand will send N frames and the transcript to <model> and cost at most $X. Continue? [y/N]`. Anything but `y` exits 4. With no terminal and no `--yes`, it exits 4. This keeps AGENTS.md's rule that every live call needs the user's yes.
 4. **Understand.** It runs `understand`, which writes `<out-dir>/understanding.json`.
 5. **Each clip.** Which clips become reels ("custom + picked"):
@@ -183,7 +183,7 @@ It runs each step as a child `reelctl` process from the same executable. Each ON
    - `schema_version: 1`
    - the source, the outliers, the model and `cost_usd`
    - each reel's `index`, `status`, `path`, `length_ms`, `hook` and `last` text, `diff_flags`, its `notes` (fallbacks and the flags it was allowed with), and `steps` (each step's argv without secrets, exit code and `ms`)
-7. **Result.** stdout: `make-reels: out_dir= reels= ok= failed= cost_usd= follow=presenter|centre`. The exit code is 0 if at least one reel rendered, 1 if none did, and 2, 3 or 4 as for the step that refused.
+7. **Result.** stdout: `make-reels: out_dir= reels= ok= failed= cost_usd= follow=presenter|centre`. The exit code is 0 if at least one reel rendered. It is 1 if none did or none was chosen; or, when none rendered and the first failing step refused its input, that step's code, 2 to 4. A run refused before any reel (an argument, the cap, the key, no yes) exits 2, 3 or 4. `--clips` with 0 or a clip named twice is refused before anything runs. A reused `understanding.json` must be of the same file name as `--input` (exit 2), and one made with another model is used with a note on stderr. `diff` of a rendered reel always flags the silent card at the end as dead air and a static window.
 
 Each step's own files are kept in `reel-<N>/` (`clip.otio` after each step as `NN-<step>.otio`, and the render), so any step can be re-run by hand with `reelctl` on the same files. That copy of every intermediate project is what the studio service later turns into revertible checkpoints.
 
