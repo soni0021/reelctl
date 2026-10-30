@@ -11,13 +11,13 @@ Return:
 
 1. video_summary: topic (one sentence), language as spoken (for example "Hinglish (Hindi-English code-switching)"), speaker_count, and every visual format that appears.
 
-2. beats: consecutive rhetorical segments covering the whole video, in order, as start_segment and end_segment. Use 15-90 s beats for long videos and 2-10 s for videos under a minute.
+2. beats: consecutive rhetorical segments covering the whole video, in order, as start_segment and end_segment. Use 15-90 s beats for long videos and 2-10 s for videos under a minute. A long video gets at most 60 beats: make the beats longer if needed to stay within 60.
    - kind: hook, premise, claim, evidence, story, example, reset, payoff, cta, tangent, filler.
-   - summary: one sentence in English.
-   - visual: what the frames show during the beat (framing, slide or board content, overlays).
+   - summary: one sentence of at most 15 words, in English.
+   - visual: what the frames show during the beat (framing, slide or board content, overlays), in at most 15 words.
    - insight_density: 1 (filler) to 5 (dense, specific, surprising, quotable).
 
-3. edit_events: visible editing events: hard_cut, punch_in, zoom_out, overlay_on, overlay_off, b_roll_on, b_roll_off, slide_change, caption_change. t_s is the time of the first frame that shows the change. Report only changes you can see between two consecutive frames; never guess what happened between them. A board being written on or wiped is slide_change; a pop-up, card, or caption appearing over the picture is overlay_on, not a cut. For long videos, list at most 80, most significant first.
+3. edit_events: visible editing events: hard_cut, punch_in, zoom_out, overlay_on, overlay_off, b_roll_on, b_roll_off, slide_change, caption_change. t_s is the time of the first frame that shows the change. Report only changes you can see between two consecutive frames; never guess what happened between them. A board being written on or wiped is slide_change; a pop-up, card, or caption appearing over the picture is overlay_on, not a cut. For long videos, list at most 40, most significant first; each note is at most 12 words.
 
 4. reel_candidates: {CANDIDATE_COUNT} that would work as standalone vertical Reels feeding viewers back to this full video, ranked best first.
    - {LENGTH_RULE}

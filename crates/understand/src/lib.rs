@@ -92,6 +92,9 @@ pub const DEFAULT_EVERY_S: u32 = 5;
 /// OpenRouter's pre-flight check counted about this many tokens per 448 px image.
 pub const IMAGE_TOKEN_ESTIMATE: u64 = 1_445;
 
+/// The most visible edit events kept from a reply, the model's most significant first.
+pub const MAX_EDIT_EVENTS: usize = 40;
+
 /// The default cap on the model's output.
 pub const DEFAULT_MAX_TOKENS: u32 = 16_000;
 

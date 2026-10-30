@@ -6,6 +6,7 @@ Notable changes to `reelctl`. Add an entry under Unreleased in the same commit a
 
 ### Added
 
+- `reelctl understand` asks for at most 60 beats and 40 edit events on a long video, with one-line summaries and notes, and keeps only the model's first 40 edit events. This stops a reply that was 80,725 characters of JSON from running into the output limit (a 22-minute NEET run failed at 16,000 tokens on 2026-10-30). The model is asked, not forced: a provider that ignores the prompt can still produce a long reply, and `--max-output-tokens` remains the fallback.
 - The `serve` integration tests named their temporary workspace after the test, which put the Unix socket path over 100 bytes in a macOS temp directory and failed four of them; the name is now a short hash.
 - `reelctl understand --max-output-tokens` (default 16000, 1,000 to 65,536; the Mac app's Understand form has an Output limit stepper). A reply cut off at the output limit now says how many tokens it wrote, how many were reasoning, how much JSON arrived and what the call cost, and advises `--effort low` when most went on reasoning. Found when Qwen3.5-9B was cut off at 16,000 tokens on a 22-minute Hinglish video (303 frames, 326 segments).
 - The Mac app fills in the whisper model setting from `~/models/whisper/ggml-apex-hinglish-q8_0.bin` the first time, when that file exists and the setting was never touched, so decompile and make-reels no longer start with "No whisper model in Settings". Clear in Settings still leaves it empty.

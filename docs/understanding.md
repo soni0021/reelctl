@@ -14,7 +14,7 @@ Every quote in this file is whisper's text, and every time is a whisper time, a 
 | `settings` | object | `every_s` (frame spacing), `sheet` (`single`, `2x2` or `3x3`: what was sent), `segment_pause_ms` (400), `quant` (the quantizations allowed) |
 | `segments` | array | The numbered transcript pieces the model chose from |
 | `summary` | object | `topic`, `language` (as spoken), `speaker_count`, `visual_formats` |
-| `beats` | array | Consecutive rhetorical parts of the video |
+| `beats` | array | Consecutive rhetorical parts of the video (the prompt asks the model for at most 60 on a long video; the reply is not cut to that) |
 | `visual_events` | array | Editing events the model saw |
 | `cuts` | array | `reelctl`'s cuts, each with what the model saw there |
 | `clips` | array | The picks that became clips, in the model's order |

@@ -76,6 +76,7 @@ pub fn assemble(input: AssembleInput<'_>) -> Understanding {
     let mut visual_events: Vec<VisualEvent> = raw
         .edit_events
         .iter()
+        .take(crate::MAX_EDIT_EVENTS)
         .filter_map(|event| {
             Some(VisualEvent {
                 seen_at_ms: nearest_frame(frame_times_ms, event.t_s * 1_000.0)?,
@@ -350,6 +351,20 @@ mod tests {
         let u = case.run();
         assert_eq!(u.beats.len(), 1);
         seen_at(&u)
+    }
+
+    #[test]
+    fn only_the_first_forty_edit_events_are_kept_and_they_are_the_most_significant() {
+        // Frames every second over 60 s, one event per second, in the model's order.
+        let frames: Vec<u64> = (0..60u64).map(|s| s * 1_000).collect();
+        let events: Vec<RawVisualEvent> = (0..60)
+            .map(|i| event(f64::from(i), VisualEventKind::SlideChange, &format!("e{i}")))
+            .collect();
+        let u = Case::new().with_frames(&frames).with_events(events).run();
+        assert_eq!(u.visual_events.len(), crate::MAX_EDIT_EVENTS);
+        assert_eq!(crate::MAX_EDIT_EVENTS, 40);
+        assert_eq!(u.visual_events[0].note, "e0");
+        assert_eq!(u.visual_events[39].note, "e39");
     }
 
     #[test]
