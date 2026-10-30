@@ -302,18 +302,8 @@ struct HistoryScreen: View {
             model.banner = "Checkpoint #\(id) has no video."
             return
         }
-        let subject = (subjectID.flatMap { model.subject($0)?.name } ?? "video")
-            .replacingOccurrences(of: "/", with: "-")
-        let ext = Playable.fileExtension(for: video.url)
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = "\(subject)-#\(id).\(ext)"
-        guard panel.runModal() == .OK, let destination = panel.url else { return }
-        do {
-            try Data(contentsOf: video.url).write(to: destination)
-            model.banner = "Saved \(destination.lastPathComponent)."
-        } catch {
-            model.banner = "Could not save the video: \(error.localizedDescription)"
-        }
+        let subject = subjectID.flatMap { model.subject($0)?.name } ?? "video"
+        exportVideo(video.url, suggestedName: "\(subject)-#\(id)", model: model)
     }
 
     private func reveal(_ id: CheckpointID) async {

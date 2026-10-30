@@ -92,6 +92,7 @@ struct RootView: View {
             switch section {
             case .library: LibraryScreen()
             case .makeReels: MakeReelsScreen()
+            case .reels: ReelsOutputScreen()
             case .projects: ProjectsScreen()
             case .compare: CompareScreen()
             case .look: LookScreen()

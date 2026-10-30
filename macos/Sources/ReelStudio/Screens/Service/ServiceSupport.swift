@@ -83,6 +83,22 @@ func serviceCopy(_ text: String) {
     pasteboard.setString(text, forType: .string)
 }
 
+/// Save a stored video as a named file through a save panel. The store is only
+/// read; the extension (`mp4` or `mov`) comes from the file's own bytes.
+@MainActor
+func exportVideo(_ file: URL, suggestedName: String, model: AppModel) {
+    let name = suggestedName.replacingOccurrences(of: "/", with: "-")
+    let panel = NSSavePanel()
+    panel.nameFieldStringValue = "\(name).\(Playable.fileExtension(for: file))"
+    guard panel.runModal() == .OK, let destination = panel.url else { return }
+    do {
+        try Data(contentsOf: file).write(to: destination)
+        model.banner = "Saved \(destination.lastPathComponent)."
+    } catch {
+        model.banner = "Could not save the video: \(error.localizedDescription)"
+    }
+}
+
 /// Show files in Finder.
 @MainActor
 func serviceReveal(_ urls: [URL]) {

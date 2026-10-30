@@ -38,7 +38,7 @@ ffmpeg comes from Homebrew. Models, weights, manimgx and Smelter are yours to in
 | `Sources/ReelCore/` | The JSON-RPC client over the Unix socket (`RPCClient`), the typed API (`Studio`), the models, `edit_dna.json`, `understanding.json` and diff reports, the daemon launcher, the Keychain (`KeyStore`), the `.cube` reader, and `Playable` (a typed link for extensionless stored files) |
 | `Sources/ReelStudio/App/` | The app, the window and sidebar, and `AppModel` (connection, jobs, live events) |
 | `Sources/ReelStudio/Shared/` | Shared views: pickers, job progress, the frame-exact player, the paid-call sheet |
-| `Sources/ReelStudio/Screens/` | One folder per screen group: Analysis (Library, Compare), Projects, Look, Presenter, Understand, Datasets, Overlays, MakeReels, Service (Jobs, History, Storage, Settings, onboarding, the ⌘K palette) |
+| `Sources/ReelStudio/Screens/` | One folder per screen group: Analysis (Library, Compare), Reels (the persistent output screen), Projects, Look, Presenter, Understand, Datasets, Overlays, MakeReels, Service (Jobs, History, Storage, Settings, onboarding, the ⌘K palette) |
 | `docs/screens/` | Each screen group's file list and open notes |
 | `scripts/` | `make-app.sh` and `make-dmg.sh` |
 | `Resources/Info.plist` | The bundle's plist (the version is filled in from `Cargo.toml`) |

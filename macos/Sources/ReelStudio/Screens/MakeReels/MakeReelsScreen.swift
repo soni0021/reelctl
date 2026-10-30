@@ -134,7 +134,12 @@ struct MakeReelsScreen: View {
     private func reels(_ stage: MakeReelsStage) -> some View {
         let list = stage.reels ?? []
         VStack(alignment: .leading, spacing: 6) {
-            Text(verbatim: list.isEmpty ? "No clip was chosen." : "\(list.count) reel\(list.count == 1 ? "" : "s")").font(.title3.bold())
+            HStack {
+                Text(verbatim: list.isEmpty ? "No clip was chosen." : "\(list.count) reel\(list.count == 1 ? "" : "s")").font(.title3.bold())
+                Spacer()
+                Button("Open in Reels") { model.selection = .reels }
+                    .buttonStyle(.borderless)
+            }
             if let follow = stage.follow {
                 Text(follow == "centre" ? "Framing: centre crop for at least one reel." : "Framing: follows the presenter.")
                     .font(.callout)

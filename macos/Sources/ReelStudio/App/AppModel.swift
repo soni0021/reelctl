@@ -4,7 +4,7 @@ import ReelCore
 
 /// The sidebar sections (docs/specs/mac-app.md, "Structure").
 enum AppSection: String, CaseIterable, Identifiable, Hashable {
-    case library, makeReels, projects, compare, look, presenter, understand, datasets, overlays
+    case library, makeReels, reels, projects, compare, look, presenter, understand, datasets, overlays
     case jobs, history, storage, settings
 
     var id: String { rawValue }
@@ -13,6 +13,7 @@ enum AppSection: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .library: return "Library"
         case .makeReels: return "Make reels"
+        case .reels: return "Reels"
         case .projects: return "Projects"
         case .compare: return "Compare"
         case .look: return "Look"
@@ -31,6 +32,7 @@ enum AppSection: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .library: return "film.stack"
         case .makeReels: return "wand.and.stars"
+        case .reels: return "film"
         case .projects: return "timeline.selection"
         case .compare: return "square.split.2x1"
         case .look: return "camera.filters"
@@ -45,7 +47,7 @@ enum AppSection: String, CaseIterable, Identifiable, Hashable {
         }
     }
 
-    static let work: [AppSection] = [.library, .makeReels, .projects, .compare, .look, .presenter, .understand, .datasets, .overlays]
+    static let work: [AppSection] = [.library, .makeReels, .reels, .projects, .compare, .look, .presenter, .understand, .datasets, .overlays]
     static let service: [AppSection] = [.jobs, .history, .storage, .settings]
 }
 

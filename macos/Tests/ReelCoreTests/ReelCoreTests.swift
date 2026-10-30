@@ -215,4 +215,78 @@ final class ReelCoreTests: XCTestCase {
         XCTAssertEqual(Playable.fileExtension(for: mov), "mov")
         XCTAssertEqual(Playable.fileExtension(for: json), "json")
     }
+
+    // MARK: Reel outputs (the Reels screen's grouping)
+
+    private func subject(_ id: Int, _ name: String, kind: String = "reel") throws -> Subject {
+        try Wire.decode(Subject.self, from: ["id": .int(Int64(id)), "kind": .string(kind), "name": .string(name), "created_at": 0])
+    }
+
+    private func checkpoint(_ id: Int, _ subject: Int, _ label: String, _ outputs: [String: String]) throws -> Checkpoint {
+        var out: [String: JSONValue] = [:]
+        for (key, value) in outputs { out[key] = .string(value) }
+        return try Wire.decode(Checkpoint.self, from: [
+            "id": .int(Int64(id)), "subject": .int(Int64(subject)), "label": .string(label),
+            "outputs": .object(out), "cached": false, "note": "", "created_at": 0,
+        ])
+    }
+
+    private func fromClip(_ id: Int, _ subject: Int, asset: Int) throws -> Job {
+        try Wire.decode(Job.self, from: [
+            "id": .int(Int64(id)), "subject": .int(Int64(subject)), "command": "timeline.from-clip",
+            "args": ["clip": 1], "inputs": ["input": ["asset": .int(Int64(asset))]],
+            "class": "light", "priority": 0, "status": "succeeded", "after": [], "cache_key": "k",
+            "env_names": [], "created_at": 0, "force": false,
+        ])
+    }
+
+    func testReelsAreGroupedBySourceVideoInClipOrder() throws {
+        let subjects = [try subject(10, "clip 3"), try subject(8, "clip 1"), try subject(9, "clip 2"), try subject(20, "other 1")]
+        var checkpoints: [SubjectID: [Checkpoint]] = [:]
+        var jobs: [SubjectID: [Job]] = [:]
+        for (i, id) in [8, 9, 10].enumerated() {
+            checkpoints[Int64(id)] = [try checkpoint(30 + i, id, "render", ["out": "h\(id)"]), try checkpoint(40 + i, id, "diff", ["report": "r\(id)"])]
+            jobs[Int64(id)] = [try fromClip(100 + i, id, asset: 1)]
+        }
+        checkpoints[20] = [try checkpoint(50, 20, "render", ["out": "h20"])]
+        jobs[20] = [try fromClip(120, 20, asset: 3)]
+        let groups = ReelOutputs.group(subjects: subjects, checkpoints: checkpoints, jobs: jobs)
+        XCTAssertEqual(groups.map(\.source), [3, 1], "the newest render's source comes first")
+        let neet = try XCTUnwrap(groups.last)
+        XCTAssertEqual(neet.reels.map(\.clip), [1, 2, 3])
+        XCTAssertEqual(neet.reels.map(\.renderHash), ["h8", "h9", "h10"])
+        XCTAssertEqual(neet.reels.first?.diffReportHash, "r8")
+        XCTAssertEqual(groups.first?.reels.first?.diffReportHash, nil)
+    }
+
+    func testASubjectWithoutARenderOrASourceIsHandledNotDropped() throws {
+        let subjects = [try subject(1, "clip 1"), try subject(2, "clip 2"), try subject(3, "an edit", kind: "project")]
+        let checkpoints: [SubjectID: [Checkpoint]] = [
+            1: [try checkpoint(5, 1, "timeline.from-clip", ["out": "p"])],
+            2: [try checkpoint(6, 2, "render", ["out": "old"]), try checkpoint(9, 2, "render", ["out": "new"])],
+            3: [try checkpoint(7, 3, "render", ["out": "x"])],
+        ]
+        let groups = ReelOutputs.group(subjects: subjects, checkpoints: checkpoints, jobs: [:])
+        XCTAssertEqual(groups.count, 1, "no render, or not a reel subject: not a reel")
+        XCTAssertNil(groups[0].source, "no from-clip job: unknown source")
+        XCTAssertEqual(groups[0].reels.map(\.renderHash), ["new"], "the newest render replaces an older one")
+        XCTAssertEqual(groups[0].reels[0].renderCheckpoint, 9)
+    }
+
+    func testTheUnknownSourceComesLastEvenWhenItsRenderIsNewer() throws {
+        let subjects = [try subject(1, "clip 1"), try subject(2, "clip 1")]
+        let checkpoints: [SubjectID: [Checkpoint]] = [
+            1: [try checkpoint(5, 1, "render", ["out": "known"])],
+            2: [try checkpoint(99, 2, "render", ["out": "unknown"])],
+        ]
+        let jobs: [SubjectID: [Job]] = [1: [try fromClip(7, 1, asset: 4)]]
+        let groups = ReelOutputs.group(subjects: subjects, checkpoints: checkpoints, jobs: jobs)
+        XCTAssertEqual(groups.map(\.source), [4, nil])
+    }
+
+    func testAClipNumberComesFromTheSubjectName() throws {
+        XCTAssertEqual(ReelOutputs.clipNumber("clip 12"), 12)
+        XCTAssertEqual(ReelOutputs.clipNumber("Reel clip 3 final"), 3)
+        XCTAssertNil(ReelOutputs.clipNumber("my reel"))
+    }
 }

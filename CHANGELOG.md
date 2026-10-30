@@ -6,6 +6,7 @@ Notable changes to `reelctl`. Add an entry under Unreleased in the same commit a
 
 ### Added
 
+- The Mac app has a **Reels** screen: every source video with its produced reels, the input video playing above 9:16 reel cards (length, diff flags, Export, Reveal). It reads the workspace, so it still shows them after the app is reopened and includes reels made step by step. Make reels links to it.
 - The Mac app's History screen plays a checkpoint's stored video (Play), saves it as an `.mp4` (Export), and reveals a stored video as `<hash>.mp4` so Finder opens it. Before, a rendered reel was revealed as a blank file with no extension.
 - The Mac app's Understand screen lists make-reels subjects with a head checkpoint in its Understanding picker, so a make-reels run's clips can be loaded and played.
 - The Mac app's Make Reels outlier list shows make-reels subjects too, and an outlier from a subject is its newest decompile's edit DNA, not its head (a make-reels subject's head is its understanding, so the head was the wrong file).
