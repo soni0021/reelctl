@@ -41,7 +41,9 @@ struct MakeReelsForm: View {
                                 }
                             }
                         }
-                        let reels = model.subjects(kind: "reel").filter { $0.headCheckpoint != nil }
+                        // Make-reels subjects too: their DNA is found by dnaFile, not their head.
+                        let reels = (model.subjects(kind: "reel") + model.subjects(kind: "make_reels"))
+                            .filter { $0.headCheckpoint != nil }
                         if !reels.isEmpty {
                             SwiftUI.Section("Analysed reels") {
                                 ForEach(reels) { subject in

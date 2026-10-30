@@ -330,6 +330,17 @@ final class AppModel {
     }
 
     /// The stored file of a subject's head checkpoint.
+    /// The edit DNA of a subject: the `out` of its newest decompile checkpoint. The
+    /// head is not always the DNA: a make-reels subject's head is its understanding.
+    func dnaFile(of subject: SubjectID) async -> StoredFile? {
+        await perform { studio -> StoredFile? in
+            let decompiles = try await studio.checkpoints(subject: subject)
+                .filter { $0.label == "decompile" && $0.outputs["out"] != nil }
+            guard let newest = decompiles.max(by: { $0.id < $1.id }) else { return nil }
+            return try await studio.checkpoint(newest.id).files?["out"]
+        } ?? nil
+    }
+
     func headFile(of subject: SubjectID, role: String) async -> StoredFile? {
         await perform { studio -> StoredFile? in
             guard let head = try await studio.subjects().first(where: { $0.id == subject })?.headCheckpoint else { return nil }

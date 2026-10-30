@@ -105,7 +105,7 @@ final class MakeReelsRun {
             case .asset(let id):
                 outliers.append(.asset(id))
             case .subject(let id):
-                guard let file = await model.headFile(of: id, role: "out") else {
+                guard let file = await model.dnaFile(of: id) else {
                     busy = false
                     message = "The reel \(model.subject(id)?.name ?? String(id)) has no edit DNA yet."
                     return
