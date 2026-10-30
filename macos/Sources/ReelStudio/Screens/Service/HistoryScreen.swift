@@ -13,6 +13,9 @@ struct HistoryScreen: View {
     @State private var branchName = ""
     @State private var comparison: HistoryComparison?
     @State private var confirmRevert = false
+    @State private var player = FramePlayer()
+    @State private var showPlayer = false
+    @State private var playingTitle = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -35,6 +38,19 @@ struct HistoryScreen: View {
         }
         .navigationTitle("History")
         .toolbar { toolbar }
+        .sheet(isPresented: $showPlayer) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text(playingTitle).font(.headline)
+                    Spacer()
+                    Button("Done") { showPlayer = false }
+                }
+                PlayerView(player: player.player)
+                    .frame(minWidth: 360, minHeight: 640)
+            }
+            .padding(16)
+            .onDisappear { player.load(nil) }
+        }
         .onAppear {
             if let focused = model.focusedSubject { subjectID = focused }
         }
@@ -140,6 +156,8 @@ struct HistoryScreen: View {
                 Button("Revert to #\(id)") { selection = [id]; confirmRevert = true }
                 Button("Branch from #\(id)…") { selection = [id]; startBranch() }
                 Button("Reveal outputs in Finder") { Task { await reveal(id) } }
+                Button("Play video") { Task { await playReel(id) } }
+                Button("Export video…") { Task { await exportReel(id) } }
             }
             if ids.count == 2 {
                 Button("Compare") { selection = ids; Task { await compare() } }
@@ -180,6 +198,20 @@ struct HistoryScreen: View {
             }
             .disabled(chosen.count != 1)
             .help("Show the selected checkpoint's stored outputs in Finder")
+            Button {
+                if let id = chosen.first { Task { await playReel(id) } }
+            } label: {
+                Label("Play", systemImage: "play.rectangle")
+            }
+            .disabled(chosen.count != 1)
+            .help("Play the video stored in the selected checkpoint")
+            Button {
+                if let id = chosen.first { Task { await exportReel(id) } }
+            } label: {
+                Label("Export", systemImage: "square.and.arrow.down")
+            }
+            .disabled(chosen.count != 1)
+            .help("Save the selected checkpoint's video as an .mp4 file")
             Button {
                 Task { await reload() }
             } label: {
@@ -242,6 +274,46 @@ struct HistoryScreen: View {
         let b = chosen[1]
         let diff: CheckpointDiff? = await model.perform { try await $0.diff(a, b) }
         if let diff { comparison = HistoryComparison(a: a, b: b, diff: diff) }
+    }
+
+    /// The first stored video of a checkpoint, if it has one.
+    private func videoFile(_ id: CheckpointID) async -> (url: URL, label: String)? {
+        let found: Checkpoint? = await model.perform { try await $0.checkpoint(id) }
+        guard let files = found?.files else { return nil }
+        for key in files.keys.sorted() {
+            if let file = files[key], Playable.isVideo(file.url) { return (file.url, key) }
+        }
+        return nil
+    }
+
+    private func playReel(_ id: CheckpointID) async {
+        guard let video = await videoFile(id) else {
+            model.banner = "Checkpoint #\(id) has no video."
+            return
+        }
+        let subject = subjectID.flatMap { model.subject($0)?.name } ?? "video"
+        playingTitle = "\(subject) · checkpoint #\(id)"
+        player.load(video.url)
+        showPlayer = true
+    }
+
+    private func exportReel(_ id: CheckpointID) async {
+        guard let video = await videoFile(id) else {
+            model.banner = "Checkpoint #\(id) has no video."
+            return
+        }
+        let subject = (subjectID.flatMap { model.subject($0)?.name } ?? "video")
+            .replacingOccurrences(of: "/", with: "-")
+        let ext = Playable.fileExtension(for: video.url)
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "\(subject)-#\(id).\(ext)"
+        guard panel.runModal() == .OK, let destination = panel.url else { return }
+        do {
+            try Data(contentsOf: video.url).write(to: destination)
+            model.banner = "Saved \(destination.lastPathComponent)."
+        } catch {
+            model.banner = "Could not save the video: \(error.localizedDescription)"
+        }
     }
 
     private func reveal(_ id: CheckpointID) async {

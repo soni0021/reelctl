@@ -87,7 +87,9 @@ func serviceCopy(_ text: String) {
 @MainActor
 func serviceReveal(_ urls: [URL]) {
     guard !urls.isEmpty else { return }
-    NSWorkspace.shared.activateFileViewerSelecting(urls)
+    // A stored video has no extension: reveal its typed link, so Finder shows <hash>.mp4.
+    let shown = urls.map { url in url.isFileURL && Playable.isVideo(url) ? Playable.url(for: url) : url }
+    NSWorkspace.shared.activateFileViewerSelecting(shown)
 }
 
 /// A small capsule label ("cached", "head", "after #3").

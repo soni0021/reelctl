@@ -206,14 +206,35 @@ public enum ErrorMeaning: Sendable, Equatable {
 /// temporary folder with the extension its first bytes call for (`.mov` for a
 /// QuickTime file, else `.mp4`); the store itself is never written.
 public enum Playable {
-    public static func url(for file: URL) -> URL {
-        guard file.pathExtension.isEmpty else { return file }
-        let header = (try? FileHandle(forReadingFrom: file)).flatMap { handle -> Data? in
+    /// The first 12 bytes of a file, or none when it cannot be read.
+    private static func header(of file: URL) -> Data {
+        (try? FileHandle(forReadingFrom: file)).flatMap { handle -> Data? in
             defer { try? handle.close() }
             return try? handle.read(upToCount: 12)
         } ?? Data()
-        let brand = header.count >= 12 ? String(decoding: header[8..<12], as: UTF8.self) : ""
-        let ext = brand == "qt  " ? "mov" : "mp4"
+    }
+
+    /// Whether the file is an ISO base media file (MP4 or QuickTime): bytes 4 to 8
+    /// read `ftyp`.
+    public static func isVideo(_ file: URL) -> Bool {
+        let bytes = header(of: file)
+        guard bytes.count >= 8 else { return false }
+        return String(decoding: bytes[4..<8], as: UTF8.self) == "ftyp"
+    }
+
+    /// The extension a stored video plays under: `mov` for QuickTime, else `mp4`.
+    /// Anything that is not a video keeps the extension it has (none, or `json`).
+    public static func fileExtension(for file: URL) -> String {
+        guard isVideo(file) else { return file.pathExtension }
+        let bytes = header(of: file)
+        let brand = bytes.count >= 12 ? String(decoding: bytes[8..<12], as: UTF8.self) : ""
+        return brand == "qt  " ? "mov" : "mp4"
+    }
+
+    public static func url(for file: URL) -> URL {
+        guard file.pathExtension.isEmpty else { return file }
+        let ext = fileExtension(for: file)
+        guard isVideo(file) else { return file }
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("ReelStudio-play", isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let link = folder.appendingPathComponent(file.lastPathComponent).appendingPathExtension(ext)

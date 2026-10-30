@@ -193,4 +193,26 @@ final class ReelCoreTests: XCTestCase {
         XCTAssertTrue(json["understanding"].isNull)
         XCTAssertEqual(json["follow"], "presenter")
     }
+
+    func testAStoredVideoIsRecognisedAndNamedByItsBrand() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("playable-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        func stored(_ name: String, _ bytes: [UInt8]) throws -> URL {
+            let url = dir.appendingPathComponent(name)
+            try Data(bytes).write(to: url)
+            return url
+        }
+        let mp4 = try stored("mp4", [0, 0, 0, 24] + Array("ftypisom".utf8) + [0, 0, 0, 0])
+        let mov = try stored("mov", [0, 0, 0, 20] + Array("ftypqt  ".utf8) + [0, 0, 0, 0])
+        let json = try stored("dna.json", Array("{\"clips\": []}".utf8))
+        let empty = try stored("empty", [])
+        XCTAssertTrue(Playable.isVideo(mp4))
+        XCTAssertTrue(Playable.isVideo(mov))
+        XCTAssertFalse(Playable.isVideo(json))
+        XCTAssertFalse(Playable.isVideo(empty))
+        XCTAssertEqual(Playable.fileExtension(for: mp4), "mp4")
+        XCTAssertEqual(Playable.fileExtension(for: mov), "mov")
+        XCTAssertEqual(Playable.fileExtension(for: json), "json")
+    }
 }

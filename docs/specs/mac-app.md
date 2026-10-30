@@ -71,7 +71,7 @@ Every `reelctl` feature, at equal depth, in one native Mac app for the user's M3
     - The live queue grouped by class, with status, stage, a progress bar, the latest log lines, cancel, retry and the "cached" badge.
     - `after` chains shown as indented children.
     - "Copy as CLI command": the job's command and arguments as a `reelctl` line, with the input paths. It never includes a key.
-11. **History.** For the selected subject, the checkpoint list (label, job, cached, time). Revert, Branch, and Compare any two (`checkpoints.diff`; for two `.otio` or two videos, side by side).
+11. **History.** For the selected subject, the checkpoint list (label, job, cached, time). Revert, Branch, and Compare any two (`checkpoints.diff`; for two `.otio` or two videos, side by side). Play plays a checkpoint's stored video in a sheet; Export saves it as an `.mp4` (or `.mov`) through a save panel; Reveal shows a video as `<hash>.mp4` through a typed link in the temp folder, so Finder opens it in QuickTime.
 12. **Storage.** `store.stats` by subject and kind. Garbage collection: a dry run first, then a confirmation that shows the bytes freed, then `store.gc` with `dry_run: false`.
 13. **Settings and Doctor.**
     - `doctor.check`, each tool with found, version and path, and a Choose… button that sets its path. The service restarts with the new environment when no job runs.
