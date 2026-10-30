@@ -278,6 +278,9 @@ struct FieldRow: View {
 struct SubjectPicker: View {
     @Environment(AppModel.self) private var model
     let kind: String
+    /// Other subject kinds to list too, with a head checkpoint: a make-reels subject
+    /// keeps its understanding as its head.
+    var alsoKinds: [String] = []
     @Binding var selection: SubjectID?
     @State private var naming = false
     @State private var name = ""
@@ -286,7 +289,7 @@ struct SubjectPicker: View {
         HStack {
             Picker(kind.replacingOccurrences(of: "_", with: " ").capitalized, selection: $selection) {
                 Text("None").tag(SubjectID?.none)
-                ForEach(model.subjects(kind: kind)) { subject in
+                ForEach(([kind] + alsoKinds).flatMap { model.subjects(kind: $0) }.filter { alsoKinds.isEmpty || $0.headCheckpoint != nil }) { subject in
                     Text(subject.name).tag(SubjectID?.some(subject.id))
                 }
             }

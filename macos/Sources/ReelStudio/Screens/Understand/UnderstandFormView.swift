@@ -13,7 +13,7 @@ struct UnderstandFormView: View {
     var body: some View {
         Form {
             SwiftUI.Section("Inputs") {
-                SubjectPicker(kind: "understanding", selection: $form.subject)
+                SubjectPicker(kind: "understanding", alsoKinds: ["make_reels"], selection: $form.subject)
                 AssetPicker(title: "Video", kind: "video", types: UTType.videoTypes, selection: $form.video)
                 UnderstandDNAPicker(selection: $form.dna)
                 UnderstandDNAStatus(check: session.dnaCheck)
